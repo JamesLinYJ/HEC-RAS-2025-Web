@@ -1,0 +1,67 @@
+.map-tree-detail-row {
+  min-width: 0;
+  padding: 0 7px 3px 0;
+  color: #748793;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.map-tree-detail-row:has(.map-tree-details:empty) {
+  display: none;
+}
+
+.map-tree-details {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1px 9px;
+}
+
+.map-tree-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-tree-detail > span:first-child {
+  color: #9aa8b0;
+}
+
+.map-tree-status {
+  flex: none;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #edf1f3;
+  color: #657986;
+  font-size: 8px;
+}
+
+.map-tree-status.is-success {
+  background: #e7f3ec;
+  color: #3f7653;
+}
+
+.map-tree-status.is-warning {
+  background: #fff3df;
+  color: #8a6832;
+}
+
+.map-tree-status.is-error {
+  background: #fae9e6;
+  color: #a34d43;
+}
+
+.map-tree-status.is-busy {
+  background: #e7f0f7;
+  color: #3d6e91;
+}
+
+.map-tree-row input:indeterminate {
+  accent-color: #748c9a;
+}

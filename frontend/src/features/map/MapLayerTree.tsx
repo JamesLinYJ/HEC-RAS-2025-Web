@@ -1,7 +1,6 @@
-import { useState } from 'react';
 import type { CatalogTreeNode, GeoJsonLayer, MapDocumentTab } from './mapTypes';
-import { localizeProjectTreeSectionTitle, localizeProjectTreeSourceClass } from '../project/ProjectTreeModeSectionTitles';
-import { mapCRS, mapDocumentKind, mapError } from './mapText';
+import { mapCRS, mapError } from './mapText';
+import { RasTreeV2 } from './tree/RasTreeV2';
 
 export interface MapLayerTreeProps {
   document: MapDocumentTab | null;
@@ -18,92 +17,6 @@ export interface MapLayerTreeProps {
   onRemoveLocalLayer: (id: string) => void;
   onToggleBackendNode: (node: CatalogTreeNode, checked: boolean) => void;
   language: 'zh' | 'en';
-}
-
-const visibilityTypes = new Set([
-  'Geometry', 'Result', 'MultiResult', 'Terrain', 'BoundaryCondition', 'WindLayer', 'PrecipitationLayer',
-  'NValue', 'Classification', 'Feature', 'MapLayer', 'GdbDataset', 'GdbVectorLayer',
-  'ConceptualMesh', 'FlowAreaLayer', 'CulvertBarrelLayer',
-]);
-
-function nodeVisible(node: CatalogTreeNode): boolean {
-  return node.checked !== 'unchecked';
-}
-
-function BackendNode({
-  node,
-  depth,
-  selectedID,
-  busy,
-  onSelect,
-  onZoom,
-  onToggle,
-  language,
-}: {
-  node: CatalogTreeNode;
-  depth: number;
-  selectedID: string | null;
-  busy: string | null;
-  onSelect: (node: CatalogTreeNode) => void;
-  onZoom: (node: CatalogTreeNode) => void;
-  onToggle: (node: CatalogTreeNode, checked: boolean) => void;
-  language: 'zh' | 'en';
-}) {
-  const checkable = Boolean(node.locator && visibilityTypes.has(node.locator.nodeType));
-  const [expanded, setExpanded] = useState(depth < 1);
-  const hasChildren = Boolean(node.children?.length);
-  const error = node.diagnosticReadError ? mapError(language, node.diagnosticReadError) : null;
-  const layerKind = node.locator?.mapType ?? (node.locator?.nodeType === 'GdbDataset' ? 'GdbDataset' : null);
-  const sourceLabel = layerKind
-    ? mapDocumentKind(language, layerKind)
-    : localizeProjectTreeSourceClass(language, node.sourceClass);
-  const visibleName = node.localizeName || node.locator?.nodeType === 'Root'
-    ? localizeProjectTreeSectionTitle(language, node.name) : node.name;
-  return (
-    <li role="treeitem" aria-expanded={hasChildren ? expanded : undefined} aria-selected={selectedID === node.id}>
-      <div className={'map-tree-row' + (selectedID === node.id ? ' is-selected' : '')}
-        data-node-id={node.id}
-        data-node-root={node.locator?.rootName} data-node-type={node.locator?.nodeType}
-        data-node-path={node.locator?.nodePath ? JSON.stringify(node.locator.nodePath) : undefined}
-        style={{ paddingInlineStart: 8 + depth * 15 }}>
-        {hasChildren ? (
-          <button type="button" className="map-tree-expand" aria-label={expanded ? (language === 'zh' ? '折叠' : 'Collapse') : (language === 'zh' ? '展开' : 'Expand')} aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? '⌄' : '›'}</button>
-        ) : <span className="map-tree-leaf" aria-hidden="true" />}
-        {checkable && (
-          <input
-            type="checkbox"
-            aria-label={(language === 'zh' ? '显示 ' : 'Show ') + visibleName}
-            checked={nodeVisible(node)}
-            disabled={busy === node.id}
-            onChange={(event) => onToggle(node, event.currentTarget.checked)}
-          />
-        )}
-        <button type="button" className="map-tree-name" onClick={() => onSelect(node)} onDoubleClick={() => onZoom(node)} title={node.name}>
-          <span className="map-tree-node-icon" aria-hidden="true">{node.sourceClass === 'Folder' ? '▱' : '◇'}</span>
-          <span>{visibleName}</span>
-        </button>
-        <span className="map-tree-kind">{sourceLabel}</span>
-      </div>
-      {error && <div className="map-tree-error" style={{ marginInlineStart: 35 + depth * 15 }} role="status">{error}</div>}
-      {hasChildren && expanded && (
-        <ul role="group">
-          {node.children?.map((child) => (
-            <BackendNode
-              key={child.id}
-              node={child}
-              depth={depth + 1}
-              selectedID={selectedID}
-              busy={busy}
-              onSelect={onSelect}
-              onZoom={onZoom}
-              onToggle={onToggle}
-              language={language}
-            />
-          ))}
-        </ul>
-      )}
-    </li>
-  );
 }
 
 export function MapLayerTree({
@@ -199,21 +112,16 @@ export function MapLayerTree({
         </div>
         {!document ? <p className="map-tree-empty">{copy.noMap}</p> : document.treeError ? <p className="map-tree-empty map-tree-load-error">{copy.treeError}: {mapError(language, document.treeError)}</p> : document.roots.length === 0 ? <p className="map-tree-empty">{copy.empty}</p> : (
           <>
-            <ul className="map-backend-tree" role="tree" aria-label={copy.sources}>
-              {document.roots.map((node) => (
-                <BackendNode
-                  key={node.id}
-                  node={node}
-                  depth={0}
-                  selectedID={selectedBackendNodeID}
-                  busy={busyNodeID}
-                  onSelect={onSelectBackendNode}
-                  onZoom={onZoomBackendNode}
-                  onToggle={onToggleBackendNode}
-                  language={language}
-                />
-              ))}
-            </ul>
+            <RasTreeV2
+              roots={document.roots}
+              label={copy.sources}
+              selectedID={selectedBackendNodeID}
+              busyNodeID={busyNodeID}
+              onSelect={onSelectBackendNode}
+              onZoom={onZoomBackendNode}
+              onToggle={onToggleBackendNode}
+              language={language}
+            />
             <p className="map-tree-note">{copy.renderNote}</p>
           </>
         )}

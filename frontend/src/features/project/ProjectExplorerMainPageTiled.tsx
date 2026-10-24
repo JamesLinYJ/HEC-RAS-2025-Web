@@ -23,6 +23,8 @@ interface ProjectExplorerMainPageTiledProps {
   onClearRecents: () => void;
   onImportBusyChange: (busy: boolean) => void;
   onOpenLibraryProject: (projectPath: string, source: WorkbenchContext) => Promise<boolean>;
+  modelCreationDisabledReason?: string;
+  onCreateModel?: (kind: 'newGeometry' | 'newPlan' | 'newBoundary') => void;
 }
 
 function formatSize(bytes: number, language: Language): string {
@@ -49,6 +51,8 @@ export function ProjectExplorerMainPageTiled({
   onClearRecents,
   onImportBusyChange,
   onOpenLibraryProject,
+  modelCreationDisabledReason,
+  onCreateModel,
 }: ProjectExplorerMainPageTiledProps) {
   const [showProjectLibrary, setShowProjectLibrary] = useState(false);
   if (showProjectLibrary) {
@@ -82,6 +86,11 @@ export function ProjectExplorerMainPageTiled({
           </div>
           <div className="project-summary-actions">
             {backend.supports('projectLibrary.catalog') && <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy} onClick={() => setShowProjectLibrary(true)}>{text(language, '示例工程', 'Examples')}</button>}
+            {onCreateModel && <div className="project-summary-model-actions" aria-label={text(language, '创建工程模型', 'Create project models')}>
+              <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy || Boolean(modelCreationDisabledReason)} title={modelCreationDisabledReason} onClick={() => onCreateModel('newGeometry')}>{text(language, '新建几何', 'New geometry')}</button>
+              <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy || Boolean(modelCreationDisabledReason)} title={modelCreationDisabledReason} onClick={() => onCreateModel('newPlan')}>{text(language, '新建方案', 'New plan')}</button>
+              <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy || Boolean(modelCreationDisabledReason)} title={modelCreationDisabledReason} onClick={() => onCreateModel('newBoundary')}>{text(language, '新建边界条件', 'New boundary condition')}</button>
+            </div>}
             <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy} onClick={onOpen}>{text(language, '切换工程', 'Switch project')}</button>
             <button type="button" className="project-button project-button-primary" disabled={busy || importBusy} onClick={onNew}>{text(language, '新建工程', 'New project')}</button>
           </div>

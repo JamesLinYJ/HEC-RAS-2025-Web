@@ -14,6 +14,8 @@ import { InputTextPropertyItem } from '../../controls/InputTextPropertyItem';
 import { NumberBox } from '../../controls/NumberBox';
 import { NumericPropertyItem } from '../../controls/NumericPropertyItem';
 import { ParagraphPropertyItem } from '../../controls/ParagraphPropertyItem';
+import { PlanTimeWindowModePicker } from '../../controls/PlanTimeWindowModePicker';
+import { PlanTimeWindowModePickerPropertyItem } from '../../controls/PlanTimeWindowModePickerPropertyItem';
 import { RadioButtonInputTextPropertyItem } from '../../controls/RadioButtonInputTextPropertyItem';
 import { SliderPropertyItem } from '../../controls/SliderPropertyItem';
 import { SliderTextPropertyItem } from '../../controls/SliderTextPropertyItem';
@@ -101,13 +103,20 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
     const nativeComboBox = /^combobox\d*$/.test(sourceControl);
     const betterPropertyComboBox = /^bettercomboboxpropertyitem\d*$/.test(sourceControl);
     const betterComboBox = /^bettercombobox\d*$/.test(sourceControl);
+    const planModePickerPropertyItem = /^plantimewindowmodepickerpropertyitem\d*$/.test(sourceControl)
+      || schema.id === 'PlanTimeWindowModePickerPropertyItem';
+    const planModePicker = schema.id === 'PlanTimeWindowModePicker' && field.id === 'TimeWindowMode';
     const choiceOptions = choices.map((choice) => ({
       value: choice.id,
       label: `${choice.titleIsUserData ? choice.title : editorText(language, choice.title)}${choice.description ? ` — ${editorText(language, choice.description)}` : ''}`,
     }));
     const currentValueLabel = (currentValue: string) => isChinese(language) ? `当前值：${currentValue}` : `Current value: ${currentValue}`;
     const emptyLabel = isChinese(language) ? '请选择…' : 'Select…';
-    if (betterPropertyComboBox) {
+    if (planModePickerPropertyItem) {
+      control = <PlanTimeWindowModePickerPropertyItem id={generatedID} timeWindowMode={value} modes={choiceOptions} disabled={disabled} currentValueLabel={currentValueLabel} emptyLabel={emptyLabel} accessibleLabel={title} onTimeWindowModeChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
+    } else if (planModePicker) {
+      control = <PlanTimeWindowModePicker id={generatedID} timeWindowMode={value} modes={choiceOptions} disabled={disabled} currentValueLabel={currentValueLabel} emptyLabel={emptyLabel} accessibleLabel={title} onTimeWindowModeChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
+    } else if (betterPropertyComboBox) {
       control = <BetterComboBoxPropertyItem id={generatedID} selectedValue={value} itemsSource={choiceOptions} disabled={disabled} currentValueLabel={currentValueLabel} emptyLabel={emptyLabel} onSelectedValueChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
     } else if (betterComboBox) {
       control = <BetterComboBox id={generatedID} value={value} options={choiceOptions} disabled={disabled} currentValueLabel={currentValueLabel} emptyLabel={emptyLabel} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;

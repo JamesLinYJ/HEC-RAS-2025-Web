@@ -38,6 +38,14 @@ dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --r
 
 This check uploads a new real project, confirms listing without a `.vis` file does not create one, creates two Chinese-named maps with consecutive visualization revisions, discovers their exact order and active identity, and loads both source trees. Listing and loading must preserve the `.vis` bytes. A stale project list request and a stale visualization mutation must both return `sourceChanged` without modifying the file, and a later backend request must still complete. This is a server contract check; reopening the maps through React requires the separate browser UI check.
 
+Verify transactional Geometry, Boundary Condition and Plan creation using a completed Result-hover fixture manifest:
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --run-model-creation-http http://127.0.0.1:5080 /tmp/hecras-result-hover/result-hover-manifest.json /tmp/hecras-model-creation
+```
+
+The runner copies the referenced project to a new output directory before calling `modelCreation.inspect/commit`. It verifies the created HDF files, exact Geometry/Plan association rows, `project.open` and project-tree readback, unchanged existing HDF bytes, and rejection of an outdated project revision without publishing another model. Boundary Conditions are discovered from their standard directory by the retained C# loader; the format has no Boundary Conditions XML section. A successful creation can therefore keep the project SHA unchanged. The legacy `modelCreation.create` operation remains HDF-only; the React creation dialogs use the project-commit operation.
+
 Create a separate fixture for the React meteorological time-series editor:
 
 ```sh

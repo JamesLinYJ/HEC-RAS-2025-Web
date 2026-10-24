@@ -8,12 +8,14 @@ import { WindForcesPage } from './WindForcesPage';
 import { WindConstantControl } from './WindConstantControl';
 import { AirPressurePage } from './AirPressurePage';
 import { AirDensityPage } from './AirDensityPage';
+import { SpatialDataSummaryPage } from './SpatialDataSummaryPage';
 
 /** Page IDs retained by EditorWorkbench for the Boundary Conditions source editor. */
 export const BOUNDARY_EDITOR_PAGE_IDS = [
   'BoundaryConditionsSummary',
   'BoundaryConditionEditor',
   'PrecipitationControl',
+  'SpatialDataSummaryPage',
   'EvapotranspirationControl',
   'WindForcesControl',
   'WindConstantControl',
@@ -32,6 +34,7 @@ export function BoundaryConditionEditor(props: EditorPageProps) {
       </nav>
       {activePage === 'BoundaryConditionsSummary' ? <BoundaryConditionsSummaryPage {...props} pageId={activePage} />
         : activePage === 'BoundaryConditionEditor' ? <BoundaryConditionLineEditorPage {...props} pageId={activePage} />
+          : activePage === 'SpatialDataSummaryPage' ? <SpatialDataSummaryPage {...props} pageId={activePage} />
           : activePage === 'PrecipitationControl' ? <PrecipitationPage {...props} pageId={activePage} />
             : activePage === 'EvapotranspirationControl' ? <EvapotranspirationPage {...props} pageId={activePage} />
               : activePage === 'WindForcesControl' ? <WindForcesPage {...props} pageId={activePage} />

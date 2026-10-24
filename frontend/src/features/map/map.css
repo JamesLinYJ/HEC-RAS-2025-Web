@@ -1713,3 +1713,15 @@
     padding: 7px 10px;
   }
 }
+
+.map-location-dialog { width: min(440px, calc(100vw - 40px)); padding: 22px; border: 1px solid var(--ras-border, #cbd5df); border-radius: 14px; color: inherit; background: var(--ras-surface, #fff); box-shadow: 0 18px 64px #102b4940; }
+.map-location-dialog::backdrop { background: #102b4950; }
+.map-location-dialog h2 { margin: 0 0 18px; font-size: 18px; }
+.map-location-form > select { width: 100%; margin: 8px 0; }
+.map-location-form > p { font-size: 12px; color: #566c7c; }
+.map-location-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.map-location-fields label { display: grid; gap: 6px; min-width: 0; }
+.map-location-fields input { width: 100%; box-sizing: border-box; padding: 7px; border: 1px solid #b5c5d1; border-radius: 5px; }
+.map-location-form footer { display: flex; justify-content: end; gap: 8px; margin-top: 20px; }
+.map-location-form footer button { padding: 7px 16px; border: 1px solid #aebfcc; border-radius: 6px; cursor: pointer; }
+.map-location-form footer button[type=submit] { color: white; background: #2465a5; border-color: #2465a5; }

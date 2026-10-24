@@ -3,6 +3,8 @@ import { GeometryFeatureDetailEditor } from './GeometryFeatureDetailEditor';
 import type { GeometryRow } from './geometryTypes';
 
 export type ConceptualMeshControlPointEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'> & {
+  hideTable?: boolean;
+  selectedRowsOverride?: GeometryRow[];
   onCommand?: (row: Parameters<GeometryTopologyTablePageProps['onChange']>[0], field: Parameters<GeometryTopologyTablePageProps['onChange']>[1], command: string, value?: string) => void;
   onSelectionChange?: (rows: GeometryRow[]) => void;
 };
@@ -24,12 +26,14 @@ const controlPointClearCommands = {
   SizeTolerance: 'setRegionInput',
 };
 
-export function ConceptualMeshControlPointEditor({ onCommand, onSelectionChange, canEdit, ...props }: ConceptualMeshControlPointEditorProps) {
+export function ConceptualMeshControlPointEditor({ onCommand, onSelectionChange, canEdit, hideTable, selectedRowsOverride, ...props }: ConceptualMeshControlPointEditorProps) {
   return (
     <GeometryFeatureDetailEditor
       {...props}
       kind="region"
       editable={canEdit}
+      showTable={!hideTable}
+      selectedRowsOverride={selectedRowsOverride}
       fieldOrder={controlPointFieldOrder}
       readOnlyFieldIDs={['X', 'Y']}
       clearCommands={controlPointClearCommands}

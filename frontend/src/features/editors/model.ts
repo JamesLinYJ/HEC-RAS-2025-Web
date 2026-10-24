@@ -118,7 +118,7 @@ export interface ModelSnapshot {
     selectedPayloadId?: string | null;
       spatial?: Record<string, SpatialPointData> | null;
   } | null;
-  grids?: Record<string, unknown> | null;
+  grids?: Record<string, SpatialGridData> | null;
   manning?: { classifications: Array<{ id: string; title: string }>; rows: ModelRow[]; warning?: string | null } | null;
   classification?: {
     inputs: Array<{ id: string; scope: string; name: string; type: string; canRemove: boolean; filename?: string | null; tableId?: string | null; rows: ModelRow[]; polygons: Array<{ id: string; scope: string; classification: string; vertexCount: number; vertices: Array<{ x: number; y: number; z?: string | null; m?: string | null }>; hasZ: boolean; hasM: boolean }>; extent?: string | null }>;
@@ -157,6 +157,70 @@ export interface SpatialPointData {
   intervalUnits: DisplayUnitData;
   defaultHeight: number;
 }
+
+export interface SpatialGridPreview {
+  width: number;
+  height: number;
+  /** System.Text.Json serializes the C# byte[] as Base64. */
+  rgba: string;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  minimum?: number | null;
+  maximum?: number | null;
+}
+
+export interface SpatialGridData {
+  layerId: string;
+  times: string[];
+  components: string[];
+  units: string;
+  projection: string;
+  rows: number;
+  columns: number;
+  selectedTimeId?: string | null;
+  selectedComponent?: string | null;
+  preview?: SpatialGridPreview | null;
+  error?: string | null;
+}
+
+export interface SpatialGridBand {
+  id: string;
+  file: string;
+  dataset: string;
+  band: number;
+  revision: string;
+  time?: string | null;
+  issueTime?: string | null;
+  units: string;
+  dataType: string;
+  included: boolean;
+  component: string;
+}
+
+export interface SpatialGridInspection {
+  bands: SpatialGridBand[];
+  subdatasets: string[];
+  preview?: SpatialGridPreview | null;
+  unitOptions: string[];
+  units: string;
+  dataType: string;
+  dssGridSources?: Array<{ id: string; groupPath: string; title: string; times: string[]; recordPaths: string[]; units: string; dataType: string; projection: string; rows: number; columns: number; cellSize: number; left: number; bottom: number; right: number; top: number }> | null;
+  dssGridDraftIdentity?: string | null;
+  dssGridSourcePath?: string | null;
+  dssGridRevision?: string | null;
+}
+
+export interface SpatialGridSelection {
+  layerId: string;
+  bands: SpatialGridBand[];
+  units: string;
+  dataType: string;
+  timeBehavior: 'ProjectBackwards' | 'ProjectForwards';
+}
+
+export type SpatialTransformOperation = 'addStation' | 'removeStation' | 'addGauge' | 'removeGauge';
 
 export interface ModelDraft {
   /** Boundary editor source identity returned by a backend draft transform. */
@@ -213,6 +277,12 @@ export interface EditorPageProps {
   canTransformSeries?: boolean;
   onSeriesTransform?: (pageID: string, operation: SeriesTransformOperation) => Promise<void>;
   onBoundaryTransform?: (lineID: string, operation: BoundaryPayloadTransformOperation, payloadID: string | null, fields: Record<string, string>) => Promise<boolean>;
+  canTransformSpatial?: boolean;
+  onSpatialTransform?: (layerID: string, operation: SpatialTransformOperation, itemID: string | null) => Promise<boolean>;
+  canImportGrid?: boolean;
+  onGridInspect?: (layerID: string, files: string[], subdataset?: string, bands?: SpatialGridBand[], previewID?: string, signal?: AbortSignal) => Promise<SpatialGridInspection>;
+  onGridFrame?: (layerID: string, timeID?: string, component?: string, signal?: AbortSignal) => Promise<SpatialGridData>;
+  onGridImport?: (selection: SpatialGridSelection) => Promise<boolean>;
   onTerrainTransform?: (command: TerrainTransformCommand) => Promise<boolean>;
 }
 
@@ -226,7 +296,7 @@ export const SCHEMAS_BY_KIND: Record<string, string[]> = {
   Plan: ['PlanEditorControl', 'PlanSettingsPage', 'PlanComputeSettingsPage', 'PlanCatalogSummary'],
   Geometry: ['GeometryCatalogSummary', 'GeometrySummaryPage'],
   Terrain: ['TerrainCatalogSummary', 'TerrainProperties', 'TerrainLayersEditor', 'RasterTerrainInputProperties', 'FunctionalTerrainInputProperties', 'ChannelModTerrainInputProperties'],
-  'Boundary Conditions': ['BoundaryConditionsSummary', 'BoundaryConditionCatalogSummary', 'BoundaryConditionTimeWindow', 'BoundaryConditionLineEditor', 'BoundaryConditionLinePayloadsList', 'BoundaryConditionLineQuickEditPicker', 'BoundaryConditionNode', 'BoundaryConditionPicker', 'PayloadListItem', 'ConstantPayloadEditor', 'ExternalPayloadEditor', 'RegularTimeSeriesPayloadEditor', 'RegularSpatiallyVariableTimeSeriesPayloadEditor', 'PrecipitationControl', 'EvapotranspirationControl', 'WindForcesControl', 'WindConstantControl', 'AirPressureControl', 'AirDensityControl', 'SpatialBoundaryConditionRasterImporter'],
+  'Boundary Conditions': ['BoundaryConditionsSummary', 'BoundaryConditionCatalogSummary', 'BoundaryConditionTimeWindow', 'BoundaryConditionLineEditor', 'BoundaryConditionLinePayloadsList', 'BoundaryConditionLineQuickEditPicker', 'BoundaryConditionNode', 'BoundaryConditionPicker', 'PayloadListItem', 'ConstantPayloadEditor', 'ExternalPayloadEditor', 'RegularTimeSeriesPayloadEditor', 'RegularSpatiallyVariableTimeSeriesPayloadEditor', 'PrecipitationControl', 'EvapotranspirationControl', 'WindForcesControl', 'WindConstantControl', 'AirPressureControl', 'AirDensityControl', 'SpatialBoundaryConditionRasterImporter', 'SpatialDataSummaryPage'],
   'Surface Layers': ['ClassificationCatalogSummary', 'ClassificationLayerSummary', 'ClassificationLayersEditor', 'NValueCatalogSummary', 'ManningsNEditor', 'ConstantManningsNEditor', 'ClassificationLayerManningNEditor'],
   Classification: ['ClassificationCatalogSummary', 'ClassificationLayerSummary', 'ClassificationLayersEditor'],
   NValues: ['NValueCatalogSummary', 'ManningsNEditor', 'ConstantManningsNEditor', 'ClassificationLayerManningNEditor'],

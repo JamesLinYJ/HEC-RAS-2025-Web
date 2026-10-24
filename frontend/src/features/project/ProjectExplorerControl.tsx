@@ -18,6 +18,11 @@ import { ProjectTreeMode } from './ProjectTreeMode';
 import type { ProjectTreeAction, ProjectTreeModeName } from './ProjectTreeModeVM';
 import { NewProjectPage } from './NewProjectPage';
 import { ProjectExplorerMainPageTiled } from './ProjectExplorerMainPageTiled';
+import { MigrateProjectControl } from './MigrateProjectControl';
+import { NewGeometryDialog } from './NewGeometryDialog';
+import { NewPlanDialog } from './NewPlanDialog';
+import { NewBoundaryConditionDialog } from './NewBoundaryConditionDialog';
+import type { CreatedModel } from './ProjectModelCreationWorkflow';
 import type { RecentProjectRecord, SelectedProjectFile } from './ProjectTypes';
 import { isAbsoluteServerPath, MAX_RECENT_PROJECTS, RECENT_PROJECTS_STORAGE_KEY } from './ProjectTypes';
 import { ProjectOpenProjectDialog } from './ProjectOpenProjectDialog';
@@ -162,6 +167,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const [fileErrorDetails, setFileErrorDetails] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [migrationOpen, setMigrationOpen] = useState(false);
+  const [modelCreationDialog, setModelCreationDialog] = useState<'newGeometry' | 'newPlan' | 'newBoundary' | null>(null);
   const [openProjectDialog, setOpenProjectDialog] = useState(false);
   const [uploadedWorkspace, setUploadedWorkspace] = useState<UploadedWorkspaceState | null>(null);
   const [savingProject, setSavingProject] = useState(false);
@@ -201,6 +208,21 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const canSaveProject = Boolean(context.projectPath) && backend.supports('project.save') &&
     !isBrowserFileIdentity(context.projectPath) && hasProjectRevision && !hasUnsavedDrafts;
   const hasBackendFileIdentity = Boolean(context.projectPath) && !isBrowserFileIdentity(context.projectPath);
+  const modelCreationDisabledReason = !hasBackendFileIdentity || !context.projectXml || !hasProjectRevision
+    ? text(language, '请先打开具有工程 XML 和 SHA-256 修订的服务器工程。', 'Open a server project with project XML and a SHA-256 revision first.')
+    : !backend.supports('modelCreation.inspect')
+      ? text(language, '当前 C# 后端未发布 modelCreation.inspect。', 'The C# backend has not advertised modelCreation.inspect.')
+      : !backend.supports('modelCreation.commit')
+        ? text(language, '当前 C# 后端尚未发布带工程回执的 modelCreation.commit。', 'The C# backend has not advertised project-committing modelCreation.commit.')
+        : !backend.supports('project.tree.load')
+          ? text(language, '当前 C# 后端未提供 project.tree.load，无法读回核验新模型。', 'The C# backend has not advertised project.tree.load, so a new model cannot be verified by read-back.')
+        : !props.onContextCommit
+          ? text(language, '父级工程会话没有提供提交回执校验。', 'The parent project session does not provide receipt validation.')
+          : newProjectDirty
+            ? text(language, '新建工程表单有未保存草稿；请先保存或关闭该表单。', 'The new-project form has an unsaved draft; save or close it first.')
+            : hasUnsavedDrafts
+              ? text(language, '存在未保存的模型编辑草稿；请先保存或处理草稿。', 'Unsaved model-editor drafts exist; save or resolve them first.')
+              : undefined;
   const title = currentFile?.fileName ?? (context.projectPath ? displayFileName(context.projectPath) : null);
   const downloadableWorkspace = uploadedWorkspace && context.projectPath &&
     backend.workspaceArchiveUrl &&
@@ -546,6 +568,57 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
 
   const retryTrees = (): void => setTreeReloadKey((key) => key + 1);
 
+  const onModelCreated = useCallback((source: WorkbenchContext, committed: WorkbenchContext, created: CreatedModel): void => {
+    const projectPath = committed.projectPath;
+    const projectXml = committed.projectXml;
+    const projectRevision = committed.projectRevision;
+    if (!source.projectPath || !projectPath || committed.projectSessionID !== source.projectSessionID ||
+        !sameServerPath(projectPath, source.projectPath) || typeof projectXml !== 'string' ||
+        !isProjectTreeSHA256(projectRevision)) {
+      setNotice(text(language, '模型创建已返回，但项目回执不完整；请重新打开工程目录核对。', 'Model creation returned, but its project receipt is incomplete. Reopen the project catalog to verify it.'));
+      return;
+    }
+    const active = contextRef.current;
+    // The parent accepts the receipt synchronously, but React may not have
+    // rendered these new props yet. Both exact source and committed snapshots
+    // belong to that accepted transaction; a third context does not.
+    if (!sameProjectSource(active, source) && !sameProjectSource(active, committed)) {
+      setNotice(text(language, `模型“${created.name}”已提交到工程，但当前工作台已经切换；请返回该工程目录核对。`, `Model “${created.name}” was committed, but the workbench has switched. Return to that project catalog to verify it.`));
+      return;
+    }
+    contextRef.current = committed;
+    const refreshedFile: SelectedProjectFile = {
+      identity: projectPath,
+      fileName: displayFileName(projectPath),
+      byteLength: new TextEncoder().encode(projectXml).byteLength,
+      lastModified: currentFile?.identity === projectPath ? currentFile.lastModified : null,
+      digest: projectRevision,
+      xmlSource: projectXml,
+      isWellFormedXml: isWellFormedXml(projectXml),
+    };
+    setCurrentFile(refreshedFile);
+    const recent: RecentProjectRecord = {
+      id: projectPath,
+      projectPath,
+      fileName: refreshedFile.fileName,
+      revision: projectRevision,
+      openedAt: Date.now(),
+    };
+    setRecentProjects((current) => [recent, ...current.filter((item) => item.projectPath !== projectPath)].slice(0, MAX_RECENT_PROJECTS));
+    setNotice(text(language, `已创建“${created.name}”，并提交工程 XML 与修订回执。`, `Created “${created.name}” and committed the project XML and revision receipt.`));
+    setModelCreationDialog(null);
+    retryTrees();
+  }, [currentFile, language]);
+
+  const openModelCreationDialog = (kind: 'newGeometry' | 'newPlan' | 'newBoundary'): void => {
+    if (modelCreationDisabledReason) {
+      setNotice(modelCreationDisabledReason);
+      return;
+    }
+    setNotice(undefined);
+    setModelCreationDialog(kind);
+  };
+
   const openNode = (node: CatalogTreeNode): void => {
     selectNode(node);
     onNavigate(featureForNode(node));
@@ -794,6 +867,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
           {headerAction}
           {workspaceArchiveUrl && downloadableWorkspace && <a className="project-button project-button-secondary" data-testid="project-download-workspace" aria-label={text(language, '请求下载当前工程所属的完整上传工作区 ZIP', 'Request the complete uploaded workspace ZIP that contains the current project')} href={workspaceArchiveUrl} download title={text(language, '请求下载当前工程所属的完整上传工作区 ZIP。', 'Request the complete uploaded workspace ZIP that contains the current project.')}>{text(language, '下载工作区 ZIP', 'Download workspace ZIP')}</a>}
           <button type="button" className="project-button project-button-secondary" disabled={fileBusy || libraryImportBusy} onClick={() => setOpenProjectDialog(true)}>{text(language, '打开工程', 'Open project')}</button>
+          <button type="button" className="project-button project-button-secondary" disabled={fileBusy || libraryImportBusy || !backend.supports('projectMigration.inspect')} title={!backend.supports('projectMigration.inspect') ? text(language, '当前 C# 后端未发布工程迁移检查。', 'The C# backend has not advertised project migration inspection.') : undefined} onClick={() => setMigrationOpen(true)}>{text(language, '迁移 v6 工程', 'Migrate v6 project')}</button>
           <button type="button" className="project-button project-button-primary" disabled={libraryImportBusy} onClick={() => setNewProjectOpen(true)}>{text(language, '新建工程', 'New project')}</button>
         </div>
       </div>
@@ -846,6 +920,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
             onClearRecents={() => setRecentProjects([])}
             onImportBusyChange={updateLibraryImportBusy}
             onOpenLibraryProject={openLibraryProject}
+            modelCreationDisabledReason={modelCreationDisabledReason}
+            onCreateModel={openModelCreationDialog}
           />
           {hasBackendFileIdentity && <ProjectTreeMode
             language={language}
@@ -892,6 +968,34 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         onOpenUploadedProject={requestProjectPathOpen}
         onUploadWorkspace={uploadWorkspace}
         onClearWorkspace={() => setUploadedWorkspace(null)}
+      />
+
+      <MigrateProjectControl
+        language={language}
+        backend={backend}
+        context={context}
+        open={migrationOpen}
+        hasUnsavedDrafts={hasUnsavedDrafts}
+        onClose={() => setMigrationOpen(false)}
+        onBusyChange={setFileBusy}
+        onContextCommit={props.onContextCommit}
+        onOpenProjectPath={requestProjectPathOpen}
+      />
+
+      <NewGeometryDialog
+        language={language} backend={backend} context={context} open={modelCreationDialog === 'newGeometry'}
+        blockedReason={modelCreationDisabledReason} hasUnsavedDrafts={hasUnsavedDrafts}
+        onClose={() => setModelCreationDialog(null)} onContextCommit={props.onContextCommit} onCreated={onModelCreated}
+      />
+      <NewPlanDialog
+        language={language} backend={backend} context={context} open={modelCreationDialog === 'newPlan'}
+        blockedReason={modelCreationDisabledReason} hasUnsavedDrafts={hasUnsavedDrafts}
+        onClose={() => setModelCreationDialog(null)} onContextCommit={props.onContextCommit} onCreated={onModelCreated}
+      />
+      <NewBoundaryConditionDialog
+        language={language} backend={backend} context={context} open={modelCreationDialog === 'newBoundary'}
+        blockedReason={modelCreationDisabledReason} hasUnsavedDrafts={hasUnsavedDrafts}
+        onClose={() => setModelCreationDialog(null)} onContextCommit={props.onContextCommit} onCreated={onModelCreated}
       />
 
       {(pendingOpen || pendingCloseDraft) && <div className="project-modal-backdrop project-guard-backdrop" role="presentation">

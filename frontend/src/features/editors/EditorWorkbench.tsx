@@ -5,7 +5,7 @@ import { BoundaryConditionEditor, BOUNDARY_EDITOR_PAGE_IDS } from './BoundaryCon
 import { ClassificationEditor } from './ClassificationEditor';
 import { EditorCatalogBrowser } from './EditorCatalogBrowser';
 import { NValueEditor } from './NValueEditor';
-import type { EditorPageProps, EditorSchema, EditorPageProps as PageProps, ModelDraft, ModelSnapshot, SeriesTransformOperation, TerrainTransformCommand } from './model';
+import type { EditorPageProps, EditorSchema, EditorPageProps as PageProps, ModelDraft, ModelSnapshot, SeriesTransformOperation, SpatialGridData, SpatialGridInspection, SpatialGridSelection, TerrainTransformCommand } from './model';
 import { pageTitle, schemaForAsset, snapshotRows } from './model';
 import { changedModelCells, createModelDraft, isModelDraftDirty, updateModelSample, validateChangedSamples } from './modelDraft';
 import { validateChangedTableCells, validateModelDraft } from './SchemaFieldRenderer';
@@ -29,6 +29,8 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const activeOwner = useRef(source.owner);
   activeOwner.current = source.owner;
   const [snapshot, setSnapshot] = useState<ModelSnapshot | null>(null);
+  const snapshotRef = useRef<ModelSnapshot | null>(snapshot);
+  snapshotRef.current = snapshot;
   const [draft, setDraft] = useState<ModelDraft | null>(null);
   const [loadState, setLoadState] = useState<LoadState>({ status: 'idle' });
   const [catalog, setCatalog] = useState<CatalogState>({ schemas: [], tables: [] });
@@ -503,6 +505,283 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     }
   };
 
+  const onSpatialTransform: PageProps['onSpatialTransform'] = async (layerID, operation, itemID) => {
+    setSaveErrorDetails('');
+    if (activeSave.current || busy) return false;
+    const boundary = draft?.boundaryView ?? snapshot?.boundary;
+    const selectedLayer = boundary?.spatial?.[layerID];
+    if (!snapshot || !draft || !asset || !source.context.projectPath || !snapshot.canEdit || !selectedLayer) return false;
+    if (!backend.supports('model.spatialTransform') || !backend.supports('model.save')) {
+      setSaveMessage(text(language, 'C# 服务端尚未提供空间测站和输入调整能力。', 'The C# server has not advertised spatial station and input transforms.'));
+      return false;
+    }
+    if (validations.length) {
+      setSaveErrors(validations);
+      setSaveMessage(text(language, '当前草稿有无效值；修正后才能调整空间输入。', 'Correct invalid draft values before changing spatial inputs.'));
+      return false;
+    }
+    const beforeStations = selectedLayer.stations.map((station) => station.id);
+    const beforeInputs = selectedLayer.inputs.map((input) => input.id);
+    const beforeSpatial = boundary?.spatial ?? {};
+    const beforeStation = itemID ? selectedLayer.stations.find((station) => station.id === itemID) : undefined;
+    const beforeInput = itemID ? selectedLayer.inputs.find((input) => input.id === itemID) : undefined;
+    if ((operation === 'addStation' && itemID !== null)
+      || (operation === 'addGauge' && (!itemID || !selectedLayer.stations.some((station) => station.id === itemID)))
+      || (operation === 'removeStation' && !beforeStation)
+      || (operation === 'removeGauge' && !beforeInput)) return false;
+    if (operation === 'removeStation') {
+      const referenced = Object.values(boundary?.spatial ?? {}).some((layer) => layer.inputs.some((input) => {
+        const key = `${input.scope}/Station`;
+        return (draft.fields[key] ?? snapshot.fields[key] ?? input.stationId ?? '') === itemID;
+      }));
+      if (referenced) {
+        setSaveMessage(text(language, '此测站仍被空间输入引用；先移除或改派输入。', 'This station is still referenced by a spatial input. Remove or reassign the input first.'));
+        return false;
+      }
+    }
+    const requestState = { owner: source.owner, controller: new AbortController() };
+    const requestGeneration = generation.current;
+    activeSave.current = requestState;
+    const isCurrentRequest = () => activeSave.current === requestState
+      && activeOwner.current === requestState.owner
+      && generation.current === requestGeneration
+      && !requestState.controller.signal.aborted;
+    setBusy(true);
+    setSaveMessage('');
+    setSaveErrors([]);
+    const readOnlyFields = new Set([...(snapshot.readOnlyFields ?? []), ...(draft.boundaryReadOnlyFields ?? [])]);
+    const fields = Object.fromEntries(Object.entries(draft.fields).filter(([id, value]) => value !== snapshot.fields[id] && !readOnlyFields.has(id)));
+    const previousSourceState = draft.sourceState !== (snapshot.sourceState ?? null)
+      ? draft.sourceState
+      : snapshot.sourceState ?? sourceStateFor(asset) ?? null;
+    const request = {
+      ...modelRequest(source.context, asset),
+      revision: snapshot.revision,
+      fields,
+      images: {},
+      sourceState: previousSourceState,
+      rows: draft.rows,
+      samples: samplesForBoundaryDraft(snapshot, draft),
+      changedCells: changedModelCells(draft, snapshotRows(snapshot)),
+    };
+    try {
+      const result = await backend.request<ModelSnapshot>('model.spatialTransform', {
+        model: request, layerId: layerID, operation, itemId: itemID,
+      }, { signal: requestState.controller.signal });
+      if (!isCurrentRequest()) return false;
+      assertModelSnapshot(result);
+      if (result.revision !== snapshot.revision || !result.boundary || !result.sourceState || result.sourceState === previousSourceState)
+        throw new Error('The spatial transform did not return a changed, revision-bound draft projection.');
+      const transformedLayer = result.boundary.spatial?.[layerID];
+      if (!transformedLayer) throw new Error('The spatial transform returned another layer selection.');
+      const expectStableOrder = (current: string[], next: string[], expectedCount: number, removedID?: string) => {
+        if (next.length !== expectedCount) return false;
+        const retained = removedID ? current.filter((id) => id !== removedID) : current;
+        return retained.every((id, index) => next[index] === id);
+      };
+      if (operation === 'addStation' || operation === 'removeStation') {
+        const nextIDs = transformedLayer.stations.map((station) => station.id);
+        const expected = beforeStations.length + (operation === 'addStation' ? 1 : -1);
+        if (!expectStableOrder(beforeStations, nextIDs, expected, operation === 'removeStation' ? itemID ?? undefined : undefined))
+          throw new Error('The spatial transform did not preserve station identities and ordering.');
+        if (operation === 'addStation') {
+          const created = transformedLayer.stations.at(-1);
+          if (!created || beforeStations.includes(created.id) || !/^[0-9a-f]{32}$/i.test(created.id) || created.scope !== `Spatial/Station/${created.id}`)
+            throw new Error('The backend did not return a stable station identity and source scope.');
+        } else if (transformedLayer.stations.some((station) => station.id === itemID)) {
+          throw new Error('The removed station is still present in the backend projection.');
+        }
+        if (operation === 'removeStation' && Object.values(result.boundary.spatial ?? {}).some((layer) => layer.inputs.some((input) => input.stationId === itemID)))
+          throw new Error('The backend left an input referencing the removed station.');
+      } else {
+        const nextIDs = transformedLayer.inputs.map((input) => input.id);
+        const expected = beforeInputs.length + (operation === 'addGauge' ? 1 : -1);
+        if (!expectStableOrder(beforeInputs, nextIDs, expected, operation === 'removeGauge' ? itemID ?? undefined : undefined))
+          throw new Error('The spatial transform did not preserve input identities and ordering.');
+        if (operation === 'addGauge') {
+          const created = transformedLayer.inputs.at(-1);
+          if (!created || beforeInputs.includes(created.id) || !/^[0-9a-f]{32}$/i.test(created.id)
+            || created.scope !== `Spatial/${layerID}/Gauge/${created.id}` || created.stationId !== itemID)
+            throw new Error('The backend did not return the new input with its stable identity, scope, and selected station.');
+        } else if (transformedLayer.inputs.some((input) => input.id === itemID)) {
+          throw new Error('The removed spatial input is still present in the backend projection.');
+        }
+      }
+      for (const [otherLayerID, oldLayer] of Object.entries(beforeSpatial)) {
+        const nextLayer = result.boundary.spatial?.[otherLayerID];
+        if (!nextLayer) throw new Error('The spatial transform omitted a previously loaded layer.');
+        const stationIDs = operation === 'addStation' || operation === 'removeStation'
+          ? transformedLayer.stations.map((station) => station.id)
+          : oldLayer.stations.map((station) => station.id);
+        if (nextLayer.stations.length !== stationIDs.length || nextLayer.stations.some((station, index) =>
+          station.id !== stationIDs[index] || station.scope !== `Spatial/Station/${station.id}`))
+          throw new Error('The spatial transform changed station identities or source scopes outside the requested operation.');
+        const inputIDs = otherLayerID === layerID && (operation === 'addGauge' || operation === 'removeGauge')
+          ? transformedLayer.inputs.map((input) => input.id)
+          : oldLayer.inputs.map((input) => input.id);
+        if (nextLayer.inputs.length !== inputIDs.length || nextLayer.inputs.some((input, index) =>
+          input.id !== inputIDs[index] || input.scope !== `Spatial/${otherLayerID}/Gauge/${input.id}`))
+          throw new Error('The spatial transform changed input identities or source scopes outside the requested operation.');
+      }
+      const transformedDraft = createModelDraft(result);
+      setDraft((current) => {
+        if (!current || activeOwner.current !== requestState.owner || generation.current !== requestGeneration) return current;
+        const next = {
+          ...current,
+          sourceState: transformedDraft.sourceState,
+          fields: transformedDraft.fields,
+          rows: transformedDraft.rows,
+          samples: transformedDraft.samples,
+          sampleText: transformedDraft.sampleText,
+          boundaryView: result.boundary,
+          boundaryFieldGroups: result.fieldGroups,
+          boundaryReadOnlyFields: result.readOnlyFields ?? [],
+        };
+        return { ...next, changedCells: changedModelCells(next, snapshotRows(snapshot)) };
+      });
+      const messageText = operation === 'addStation' ? '测站已加入草稿；点击“保存”后才会写入模型文件。'
+        : operation === 'removeStation' ? '测站已从草稿移除；点击“保存”后才会写入模型文件。'
+          : operation === 'addGauge' ? '空间输入已加入草稿；点击“保存”后才会写入模型文件。'
+            : '空间输入已从草稿移除；点击“保存”后才会写入模型文件。';
+      setSaveMessage(text(language, messageText, 'The spatial change is in the draft. Save to write it to the model file.'));
+      return true;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setSaveMessage(text(language, '空间边界调整失败。', 'The spatial boundary could not be changed.'));
+        setSaveErrorDetails(message(error));
+      }
+      return false;
+    } finally {
+      if (activeSave.current === requestState) {
+        activeSave.current = null;
+        setBusy(false);
+      }
+    }
+  };
+
+  const readGridModelRequest = () => {
+    if (!snapshot || !asset) throw new Error('No loaded Boundary Conditions model is active.');
+    const clean = createModelDraft(snapshot);
+    return {
+      ...modelRequest(source.context, asset),
+      revision: snapshot.revision,
+      fields: {},
+      images: {},
+      sourceState: snapshot.sourceState ?? sourceStateFor(asset) ?? null,
+      rows: clean.rows,
+      samples: samplesForBoundaryDraft(snapshot, clean),
+      changedCells: {},
+    };
+  };
+  const isCurrentGridRead = (owner: string, revision: string, requestGeneration: number, signal: AbortSignal) =>
+    activeOwner.current === owner && generation.current === requestGeneration
+      && snapshotRef.current?.revision === revision && !signal.aborted;
+
+  const onGridInspect: PageProps['onGridInspect'] = async (layerID, files, subdataset, bands, previewID, signal) => {
+    const supportedLayers = ['precipitation', 'wind', 'airPressure', 'airDensity'];
+    if (!snapshot || !asset || asset.kind !== 'Boundary Conditions' || !source.context.projectPath || !snapshot.canEdit
+      || !supportedLayers.includes(layerID) || !backend.supports('model.gridInspect')) throw new Error('Grid inspection is unavailable for the active source.');
+    const controller = signal ? null : new AbortController();
+    const activeSignal = signal ?? controller!.signal;
+    const owner = source.owner;
+    const revision = snapshot.revision;
+    const requestGeneration = generation.current;
+    const result = await backend.request<SpatialGridInspection>('model.gridInspect', {
+      model: readGridModelRequest(), layerId: layerID, files: [...files], subdataset: subdataset ?? null,
+      bands: bands ?? null, previewId: previewID ?? null,
+    }, { signal: activeSignal });
+    if (!isCurrentGridRead(owner, revision, requestGeneration, activeSignal)) throw new DOMException('The grid inspection belongs to a stale model selection.', 'AbortError');
+    if (!result || !Array.isArray(result.bands) || !Array.isArray(result.subdatasets) || !Array.isArray(result.unitOptions))
+      throw new Error('The C# service returned an incomplete grid inspection.');
+    return result;
+  };
+
+  const onGridFrame: PageProps['onGridFrame'] = async (layerID, timeID, component = 'Value', signal) => {
+    const supportedLayers = ['precipitation', 'wind', 'airPressure', 'airDensity'];
+    if (!snapshot || !asset || asset.kind !== 'Boundary Conditions' || !source.context.projectPath
+      || !supportedLayers.includes(layerID) || !backend.supports('model.gridFrame')) throw new Error('Grid-frame reading is unavailable for the active source.');
+    const controller = signal ? null : new AbortController();
+    const activeSignal = signal ?? controller!.signal;
+    const owner = source.owner;
+    const revision = snapshot.revision;
+    const requestGeneration = generation.current;
+    const result = await backend.request<SpatialGridData>('model.gridFrame', {
+      model: readGridModelRequest(), layerId: layerID, timeId: timeID ?? null, component,
+    }, { signal: activeSignal });
+    if (!isCurrentGridRead(owner, revision, requestGeneration, activeSignal)) throw new DOMException('The grid frame belongs to a stale model selection.', 'AbortError');
+    if (!result || result.layerId !== layerID || !Array.isArray(result.times) || !Array.isArray(result.components))
+      throw new Error('The C# service returned an incomplete grid frame.');
+    return result;
+  };
+
+  const onGridImport: PageProps['onGridImport'] = async (selection: SpatialGridSelection) => {
+    setSaveErrorDetails('');
+    if (activeSave.current || busy) return false;
+    const supportedLayers = ['precipitation', 'wind', 'airPressure', 'airDensity'];
+    if (!snapshot || !draft || !asset || asset.kind !== 'Boundary Conditions' || !source.context.projectPath || !snapshot.canEdit
+      || !supportedLayers.includes(selection.layerId)) return false;
+    if (dirty) {
+      setSaveMessage(text(language, '栅格导入会立即提交模型。请先保存或丢弃当前草稿。', 'Grid import commits the model immediately. Save or discard the current draft first.'));
+      return false;
+    }
+    if (!backend.supports('model.gridImport') || !backend.supports('model.save')) {
+      setSaveMessage(text(language, 'C# 服务端尚未提供栅格导入和模型保存能力。', 'The C# server has not advertised grid import and model save.'));
+      return false;
+    }
+    if (validations.length) {
+      setSaveErrors(validations);
+      setSaveMessage(text(language, '当前草稿有无效值；修正或丢弃后再导入栅格。', 'Correct or discard invalid draft values before importing a grid.'));
+      return false;
+    }
+    if (!selection.bands.length || selection.bands.some((band) => !band.included || !band.id || !band.revision)
+      || new Set(selection.bands.map((band) => band.id)).size !== selection.bands.length) return false;
+
+    const requestState = { owner: source.owner, controller: new AbortController() };
+    const requestGeneration = generation.current;
+    activeSave.current = requestState;
+    const isCurrentRequest = () => activeSave.current === requestState && activeOwner.current === requestState.owner
+      && generation.current === requestGeneration && !requestState.controller.signal.aborted;
+    setBusy(true);
+    setSaveMessage('');
+    setSaveErrors([]);
+    const requestModel = readGridModelRequest();
+    try {
+      const result = await backend.request<ModelSnapshot>('model.gridImport', { model: requestModel, selection }, { signal: requestState.controller.signal });
+      if (!isCurrentRequest()) return false;
+      assertModelSnapshot(result);
+      if (result.revision === snapshot.revision) throw new Error('Grid import returned no new committed model revision.');
+      const imported = result.grids?.[selection.layerId];
+      if (!imported || imported.layerId !== selection.layerId || !Array.isArray(imported.times))
+        throw new Error('The save receipt did not include the imported grid layer.');
+      const nextContext = updatedContext(source.context, asset, result);
+      const nextSource = sourceFor(nextContext);
+      acceptedReceipt.current = { owner: nextSource.owner, snapshot: result };
+      if (onContextCommit && !onContextCommit(source.context, nextContext)) {
+        acceptedReceipt.current = null;
+        return false;
+      }
+      onDirtyStateChange?.(source.owner, false);
+      activeOwner.current = nextSource.owner;
+      setSnapshot(result);
+      setDraft(createModelDraft(result));
+      setSource(nextSource);
+      setSaveMessage(text(language, '栅格已导入；工作台已按 C# 保存回执刷新基线。', 'The grid was imported. The workbench baseline was refreshed from the C# save receipt.'));
+      if (!onContextCommit) onContextChange(nextContext);
+      return true;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setSaveMessage(text(language, '栅格导入失败。', 'Grid import failed.'));
+        setSaveErrorDetails(message(error));
+      }
+      return false;
+    } finally {
+      if (activeSave.current === requestState) {
+        activeSave.current = null;
+        setBusy(false);
+      }
+    }
+  };
+
   const onTerrainTransform: PageProps['onTerrainTransform'] = async (command: TerrainTransformCommand) => {
     setSaveErrorDetails('');
     if (activeSave.current || busy) return false;
@@ -830,6 +1109,14 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     canTransformSeries: snapshot.canEdit && !!source.context.projectPath && validations.length === 0,
     ...(backend.supports('model.seriesTransform') && backend.supports('model.save') ? { onSeriesTransform } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.boundaryTransform') && backend.supports('model.save') ? { onBoundaryTransform } : {}),
+    canTransformSpatial: snapshot.canEdit && !!source.context.projectPath && validations.length === 0 && !busy
+      && backend.supports('model.spatialTransform') && backend.supports('model.save'),
+    ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.spatialTransform') && backend.supports('model.save') ? { onSpatialTransform } : {}),
+    canImportGrid: snapshot.canEdit && !!source.context.projectPath && !dirty && validations.length === 0 && !busy
+      && backend.supports('model.gridImport') && backend.supports('model.save'),
+    ...(source.context.projectPath && backend.supports('model.gridInspect') ? { onGridInspect } : {}),
+    ...(source.context.projectPath && backend.supports('model.gridFrame') ? { onGridFrame } : {}),
+    ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.gridImport') && backend.supports('model.save') ? { onGridImport } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.terrainTransform') && backend.supports('model.save') ? { onTerrainTransform } : {}),
   } : null;
   const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy;

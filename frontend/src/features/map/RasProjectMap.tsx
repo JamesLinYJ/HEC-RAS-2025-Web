@@ -10,6 +10,7 @@ import { MapVelocityArrows } from './MapVelocityArrows';
 import type { MapVelocityFieldState } from './useMapVelocityField';
 import { ToolTipAnnotation } from './ToolTipAnnotation';
 import type { MapHoverTooltip } from './useMapHoverIdentify';
+import { RasMapMinimap } from './RasMapMinimap';
 
 export interface RasProjectMapProps {
   layers: GeoJsonLayer[];
@@ -32,6 +33,7 @@ export interface RasProjectMapProps {
   onFeatureContext: (layer: GeoJsonLayer, feature: GeoFeature, event: ReactMouseEvent<SVGGElement>) => void;
   language: 'zh' | 'en';
   hoverTooltip?: MapHoverTooltip | null;
+  onViewportChange?: (viewport: MapViewport) => void;
 }
 
 function niceGridStep(unitsPerPixel: number, width: number): number {
@@ -185,6 +187,7 @@ export function RasProjectMap({
   onFeatureContext,
   language,
   hoverTooltip = null,
+  onViewportChange,
 }: RasProjectMapProps) {
   const visibleLayers = layers.filter((layer) => layer.visible);
   const coordinateKey = (layer: GeoJsonLayer) => layer.coordinateSpace === 'project' ? 'project' : 'source:' + layer.crs;
@@ -279,6 +282,9 @@ export function RasProjectMap({
         )}
       </svg>
       <ToolTipAnnotation tooltip={hoverTooltip} language={language} />
+      {settings.IsMapOverlayVisible && onViewportChange && (compatibleLayers.length > 0 || visibleImages.length > 0) &&
+        <RasMapMinimap layers={compatibleLayers} images={visibleImages} viewport={viewport} size={size}
+          language={language} onViewportChange={onViewportChange} />}
       {compatibleLayers.length === 0 && visibleImages.length === 0 && (
         <div className="map-empty-state">
           <span className="map-empty-glyph" aria-hidden="true"><i /><i /><i /></span>

@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import type { Language } from '../../shared/workbench';
 import { GeometryFeatureTable } from './GeometryFeatureTable';
-import { gdiagnostic, gerror, gfield, gmode, gt } from './geometryText';
+import { gdiagnostic, gfield, gmode, gt } from './geometryText';
 import { GeometryError } from './GeometryError';
 import { FlowAreaEditorControl } from './FlowAreaEditorControl';
-import { MeshErrorProperties } from './MeshErrorProperties';
+import { GeometryPrepareSummaryControl } from './GeometryPrepareSummaryControl';
+import { MeshDiagnostics } from './MeshDiagnostics';
 import { geometryDiagnosticMessage } from './geometryErrors';
 import type { GeometryField, GeometryRow, GeometryTable, GeometryMeshDegreeScan, GeometryMeshSnapshot } from './geometryTypes';
 
@@ -119,14 +120,12 @@ export function GeometryMeshPage({
         <button className="geometry-secondary" disabled={!canPrepare || busy || !canEdit} onClick={onPrepare}>{gt(language, 'prepare')}</button>
         <button className="geometry-primary" disabled={!canGenerate || busy || !canEdit || !snapshot} onClick={() => void generate()}>{busy ? gt(language, 'generating') : gt(language, 'generate')}</button>
       </>}>
-        {snapshot?.preparePending && <div className="geometry-local-banner">{gt(language, 'preparing')}</div>}
         {!canGenerate && <div className="geometry-inline-help" style={{ padding: '0 16px 12px' }}>{gt(language, 'unavailable')}</div>}
         {snapshot?.flowAreas.some((area) => area.hasMeshErrors) && <div className="geometry-validation-list"><div className="geometry-validation-item">{language === 'zh' ? '至少一个流动区域包含网格错误。' : 'At least one flow area contains mesh errors.'}</div></div>}
-        {snapshot?.prepareSummary && <div className="geometry-panel-body"><div className="geometry-kv-grid"><div className="geometry-kv"><span>{gt(language, 'status')}</span><strong>{snapshot.prepareSummary.succeeded ? gt(language, 'saved') : snapshot.prepareSummary.failureReason ? gerror(language, snapshot.prepareSummary.failureReason) : gt(language, 'incomplete')}</strong></div><div className="geometry-kv"><span>{gt(language, 'softwareVersion')}</span><strong>{snapshot.prepareSummary.softwareVersion || '—'}</strong></div><div className="geometry-kv"><span>{gt(language, 'duration')}</span><strong>{snapshot.prepareSummary.totalDurationSeconds ?? '—'}</strong></div><div className="geometry-kv"><span>{gt(language, 'startTime')}</span><strong>{snapshot.prepareSummary.startTime || '—'}</strong></div></div>{snapshot.prepareSummary.failureReason && <details className="geometry-inline-help" style={{ marginTop: 9 }}><summary>{gt(language, 'rawErrorDetails')}</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{snapshot.prepareSummary.failureReason}</pre></details>}</div>}
-        {snapshot?.generationReport && <div className="geometry-report-list"><strong>{gt(language, 'generationReport')} · {snapshot.generationReport.succeeded ? gt(language, 'complete') : gt(language, 'incomplete')}{snapshot.generationReport.cellCount != null ? ` · ${snapshot.generationReport.cellCount} ${gt(language, 'cells')}` : ''}</strong>{snapshot.generationReport.messages.length > 0 && <details className="geometry-report-item"><summary>{gt(language, 'generationDetails')}</summary>{snapshot.generationReport.messages.map((message, index) => <pre key={`${index}-${message}`}>{gdiagnostic(language, message)}</pre>)}</details>}</div>}
         {progress && <details className="geometry-panel-body"><summary>{gt(language, 'serverProgress')}</summary><pre className="geometry-report-item">{progress}</pre></details>}
         {taskError && <GeometryError language={language} error={taskError} style={{ margin: 13 }} />}
       </FlowAreaEditorControl>
+      <GeometryPrepareSummaryControl language={language} summary={snapshot?.prepareSummary} pending={!!snapshot?.preparePending} />
       <section className="geometry-panel">
         <header className="geometry-panel-heading"><div><h2>{gt(language, 'selectedRegions')}</h2><p>{snapshot?.selectedRegionIDs.length ?? 0} {gt(language, 'selected')}</p></div><span className="geometry-count-pill">{gt(language, 'sizingStatus')}</span></header>
         {snapshot?.patchSizing && <details className="geometry-inline-help"><summary>{gt(language, 'diagnosticDetails')}</summary><p>{gdiagnostic(language, snapshot.patchSizing.message)}</p></details>}
@@ -142,7 +141,7 @@ export function GeometryMeshPage({
         </div>
         {propertyOutput && <details className="geometry-report-item" style={{ margin: '0 14px 14px' }}><summary>{gt(language, 'propertyOutput')}</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{propertyOutput}</pre></details>}
       </section>
-      <MeshErrorProperties language={language} scan={degreeScanResult} rawOutput={degreeOutput} />
+      <MeshDiagnostics language={language} snapshot={snapshot} scan={degreeScanResult} rawOutput={degreeOutput} />
     </div>
   );
 }

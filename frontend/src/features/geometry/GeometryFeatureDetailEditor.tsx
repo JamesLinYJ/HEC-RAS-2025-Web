@@ -17,6 +17,8 @@ export interface GeometryFeatureDetailEditorProps {
   editable: boolean;
   busy: boolean;
   allowLocalAdd?: boolean;
+  showTable?: boolean;
+  selectedRowsOverride?: GeometryRow[];
   onChange: (row: GeometryRow, field: GeometryField, value: string, isLocal: boolean) => void;
   onDelete?: (rows: GeometryRow[]) => void;
   onLocalAdd?: () => void;
@@ -28,11 +30,11 @@ export interface GeometryFeatureDetailEditorProps {
 
 export function GeometryFeatureDetailEditor({
   language, kind, table, localRows = [], fieldOrder, readOnlyFieldIDs = [], clearCommands = {}, forceSetCommands = {}, editable, busy,
-  allowLocalAdd = false, onChange, onDelete, onLocalAdd, onCommand, onSelectionChange, onSelectionFieldChange, onSelectionFieldCommand,
+  allowLocalAdd = false, showTable = true, selectedRowsOverride, onChange, onDelete, onLocalAdd, onCommand, onSelectionChange, onSelectionFieldChange, onSelectionFieldCommand,
 }: GeometryFeatureDetailEditorProps) {
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const rows = useMemo(() => [...(table?.rows ?? []), ...localRows], [table?.rows, localRows]);
-  const selectedRows = rows.filter((row) => selectedIDs.includes(row.id));
+  const selectedRows = selectedRowsOverride ?? rows.filter((row) => selectedIDs.includes(row.id));
   const localRowIDs = useMemo(() => new Set(localRows.map((row) => row.id)), [localRows]);
   const selectRows = (ids: string[]): void => {
     setSelectedIDs(ids);
@@ -60,7 +62,7 @@ export function GeometryFeatureDetailEditor({
 
   return (
     <div className="geometry-grid geometry-detail-layout">
-      <GeometryFeatureTable
+      {showTable && <GeometryFeatureTable
         language={language}
         kind={kind}
         table={table}
@@ -72,7 +74,7 @@ export function GeometryFeatureDetailEditor({
         onDelete={editable || localRows.length > 0 ? onDelete : undefined}
         onLocalAdd={onLocalAdd}
         onSelect={selectRows}
-      />
+      />}
       <GeometryDetailFields
         language={language}
         title={`${gt(language, kindKey(kind))} · ${language === 'zh' ? '详细属性' : 'Details'}`}

@@ -199,6 +199,210 @@
           "model.terrainInputImportStatus"
         ],
         "writeBoundary": "Download creates Host-owned temporary source files. A user-selected batch then uses model.terrainUSGSDownload, model.terrainInputAppend and status polling; model.save commits the accepted Terrain draft and its HDF revision. model.terrainUSGSCleanup is a separate action requiring a fresh saved-model check that no Terrain input references the temporary paths. Ordinary in-project Terrain sources use their project path/revision/sourceState; only present session-only external references require a captured reference context."
+      },
+      {
+        "id": "project-model-creation-commit",
+        "mount": "ProjectExplorerControl → NewGeometryDialog / NewBoundaryConditionDialog / NewPlanDialog → useProjectModelCreation",
+        "source": [
+          "frontend/src/features/project/ProjectExplorerControl.tsx",
+          "frontend/src/features/project/NewGeometryDialog.tsx",
+          "frontend/src/features/project/NewBoundaryConditionDialog.tsx",
+          "frontend/src/features/project/NewPlanDialog.tsx",
+          "frontend/src/features/project/ProjectModelCreationWorkflow.ts",
+          "backend/Host/ModelCreationService.cs"
+        ],
+        "stateOwner": "Each dialog owns its field draft and inspection identity. Inspect/commit requests capture project session, path, XML, revision and XML SHA; the accepted receipt also carries the created asset revision and previous project revision.",
+        "readActions": [
+          "modelCreation.inspect",
+          "project.tree.load"
+        ],
+        "writeBoundary": "modelCreation.commit stages and publishes the new model HDF, adds a PlanAssociation for Plan or optional-source association metadata for Geometry when needed, verifies project/catalog read-back and conditionally rolls back only files whose identity and content still belong to this operation. A Boundary Condition without a primary-key association, or a Geometry with no optional Terrain/N-Value association, can leave project XML and .ras SHA unchanged while the new HDF is identified by assetRevision. The active context changes only after matching parent receipt acceptance."
+      },
+      {
+        "id": "legacy-project-migration",
+        "mount": "ProjectExplorerControl → MigrateProjectControl",
+        "source": [
+          "frontend/src/features/project/ProjectExplorerControl.tsx",
+          "frontend/src/features/project/MigrateProjectControl.tsx",
+          "backend/Host/ProjectMigrationService.cs"
+        ],
+        "stateOwner": "The modal captures the legacy .prj source path and projectMigration.inspect revision/SHA, plus a separate output directory and the originating project-session context.",
+        "readActions": [
+          "projectMigration.inspect",
+          "project.open"
+        ],
+        "writeBoundary": "projectMigration.execute invokes the Host converter into a directory separate from the legacy source; the source remains read-only. The output is opened and read back, and only a matching parent-session commit switches the active project. A stale parent may leave the converted output for inspection without changing the current context."
+      },
+      {
+        "id": "spatial-boundary-grid-and-draft",
+        "mount": "EditorWorkbench → SpatialDataSummaryPage → SpatialDataSummary / SpatialBoundaryConditionsPage / SpatialBoundaryConditionRasterImporter",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/SpatialDataSummaryPage.tsx",
+          "frontend/src/features/editors/SpatialBoundaryConditionRasterImporter.tsx",
+          "backend/Host/SpatialGridService.cs",
+          "backend/Host/ModelEditorAdapter.cs"
+        ],
+        "stateOwner": "Grid requests bind the active Boundary Conditions owner, saved model revision, layer and requested timestep/component. Station/input fields and rows remain in the parent ModelDraft; the spatial page owns its selected layer, frame cache and cancellable frame read.",
+        "readActions": [
+          "model.gridInspect",
+          "model.gridFrame"
+        ],
+        "writeBoundary": "model.gridInspect and model.gridFrame inspect sources and read Host frames. model.gridImport is an immediate saved-model operation against the snapshot: it refuses dirty/invalid drafts, requires a changed model revision and imported-grid read-back, then refreshes the parent baseline after context receipt acceptance. Station/gauge structure changes use model.spatialTransform and remain in the parent draft until model.save."
+      },
+      {
+        "id": "plan-time-window-mode",
+        "mount": "EditorWorkbench → PlanEditorControl → PlanSettingsPage → SchemaPage → SchemaFieldRenderer → PlanTimeWindowModePickerPropertyItem",
+        "source": [
+          "frontend/src/features/editors/PlanEditorControl.tsx",
+          "frontend/src/features/editors/PlanSettingsPage.tsx",
+          "frontend/src/features/editors/SchemaFieldRenderer.tsx",
+          "frontend/src/controls/PlanTimeWindowModePickerPropertyItem.tsx",
+          "frontend/src/controls/PlanTimeWindowModePicker.tsx",
+          "backend/Host/ModelEditorAdapter.cs",
+          "backend/Host/PlanContextRefreshService.cs"
+        ],
+        "stateOwner": "The Plan schema field ViewModel_SelectedPlan_TimeWindowMode supplies the mode value, choices and field title; the control preserves the enum string and calls the renderer’s existing fieldKey callback. The Host snapshot provides planTimeWindowFieldIDs for mode/start/end and identifies read-only Result Plans.",
+        "readActions": [
+          "model.load",
+          "model.save"
+        ],
+        "writeBoundary": "Changing mode updates the parent ModelDraft only and does not rewrite start/end. EditorWorkbench groups actual mode/start/end changes into planTimeWindowEdits on the parent model.save transaction. PlanSettings mounts the PropertyItem; NewPlanControl mounts the standalone PlanTimeWindowModePicker, matching the source C# composition. Result Plan fields remain read-only. Current React displays schema choices/current value but does not reproduce the source property header dynamic icon."
+      },
+      {
+        "id": "geometry-topology-specialized-controls",
+        "mount": "GeometryEditor → GeometryTopologySummaryPage / GeometryTopologyArcsPage / GeometryTopologyRegionsPage / GeometryTopologyNodesPage → type-specific topology editors",
+        "source": [
+          "frontend/src/features/geometry/GeometryEditor.tsx",
+          "frontend/src/features/geometry/useGeometryWorkbench.ts",
+          "frontend/src/features/geometry/GeometryTopologySummaryPage.tsx",
+          "frontend/src/features/geometry/TopologyArcsEditor.tsx",
+          "frontend/src/features/geometry/TopologyRegionsEditor.tsx",
+          "frontend/src/features/geometry/TopologyNodesEditor.tsx",
+          "frontend/src/features/geometry/ConceptualMeshTopologyArcsEditor.tsx",
+          "frontend/src/features/geometry/ConceptualMeshTopologyRegionsEditor.tsx",
+          "frontend/src/features/geometry/ArcsTable.tsx",
+          "frontend/src/features/geometry/RegionsTable.tsx",
+          "frontend/src/features/geometry/ControlPointEditor.tsx",
+          "frontend/src/features/geometry/NodeEditor.tsx",
+          "frontend/src/features/geometry/DetailedArcHeader.tsx",
+          "frontend/src/features/geometry/DetailedControlPointHeader.tsx",
+          "frontend/src/features/geometry/TopologyControl.tsx",
+          "frontend/src/features/geometry/ConceptualMeshArcEditor.tsx",
+          "frontend/src/features/geometry/ConceptualMeshControlPointEditor.tsx",
+          "frontend/src/features/geometry/GeometryFeatureDetailEditor.tsx",
+          "frontend/src/features/geometry/ArcEditor.tsx",
+          "frontend/src/features/geometry/TopologyArcQuickEditPicker.tsx",
+          "frontend/src/features/geometry/TopologyRegionQuickEditPicker.tsx",
+          "frontend/src/features/geometry/TopologyRecipeBuilder.tsx"
+        ],
+        "stateOwner": "The Geometry workbench owns the captured model/topology revision, server draftState, undo history and stable row/FID identities. The selected arc/region/node rows are shared with their mounted detail, quick-edit, error and recipe controls.",
+        "readActions": [
+          "model.load",
+          "topology.load",
+          "geometry.mesh.load",
+          "topology.arcPoints",
+          "topology.recipe"
+        ],
+        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations; Recipe application is tied to the inspected revision and draft identity. Node coordinates remain read-only because the current Host route has no node-move command. Parent model.save commits the Geometry HDF; child editors do not save independently."
+      },
+      {
+        "id": "terrain-levee-composition",
+        "mount": "EditorWorkbench → TerrainLayersEditor → selected Levee input → LeveeModTerrainInputEditor → LeveeModEditor / LeveeModPropertiesEditor",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/TerrainLayersEditor.tsx",
+          "frontend/src/features/editors/LeveeModTerrainInputEditor.tsx",
+          "frontend/src/features/editors/LeveeModEditor.tsx",
+          "frontend/src/features/editors/LeveeModPropertiesEditor.tsx",
+          "frontend/src/features/editors/LeveeModsTable.tsx"
+        ],
+        "stateOwner": "The active selected Terrain input determines which editors mount: the feature editor requires LeveeModsTable and the property editor requires LeveeModPropertiesEditor/PropertySets. Both use the same selected input projection, schemas and ModelDraft rows/fields.",
+        "readActions": [
+          "model.load",
+          "model.terrainTransform"
+        ],
+        "writeBoundary": "Levee fields, table cells and structural transforms update the parent draft/projection; there is no separate Levee file save. The validated parent model.save is the Terrain HDF persistence boundary."
+      },
+      {
+        "id": "map-tree-minimap-coordinate-navigation",
+        "mount": "MapFeaturePage → MapLayerTree → RasTreeV2 → MapTreeNode → typed tree nodes; RasProjectMap → RasMapMinimap; MapFeaturePage → ZoomToPointDialog / RasMapPositionIndicator",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/MapLayerTree.tsx",
+          "frontend/src/features/map/tree/RasTreeV2.tsx",
+          "frontend/src/features/map/tree/MapTreeNode.tsx",
+          "frontend/src/features/map/tree/FolderNode.tsx",
+          "frontend/src/features/map/tree/GeometryNode.tsx",
+          "frontend/src/features/map/tree/PlanNode.tsx",
+          "frontend/src/features/map/tree/ResultNode.tsx",
+          "frontend/src/features/map/tree/MultiResultNode.tsx",
+          "frontend/src/features/map/tree/TerrainNode.tsx",
+          "frontend/src/features/map/tree/NValueNode.tsx",
+          "frontend/src/features/map/tree/ClassificationNode.tsx",
+          "frontend/src/features/map/tree/BoundaryConditionNode.tsx",
+          "frontend/src/features/map/tree/TerrainInputNode.tsx",
+          "frontend/src/features/map/tree/FlowAreaNode.tsx",
+          "frontend/src/features/map/tree/CulvertBarrelLayerNode.tsx",
+          "frontend/src/features/map/tree/PointMapLayerNode.tsx",
+          "frontend/src/features/map/tree/PolylineMapLayerNode.tsx",
+          "frontend/src/features/map/tree/PolygonMapLayerNode.tsx",
+          "frontend/src/features/map/tree/GenericTreeNode.tsx",
+          "frontend/src/features/map/RasMapMinimap.tsx",
+          "frontend/src/features/map/ZoomToPointDialog.tsx",
+          "frontend/src/features/map/RasMapPositionIndicator.tsx",
+          "frontend/src/features/map/ProjectTreeListener.ts"
+        ],
+        "stateOwner": "The active map document and visualization revision own catalog/tree mutations; selected/expanded nodes and viewport/camera are page-local. Typed nodes preserve each catalog node and locator. Minimap and coordinate navigation use the current map viewport and CRS.",
+        "readActions": [
+          "map.tree.load"
+        ],
+        "writeBoundary": "Persisted source visibility goes through map.tree.perform and accepts a matching .vis revision receipt; hidden source members remain in the tree and removal is separate. Minimap panning/zooming, screen-to-world coordinate display and ZoomToPointDialog navigation change only the viewport and do not write .vis or .ras."
+      },
+      {
+        "id": "shapefile-family-attribute-preview",
+        "mount": "SourceManagerControl → AttributeTableEditorControl → AttributeTableDataGrid",
+        "source": [
+          "frontend/src/features/tools/SourceManagerControl.tsx",
+          "frontend/src/features/tools/attributes/AttributeTableEditorControl.tsx",
+          "frontend/src/features/tools/attributes/AttributeTableDataGrid.tsx",
+          "frontend/src/features/map/importMapSources.ts",
+          "backend/Host/MapVectorSourceService.cs",
+          "backend/Host/AttributeTableService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The source path and Host capture bind the primary-file canonical path/SHA and complete Shapefile family revision, including required .shp/.shx/.dbf and optional .prj identities. Load and preview transforms recheck the family before and after reading or changing the table.",
+        "readActions": [
+          "workspace.file.inspect",
+          "map.vector.captureShapefile",
+          "attributeTable.load",
+          "attributeTable.transform"
+        ],
+        "writeBoundary": "attributeTable.load reads the source and attributeTable.transform returns an in-memory table preview for cell/column edits; this flow has no disk-write operation for the Shapefile family. Importing uploaded Shapefile files into a saved map is a separate uploadMapSources/map.vector.importShapefile transaction and may update the map document."
+      },
+      {
+        "id": "rgb-depth-export-host-dialogs",
+        "mount": "ImportExportToolControl → DepthShapeExporterDialog / RgbTiffExporterDialog → DepthShapeExporter / RgbTiffExporterControl",
+        "source": [
+          "frontend/src/features/tools/ImportExportToolControl.tsx",
+          "frontend/src/features/tools/exports/DepthShapeExporterDialog.tsx",
+          "frontend/src/features/tools/exports/DepthShapeExporter.tsx",
+          "frontend/src/features/tools/exports/RgbTiffExporterDialog.tsx",
+          "frontend/src/features/tools/exports/RgbTiffExporterControl.tsx",
+          "frontend/src/features/tools/exports/exportWorkflow.ts",
+          "backend/Host/DepthShapefileExportService.cs",
+          "backend/Host/RasterRgbExportService.cs"
+        ],
+        "stateOwner": "Depth export captures saved map/Result sources, profile, extent and exact preview parameters; RGB export captures a saved map raster source and inspected source identity. The dialogs bind those receipts to the active project/map owner and invalidate preview when inputs change.",
+        "readActions": [
+          "map.document.list",
+          "map.resultSources",
+          "depthExport.inspect",
+          "depthExport.preview",
+          "rasterExport.inspect",
+          "rasterExport.preview"
+        ],
+        "writeBoundary": "depthExport.execute writes a Shapefile family and rasterExport.execute writes RGB GeoTIFF only after explicit export action and matching preview. Output paths are absolute paths resolved by the C# Host; Host completion/cancellation receipts describe server-side artifacts and do not imply a browser-local download. This entry records the wired source flow, not runtime validation."
       }
     ],
     "stateInvariants": [

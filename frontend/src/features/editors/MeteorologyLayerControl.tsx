@@ -27,7 +27,8 @@ export interface MeteorologyLayerControlProps extends EditorPageProps {
 export function MeteorologyLayerControl({ definition, renderConstant, ...props }: MeteorologyLayerControlProps) {
   const { language, snapshot, draft } = props;
   const schema = props.schemas.find((item) => item.id === definition.schemaId);
-  const spatial = snapshot.boundary?.spatial?.[definition.layerId];
+  const boundary = draft.boundaryView ?? snapshot.boundary;
+  const spatial = boundary?.spatial?.[definition.layerId];
   const enabledKey = `${definition.schemaId}/${definition.enabledField}`;
   const typeKey = `${definition.schemaId}/${definition.typeField}`;
   const enabledValue = draft.fields[enabledKey] ?? snapshot.fields[enabledKey] ?? 'false';
@@ -120,11 +121,11 @@ function SpatialConstantField({ props, schema, schemaId, fieldId, unitData, unit
   />;
 }
 
-function SpatialInputs({ spatial, series, language, snapshot, draft, onRowCellChange, onSampleChange, onSeriesTransform, canTransformSeries }: EditorPageProps & { spatial?: SpatialPointData; series: NonNullable<NonNullable<EditorPageProps['snapshot']['boundary']>['series'][string]>[] }) {
+export function SpatialInputs({ spatial, series, language, snapshot, draft, onRowCellChange, onSampleChange, onSeriesTransform, canTransformSeries }: EditorPageProps & { spatial?: SpatialPointData; series: NonNullable<NonNullable<EditorPageProps['snapshot']['boundary']>['series'][string]>[] }) {
   const inputs = spatial?.inputs ?? [];
   const stations = spatial?.stations ?? [];
   if (inputs.length === 0 && series.length === 0 && stations.length === 0) {
-    return <p className="editor-meteorology-note">{language === 'zh' ? '此模型快照没有该类型的空间输入。添加或导入空间数据需要后端空间编辑操作；当前只编辑快照中已存在的数据。' : 'This model snapshot contains no spatial inputs of this type. Adding or importing spatial data requires a backend spatial edit operation; this editor only changes data present in the snapshot.'}</p>;
+    return <p className="editor-meteorology-note">{language === 'zh' ? '此模型快照没有该类型的空间输入。可打开“空间数据与输入管理”查看快照，或使用已接通的 C# 空间变换添加测站与输入。' : 'This model snapshot contains no spatial inputs of this type. Open Spatial data and inputs to inspect the snapshot or use the connected C# spatial transform to add stations and inputs.'}</p>;
   }
   return <div className="editor-meteorology-spatial">
     {stations.length > 0 && <details className="editor-series-panel" open>
@@ -210,7 +211,7 @@ function isDateTimeLocalValue(value: string): boolean {
 }
 
 function spatialSeries(props: EditorPageProps, layerId: string, spatial?: SpatialPointData) {
-  const all = Object.values(props.snapshot.boundary?.series ?? {});
+  const all = Object.values((props.draft.boundaryView ?? props.snapshot.boundary)?.series ?? {});
   const inputs = spatial?.inputs ?? [];
   const exactInputs = new Map(inputs.map((input) => [input.scope, input.pageId ?? input.scope + '/Time Series']));
   return all.filter((series) => {

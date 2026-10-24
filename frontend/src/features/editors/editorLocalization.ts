@@ -876,6 +876,7 @@ const pageTitles: Record<string, [string, string]> = {
   PlanEditorControl: ['方案', 'Plan'], PlanSettingsPage: ['方案设置', 'Plan Settings'], PlanComputeSettingsPage: ['计算设置', 'Compute Settings'],
   BoundaryConditionsSummary: ['边界条件概览', 'Boundary Conditions Summary'], BoundaryConditionEditor: ['水力边界', 'Boundary Condition Line'],
   PrecipitationControl: ['降水', 'Precipitation'], EvapotranspirationControl: ['蒸散发', 'Evapotranspiration'],
+  SpatialDataSummaryPage: ['空间边界数据', 'Spatial boundary data'],
   WindForcesControl: ['风力', 'Wind Forces'], WindConstantControl: ['恒定风场', 'Wind Constant'], AirPressureControl: ['气压', 'Air Pressure'],
   AirDensityControl: ['空气密度', 'Air Density'], TerrainProperties: ['地形属性', 'Terrain Properties'], TerrainLayersEditor: ['地形输入', 'Terrain Layers'],
   ClassificationCatalogSummary: ['分类摘要', 'Classification Catalog Summary'], ClassificationLayerSummary: ['分类图层', 'Classification Layer Summary'],

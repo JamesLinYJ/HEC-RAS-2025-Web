@@ -33,6 +33,8 @@ import { MapSourceImportControl } from './MapSourceImportControl';
 import { RasBackgroundMaps } from './RasBackgroundMaps';
 import { RasMapPositionIndicator } from './RasMapPositionIndicator';
 import { RasMapUndoRedo } from './RasMapUndoRedo';
+import { ZoomToPointDialog } from './ZoomToPointDialog';
+import { navigationViewport } from './mapNavigation';
 import type { GeoFeature, GeoGeometry, GeoJsonLayer, MapDocumentTab, MapImageLayer, XY } from './mapTypes';
 import type { MapFeaturePageProps } from './mapTypes';
 import { localizeProjectTreeSourceClass } from '../project/ProjectTreeModeSectionTitles';
@@ -164,6 +166,7 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
   const [mapStateByOwner, setMapStateByOwner] = useState<Record<string, MapOwnerState>>({});
   const [backgroundSettingsByOwner, setBackgroundSettingsByOwner] = useState<Record<string, BackgroundMapsVMState>>({});
   const [viewport, setViewport] = useState<MapViewport>(INITIAL_VIEWPORT);
+  const [locationDialog, setLocationDialog] = useState<{ owner: string; initialPoint: XY } | null>(null);
   const [size, setSize] = useState({ width: 880, height: 620 });
   const [activeTool, setActiveTool] = useState<MapToolID>('select');
   const [settings, setSettings] = useState<MapDisplaySettings>(DEFAULT_MAP_DISPLAY_SETTINGS);
@@ -199,6 +202,7 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
     acceptedVisualizationRevision: string; source: Record<string, unknown>;
   } | null>(null);
   const owner = activeDocument?.id ?? ('local:' + context.projectSessionID);
+  useEffect(() => setLocationDialog(null), [owner]);
   const ownerState = mapStateByOwner[owner] ?? EMPTY_MAP_OWNER_STATE;
   const activeLayers = ownerState.layers;
   const draftPoints = ownerState.points;
@@ -456,13 +460,15 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
     if (extent) setViewport(fitExtent(extent, size, 72));
   };
 
-  const fitVisibleLayers = () => {
+  const visibleExtent = (() => {
     const top = visibleLayers[visibleLayers.length - 1];
-    const key = (layer: GeoJsonLayer) => layer.coordinateSpace === 'project' ? 'project' : layer.crs;
+    const key = (layer: GeoJsonLayer) => layer.coordinateSpace === 'project' ? 'project' : 'source:' + layer.crs;
     const fitLayers = top ? visibleLayers.filter((layer) => key(layer) === key(top)) : visibleLayers;
-    const extent = unionExtents([...fitLayers.map((layer) => layer.extent),
+    return unionExtents([...fitLayers.map((layer) => layer.extent),
       ...(!top || top.coordinateSpace === 'project' ? mapImages.map((image) => image.extent) : [])]);
-    if (extent) setViewport(fitExtent(extent, size, 72));
+  })();
+  const fitVisibleLayers = () => {
+    if (visibleExtent) setViewport(fitExtent(visibleExtent, size, 72));
   };
 
   const handleSourceImport = async (files: File[], options?: { directory?: boolean }) => {
@@ -934,6 +940,7 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
           onZoomIn={() => setViewport((current) => zoomAt(current, [size.width / 2, size.height / 2], 1.5))}
           onZoomOut={() => setViewport((current) => zoomAt(current, [size.width / 2, size.height / 2], 1 / 1.5))}
           onFit={fitVisibleLayers}
+          onZoomToPoint={() => setLocationDialog({ owner, initialPoint: screenToWorld([size.width / 2, size.height / 2], viewport) })}
           canFit={visibleLayers.length > 0 || mapImages.length > 0}
           language={language}
         />
@@ -946,6 +953,10 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
         />
         <div className="map-tool-help">{mapToolHelp(activeTool, language)}</div>
       </div>
+
+      {locationDialog?.owner === owner && <ZoomToPointDialog
+        initialPoint={locationDialog.initialPoint} language={language} onClose={() => setLocationDialog(null)}
+        onNavigate={target => { setViewport(navigationViewport(target, size, visibleExtent)); setLocationDialog(null); }} />}
 
       {draftPoints.length > 0 && (
         <div className="map-draft-actions">
@@ -1007,6 +1018,7 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
               images={mapImages}
               velocityField={velocityField}
               viewport={viewport}
+              onViewportChange={setViewport}
               size={size}
               activeTool={activeTool}
               selectedFeature={selectedFeatureDetails ? { layerID: selectedFeatureDetails.layer.id, featureID: selectedFeatureDetails.feature.id } : null}

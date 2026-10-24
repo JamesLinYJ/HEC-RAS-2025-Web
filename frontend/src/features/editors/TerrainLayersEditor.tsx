@@ -1,13 +1,14 @@
-import { useState } from 'react';
-import type { EditorPageProps, ModelTable, TerrainTransformCommand } from './model';
+import type { EditorPageProps, ModelTable } from './model';
 import { SchemaFieldRenderer } from './SchemaFieldRenderer';
 import { ModelDataTable } from './ModelDataTable';
-import { editorTableTitle, editorValueLabel } from './editorLocalization';
+import { editorTableTitle } from './editorLocalization';
 import { RasterTerrainInputProperties } from './RasterTerrainInputProperties';
 import { FunctionalTerrainInputProperties } from './FunctionalTerrainInputProperties';
 import { ChannelModTerrainInputProperties } from './ChannelModTerrainInputProperties';
-import { LeveeModDetailEditor } from './LeveeModDetailEditor';
-import { LeveeModPropertiesDetailEditor } from './LeveeModPropertiesDetailEditor';
+import { DetailedTerrainHeader } from './DetailedTerrainHeader';
+import { DetailedTerrainInputHeader } from './DetailedTerrainInputHeader';
+import { TerrainAddControl } from './TerrainAddControl';
+import { LeveeModTerrainInputEditor } from './LeveeModTerrainInputEditor';
 import { LeveeModsTable } from './LeveeModsTable';
 
 const selectedInputField = 'TerrainLayersEditor/SelectedInputWithMap';
@@ -18,13 +19,6 @@ const leveeFeatureTableID = 'LeveeModsTable';
 const leveePropertyTableID = 'LeveeModPropertiesEditor/PropertySets';
 const leveeProfileTableID = 'LeveeModDetailEditor/Profile';
 const polygonFeatureTableID = 'PolygonRasterModificationLayerProperties/Features';
-const inputKinds: Array<{ id: NonNullable<TerrainTransformCommand['inputKind']>; title: [string, string] }> = [
-  { id: 'functionalSurface', title: ['函数地形', 'Functional surface'] },
-  { id: 'polygonVectorMod', title: ['多边形矢量修改层', 'Polygon vector modification layer'] },
-  { id: 'channelVectorMod', title: ['渠道矢量修改层', 'Channel vector modification layer'] },
-  { id: 'simpleCutFill', title: ['简单挖填层', 'Simple cut/fill layer'] },
-];
-
 /** React port of Ras.Visual.WinUI.Controls.TerrainEditor and TerrainLayersEditor state. */
 export function TerrainLayersEditor(props: EditorPageProps) {
   const { language, snapshot, draft } = props;
@@ -35,9 +29,9 @@ export function TerrainLayersEditor(props: EditorPageProps) {
     : draft.fields[selectedInputField] ?? terrain?.selectedId ?? '';
   const selected = inputs.find((input) => input.id === selectedId) ?? inputs[0];
   if (!selected) return <section className="editor-schema-page editor-terrain-inputs">
-    <div className="editor-schema-heading"><div><p className="editor-eyebrow">{language === 'zh' ? '地形编辑器' : 'Terrain editor'}</p><h2>{language === 'zh' ? '输入图层' : 'Input layers'}</h2></div></div>
+    <DetailedTerrainHeader language={language} snapshot={snapshot} draft={draft} />
     <div className="editor-empty-state">{language === 'zh' ? '该地形没有输入图层。' : 'This terrain has no input layers.'}</div>
-    <TerrainInputPicker language={language} canEdit={snapshot.canEdit} onTransform={props.onTerrainTransform} />
+    <TerrainAddControl language={language} canEdit={snapshot.canEdit} onTerrainTransform={props.onTerrainTransform} />
   </section>;
 
   const projectedSnapshot = draft.terrainView ? {
@@ -67,36 +61,21 @@ export function TerrainLayersEditor(props: EditorPageProps) {
   const selectedIndex = inputs.findIndex((input) => input.id === selected.id);
   const transform = props.onTerrainTransform;
 
-  const runTransform = (command: TerrainTransformCommand) => { void transform?.(command); };
+  const runTransform = (command: Parameters<NonNullable<EditorPageProps['onTerrainTransform']>>[0]) => { void transform?.(command); };
 
   return (
     <section className="editor-schema-page editor-terrain-inputs">
-      <div className="editor-schema-heading">
-        <div><p className="editor-eyebrow">{language === 'zh' ? '地形编辑器' : 'Terrain editor'}</p><h2>{language === 'zh' ? '输入图层' : 'Input layers'}</h2></div>
-        <details className="editor-source-details"><summary>{language === 'zh' ? '来源控件' : 'Source control'}</summary><code>TerrainLayersEditor</code></details>
-      </div>
+      <DetailedTerrainHeader language={language} snapshot={projectedSnapshot} draft={draft} />
       <div className="editor-terrain-layout">
         <nav className="editor-line-list" aria-label={language === 'zh' ? '地形输入' : 'Terrain inputs'}>
           {inputs.map((input) => <button type="button" key={input.id} className={input.id === selected.id ? 'selected' : ''} disabled={!transform} onClick={() => runTransform({ operation: 'selectInput', itemId: input.id })}>
-            {draft.fields[`${input.scope}/Name`] ?? input.name}<small>{editorValueLabel(language, input.type)}{input.error ? ` · ${language === 'zh' ? '有错误' : 'Error'}` : ''}</small>
+            {draft.fields[`${input.scope}/Name`] ?? input.name}<small>{input.error ? (language === 'zh' ? '有错误' : 'Error') : (language === 'zh' ? '地形输入' : 'Terrain input')}</small>
           </button>)}
-          <TerrainInputPicker language={language} canEdit={snapshot.canEdit} onTransform={transform} />
+          <TerrainAddControl language={language} canEdit={snapshot.canEdit} onTerrainTransform={transform} />
         </nav>
         <div className="editor-terrain-content">
           <article className="editor-terrain-card">
-            <h3>{draft.fields[selectedInputNameField] ?? selected.name}</h3>
-            <div className="editor-field-grid">
-              <div className="editor-field">
-                <label htmlFor="terrain-input-name">{language === 'zh' ? '输入名称' : 'Input name'}</label>
-                <input id="terrain-input-name" type="text" value={draft.fields[selectedInputNameField] ?? selected.name} disabled={!snapshot.canEdit} onChange={(event) => props.onFieldChange(selectedInputNameField, event.currentTarget.value)} />
-              </div>
-            </div>
-            <dl className="editor-readonly-list">
-              <dt>{language === 'zh' ? '输入类型' : 'Input type'}</dt><dd>{editorValueLabel(language, selected.type)}</dd>
-              <dt>{language === 'zh' ? '源文件' : 'Source file'}</dt><dd>{selected.filename ?? '—'}</dd>
-              <dt>{language === 'zh' ? '有效范围' : 'Valid extent'}</dt><dd>{selected.validExtent ? `${selected.validExtent.minX}, ${selected.validExtent.minY} – ${selected.validExtent.maxX}, ${selected.validExtent.maxY}` : '—'}</dd>
-              {selected.error && <><dt>{language === 'zh' ? '状态' : 'Status'}</dt><dd className="editor-field-error"><details><summary>{language === 'zh' ? '错误详情' : 'Error details'}</summary><pre>{selected.error}</pre></details></dd></>}
-            </dl>
+            <DetailedTerrainInputHeader language={language} input={selected} canEdit={snapshot.canEdit} value={draft.fields[selectedInputNameField] ?? selected.name} onNameChange={props.onFieldChange} onRemove={transform} />
             {inputSchema && selected.schema === 'RasterTerrainInputProperties' && <RasterTerrainInputProperties {...projectedProps} selected={selected} schema={inputSchema} fieldKeyPrefix={fieldKeyPrefix} />}
             {inputSchema && selected.schema === 'FunctionalTerrainInputProperties' && <FunctionalTerrainInputProperties {...projectedProps} selected={selected} schema={inputSchema} fieldKeyPrefix={fieldKeyPrefix} />}
             {inputSchema && selected.schema === 'ChannelModTerrainInputProperties' && <ChannelModTerrainInputProperties {...projectedProps} selected={selected} schema={inputSchema} fieldKeyPrefix={fieldKeyPrefix} selectedInputIsLoaded={selectedInputIsLoaded} />}
@@ -111,18 +90,13 @@ export function TerrainLayersEditor(props: EditorPageProps) {
               onImagesChange={props.onImagesChange}
               language={language}
             />}
-            {selected.overviews?.length ? <details className="editor-source-details"><summary>{language === 'zh' ? `金字塔层级 (${selected.overviewCount ?? selected.overviews.length})` : `Raster overviews (${selected.overviewCount ?? selected.overviews.length})`}</summary><ul>{selected.overviews.map((item) => <li key={item}>{item}</li>)}</ul></details> : null}
             {transform && <div className="editor-button-row">
               <button type="button" className="editor-button" disabled={!snapshot.canEdit || selectedIndex <= 0} onClick={() => runTransform({ operation: 'reorder', from: selectedIndex, to: selectedIndex - 1 })}>{language === 'zh' ? '上移图层' : 'Move layer up'}</button>
               <button type="button" className="editor-button" disabled={!snapshot.canEdit || selectedIndex < 0 || selectedIndex >= inputs.length - 1} onClick={() => runTransform({ operation: 'reorder', from: selectedIndex, to: selectedIndex + 1 })}>{language === 'zh' ? '下移图层' : 'Move layer down'}</button>
-              <button type="button" className="editor-button" disabled={!snapshot.canEdit} onClick={() => runTransform({ operation: 'remove', itemId: selected.id })}>{language === 'zh' ? '从草稿移除图层' : 'Remove layer from draft'}</button>
             </div>}
           </article>
 
-          {hasLeveeTables && <>
-            <LeveeModDetailEditor {...projectedProps} selected={selected} schema={props.schemas.find((schema) => schema.id === 'LeveeModDetailEditor')} />
-            <LeveeModPropertiesDetailEditor {...projectedProps} selected={selected} schema={props.schemas.find((schema) => schema.id === 'LeveeModPropertiesDetailEditor')} />
-          </>}
+          {hasLeveeTables && <LeveeModTerrainInputEditor {...projectedProps} selected={selected} />}
 
           {tables.map(([tableID, table]) => {
             if (channelSchemaSelected && [channelFeatureTableID, channelProfileTableID, channelTerrainProfileTableID].includes(tableID)) return null;
@@ -144,19 +118,4 @@ export function TerrainLayersEditor(props: EditorPageProps) {
 
 function tableTitle(tableID: string, language: 'zh' | 'en'): string {
   return editorTableTitle(language, tableID);
-}
-
-function TerrainInputPicker({ language, canEdit, onTransform }: { language: 'zh' | 'en'; canEdit: boolean; onTransform?: EditorPageProps['onTerrainTransform'] }) {
-  const [kind, setKind] = useState<NonNullable<TerrainTransformCommand['inputKind']>>('functionalSurface');
-  if (!onTransform) return <small className="editor-field-muted">{!canEdit
-    ? language === 'zh' ? '当前模型快照为只读。' : 'The current model snapshot is read-only.'
-    : language === 'zh' ? '当前编辑上下文未提供地形图层操作。' : 'Terrain layer operations are unavailable in the current editor context.'}</small>;
-  return <div className="editor-field-sections editor-terrain-input-actions">
-    <label className="editor-field"><span>{language === 'zh' ? '新增输入类型' : 'New input type'}</span>
-      <select value={kind} disabled={!canEdit} onChange={(event) => setKind(event.currentTarget.value as NonNullable<TerrainTransformCommand['inputKind']>)}>
-        {inputKinds.map((item) => <option key={item.id} value={item.id}>{item.title[language === 'zh' ? 0 : 1]}</option>)}
-      </select>
-    </label>
-    <button type="button" className="editor-button" disabled={!canEdit} onClick={() => void onTransform({ operation: 'add', inputKind: kind })}>{language === 'zh' ? '添加输入图层' : 'Add input layer'}</button>
-  </div>;
 }

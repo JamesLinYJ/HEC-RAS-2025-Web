@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { GeometryTopologyTablePageProps } from './GeometryTopologyTablePage';
-import { GeometryFeatureDetailEditor } from './GeometryFeatureDetailEditor';
+import { NodeEditor } from './NodeEditor';
 import { TopologyFeatureErrorControl } from './TopologyFeatureErrorControl';
 
 export type TopologyNodesEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
@@ -12,10 +12,7 @@ export function TopologyNodesEditor(props: TopologyNodesEditorProps) {
 
   return (
     <div className="geometry-grid">
-      <GeometryFeatureDetailEditor language={props.language} kind="node" table={props.table} localRows={props.localRows}
-        fieldOrder={['X', 'Y']} readOnlyFieldIDs={['X', 'Y']} editable={props.canEdit} busy={props.busy}
-        onChange={props.onChange} onDelete={props.onDelete}
-        onSelectionChange={(rows) => setSelectedIDs(rows.map((row) => row.id))} />
+      <NodeEditor {...props} onSelectionChange={(rows) => { setSelectedIDs(rows.map((row) => row.id)); props.onSelectionChange?.(rows); }} />
       <TopologyFeatureErrorControl language={props.language} featureKind="node" rows={selectedRows} snapshot={props.topologySnapshot} />
       <div className="geometry-inline-help">
         {props.language === 'zh'

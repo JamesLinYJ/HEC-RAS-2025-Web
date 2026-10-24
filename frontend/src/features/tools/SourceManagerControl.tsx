@@ -7,6 +7,7 @@ import { displaySourceKind } from './GeoprocessingToolBase';
 import { CoreLayerImportDialog } from './CoreLayerImportDialog';
 import { ClassificationImporter } from './ClassificationImporter';
 import { TerrainImporter } from './TerrainImporter';
+import { AttributeTableEditorControl } from './attributes/AttributeTableEditorControl';
 import './coreImportWorkflow.css';
 
 type Props = FeaturePageProps;
@@ -14,7 +15,7 @@ type Props = FeaturePageProps;
 export function SourceManagerControl({ language, context, backend, onContextChange, onContextCommit, onNavigate, hasUnsavedDrafts }: Props) {
   const zh = language === 'zh';
   const source = context.selectedAsset;
-  const methods = ['map.document.list', 'map.tree.load', 'workspace.file.inspect', 'workspace.import.coreLayer.inspect', 'workspace.import.coreLayer.perform'];
+  const methods = ['map.document.list', 'map.tree.load', 'workspace.file.inspect', 'workspace.import.coreLayer.inspect', 'workspace.import.coreLayer.perform', 'map.vector.captureShapefile', 'attributeTable.load', 'attributeTable.transform'];
   const owner = JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml]);
   const ownerRef = useRef(owner); ownerRef.current = owner;
   const generation = useRef(0);
@@ -84,6 +85,8 @@ export function SourceManagerControl({ language, context, backend, onContextChan
           {source ? <dl className="tools-source-details"><div><dt>{zh ? '名称' : 'Name'}</dt><dd>{source.name}</dd></div><div><dt>{zh ? '类型' : 'Kind'}</dt><dd>{displaySourceKind(source.kind, language)}</dd></div><div><dt>{zh ? '路径' : 'Path'}</dt><dd>{source.path}</dd></div><div><dt>{zh ? '修订' : 'Revision'}</dt><dd>{source.revision || (zh ? '载入时捕获' : 'Captured on load')}</dd></div><div><dt>{zh ? '定位信息' : 'Locator'}</dt><dd>{source.locator ? Object.keys(source.locator).join(', ') || '—' : (zh ? '未提供' : 'Not provided')}</dd></div></dl> : <p className="tools-muted">{zh ? '当前没有选中的工程数据源。' : 'No project asset is selected.'}</p>}
         </section>
       </div>
+      <AttributeTableEditorControl language={language} context={context} backend={backend} onContextChange={onContextChange}
+        onNavigate={onNavigate} onContextCommit={onContextCommit} hasUnsavedDrafts={hasUnsavedDrafts} />
       <section className="tools-subpanel tools-source-method-panel"><div className="tools-subpanel-heading"><div><span className="tools-kicker">03 / {zh ? '地图目录与来源操作' : 'MAP CATALOG AND SOURCE ACTIONS'}</span><h3>{zh ? '工程地图目录' : 'Project map catalog'}</h3></div></div>
         <p className="tools-muted">{zh ? '目录由 map.document.list 和 map.tree.load 从 C# Host 读取，并使用当前工程路径、XML、会话和修订核验。' : 'The catalog is read from C# through map.document.list and map.tree.load and checked against the active project path, XML, session, and revision.'}</p>
         <div className="ci-actions">

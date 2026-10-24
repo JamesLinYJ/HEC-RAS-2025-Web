@@ -1,0 +1,100 @@
+.ras-map-minimap {
+  position: absolute;
+  z-index: 20;
+  right: 14px;
+  bottom: 14px;
+  width: min(256px, calc(100% - 28px));
+  padding: 7px;
+  border: 1px solid rgba(117, 139, 153, .72);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 3px 14px rgba(20, 42, 56, .2);
+  color: #233c4d;
+  pointer-events: auto;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.ras-map-minimap *,
+.ras-map-minimap *::before,
+.ras-map-minimap *::after {
+  box-sizing: border-box;
+}
+
+.ras-map-minimap__heading {
+  margin: 0 0 5px;
+  color: #4d6677;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.ras-map-minimap__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 240 / 154;
+  overflow: hidden;
+  border: 1px solid #c5d2d9;
+  border-radius: 3px;
+  background: #f2f6f8;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.ras-map-minimap__canvas:focus-visible {
+  outline: 2px solid #2580bd;
+  outline-offset: 2px;
+}
+
+.ras-map-minimap__surface {
+  fill: #f1f5f7;
+}
+
+.ras-map-minimap__image {
+  pointer-events: none;
+}
+
+.ras-map-minimap__feature {
+  pointer-events: none;
+}
+
+.ras-map-minimap__feature path,
+.ras-map-minimap__feature circle {
+  pointer-events: none;
+}
+
+.ras-map-minimap__viewport {
+  fill: rgba(39, 139, 202, .16);
+  stroke: #126da6;
+  stroke-width: 1.6px;
+  pointer-events: none;
+}
+
+.ras-map-minimap__empty {
+  min-height: 100px;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  border: 1px dashed #c5d2d9;
+  border-radius: 3px;
+  background: #f7f9fa;
+  color: #788c99;
+  font-size: 10px;
+  text-align: center;
+}
+
+.ras-map-minimap__hint {
+  margin: 5px 1px 0;
+  color: #718491;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+@media (max-width: 640px) {
+  .ras-map-minimap {
+    right: 8px;
+    bottom: 8px;
+    width: min(220px, calc(100% - 16px));
+  }
+}
