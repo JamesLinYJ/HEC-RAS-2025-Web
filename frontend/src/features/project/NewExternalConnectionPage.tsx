@@ -9,7 +9,7 @@ export function NewExternalConnectionPage({ language, onChoose, onCancel }: {
 }) {
   return (
     <section className="project-external-wizard" aria-labelledby="project-external-wizard-title">
-      <div className="project-operation-kicker">ExternalConnectionWizard</div>
+      <div className="project-operation-kicker">{text(language, '外部连接', 'External connection')}</div>
       <h3 id="project-external-wizard-title">{text(language, '选择连接来源', 'Choose a connection source')}</h3>
       <p>{text(language, '文件和结果连接都将作为真实连接提交到当前工程。', 'File and result connections are committed as project connections.')}</p>
       <div className="project-external-choice-grid">

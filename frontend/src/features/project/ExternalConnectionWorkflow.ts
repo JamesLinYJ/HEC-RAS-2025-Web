@@ -1,4 +1,5 @@
 import type { BackendGateway, WorkbenchContext } from '../../shared/workbench';
+import { validateSessionReferenceContext } from '../../shared/sessionReferences';
 import { exactCoreLayerContext } from '../tools/coreImportWorkflow';
 import { isProjectTreeSHA256, projectTreeXmlSHA } from './ProjectTreeModelActions';
 
@@ -87,6 +88,14 @@ export interface ExternalConnectionCommitResult {
   committed: WorkbenchContext;
 }
 
+/** The project write is known to have committed, but its rebased session capability cannot be adopted. */
+export class ExternalConnectionCommittedContextError extends Error {
+  constructor(readonly receipt: ExternalConnectionCommitReceipt, message: string) {
+    super(message);
+    this.name = 'ExternalConnectionCommittedContextError';
+  }
+}
+
 export function isSameServerPath(left: string, right: string): boolean {
   const normalize = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '');
   const a = normalize(left);
@@ -131,15 +140,20 @@ function validateInspection(
   }
 }
 
-function committedSelectedAsset(source: WorkbenchContext, project: ExternalConnectionProjectSnapshot): WorkbenchContext['selectedAsset'] {
+function committedSelectedAsset(
+  source: WorkbenchContext,
+  project: ExternalConnectionProjectSnapshot,
+  coreLayerContext: Record<string, unknown> | null,
+): WorkbenchContext['selectedAsset'] {
   const asset = source.selectedAsset;
   if (!asset) return null;
   let locator = asset.locator;
-  if (project.coreLayerContext && locator && typeof locator === 'object') {
-    const value = locator as Record<string, unknown>;
-    const next = { ...value };
-    if ('CoreLayerContext' in value) next.CoreLayerContext = project.coreLayerContext;
-    if ('coreLayerContext' in value || !('CoreLayerContext' in value)) next.coreLayerContext = project.coreLayerContext;
+  if ((locator && typeof locator === 'object' && !Array.isArray(locator)) || coreLayerContext) {
+    const value = locator && typeof locator === 'object' && !Array.isArray(locator)
+      ? locator as Record<string, unknown>
+      : {};
+    const next: Record<string, unknown> = { ...value, coreLayerContext };
+    delete next.CoreLayerContext;
     locator = next;
   }
   if (asset.kind === 'ProjectFile' && isSameServerPath(asset.path, project.projectPath)) {
@@ -162,7 +176,12 @@ export async function inspectAndCommitExternalConnection(
   }
   const projectXmlSHA = await projectTreeXmlSHA(project.projectXml);
   if (signal?.aborted) throw new DOMException('The request was aborted.', 'AbortError');
+  const carriedCore = carriedCoreLayerContext(source);
   const coreLayerContext = exactCoreLayerContext(source, source.selectedAsset);
+  if (carriedCore != null && !coreLayerContext) {
+    throw new Error('当前工程携带的外部来源身份与工程修订不匹配；未提交连接更改。请重新读取工程目录。');
+  }
+  if (coreLayerContext) validateSessionReferenceContext(coreLayerContext, source);
   const inspectionRequest: ExternalConnectionInspectionRequest = {
     ...project,
     projectXmlSHA,
@@ -183,17 +202,56 @@ export async function inspectAndCommitExternalConnection(
     expectedSourceReferencesSHA256: inspection.sourceReferencesSHA256,
     ...(values.action === 'add' ? { expectedNormalizedName: inspection.normalizedName } : {}),
   };
+  // The captured source must still be current immediately before the irreversible project write.
+  if (signal?.aborted || !isSourceCurrent()) throw new DOMException('The project context changed before commit.', 'AbortError');
   const receipt = await backend.request<ExternalConnectionCommitReceipt>(
     'project.connection.commit', commitRequest, { signal });
-  if (signal?.aborted || !isSourceCurrent()) throw new DOMException('The project context changed during commit.', 'AbortError');
-  await validateCommitReceipt(receipt, source, values, inspection);
+  // Once the Host has returned a commit receipt, validate it against the immutable captured
+  // source even if the UI owner changed or the caller's signal was aborted meanwhile. The
+  // parent must decide whether that acknowledged receipt can still be adopted.
+  const committedCore = await validateCommitReceipt(receipt, source, values, inspection, coreLayerContext ?? null);
   const committed: WorkbenchContext = {
     ...source,
     projectXml: receipt.project.projectXml,
     projectRevision: receipt.project.revision,
-    selectedAsset: committedSelectedAsset(source, receipt.project),
+    coreLayerContext: committedCore,
+    selectedAsset: committedSelectedAsset(source, receipt.project, committedCore),
   };
   return { inspection, receipt, source, committed };
+}
+
+function carriedCoreLayerContext(context: WorkbenchContext): unknown {
+  if (context.coreLayerContext !== undefined) return context.coreLayerContext;
+  const locator = context.selectedAsset?.locator;
+  if (!locator || typeof locator !== 'object' || Array.isArray(locator)) return undefined;
+  const value = locator as Record<string, unknown>;
+  return value.coreLayerContext ?? value.CoreLayerContext;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function coreCaptures(core: Record<string, unknown>): string {
+  const read = (lower: string, upper: string): unknown => core[lower] ?? core[upper];
+  const normalize = (value: unknown): unknown[] => Array.isArray(value)
+    ? value.map((item) => {
+      if (!isRecord(item)) return item;
+      const field = (lower: string, upper: string) => item[lower] ?? item[upper] ?? null;
+      return [
+        field('referenceID', 'ReferenceID'),
+        field('projectSessionID', 'ProjectSessionID'),
+        field('projectPath', 'ProjectPath'),
+        field('kind', 'Kind'),
+        field('sourcePath', 'SourcePath'),
+        field('canonicalSourcePath', 'CanonicalSourcePath'),
+        field('sourceRevision', 'SourceRevision'),
+        field('name', 'Name'),
+        field('sessionOnly', 'SessionOnly'),
+      ];
+    }).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+    : [];
+  return JSON.stringify([normalize(read('references', 'References')), normalize(read('sessionHdfReferences', 'SessionHdfReferences'))]);
 }
 
 async function validateCommitReceipt(
@@ -201,7 +259,8 @@ async function validateCommitReceipt(
   source: WorkbenchContext,
   values: ExternalConnectionValues,
   inspection: ExternalConnectionInspection,
-): Promise<void> {
+  sourceCore: Record<string, unknown> | null,
+): Promise<Record<string, unknown> | null> {
   const project = receipt?.project;
   if (!receipt || receipt.success !== true || receipt.action !== values.action || receipt.kind !== values.kind ||
       receipt.previousProjectRevision?.toUpperCase() !== source.projectRevision?.toUpperCase() ||
@@ -246,4 +305,32 @@ async function validateCommitReceipt(
   if (actualXmlSha.toUpperCase() !== project.projectXmlSHA.toUpperCase()) {
     throw new Error('工程 XML SHA-256 不匹配。');
   }
+
+  const committedProjectContext: WorkbenchContext = {
+    ...source,
+    projectXml: project.projectXml,
+    projectRevision: project.revision,
+  };
+  if (project.coreLayerContext == null) {
+    if (sourceCore) {
+      throw new ExternalConnectionCommittedContextError(receipt,
+        '工程连接已提交，但回执没有返回重基后的外部来源身份。为保留现有引用，当前会话未接纳新工程修订；请重新读取工程目录核对。');
+    }
+    return null;
+  }
+  if (!isRecord(project.coreLayerContext)) {
+    throw new ExternalConnectionCommittedContextError(receipt,
+      '工程连接已提交，但回执中的外部来源身份格式无效。当前会话未接纳新工程修订；请重新读取工程目录核对。');
+  }
+  try {
+    validateSessionReferenceContext(project.coreLayerContext, committedProjectContext);
+    if (sourceCore && coreCaptures(project.coreLayerContext) !== coreCaptures(sourceCore)) {
+      throw new Error('工程连接回执改变了已捕获的外部来源身份。');
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? ` ${error.message}` : '';
+    throw new ExternalConnectionCommittedContextError(receipt,
+      `工程连接已提交，但回执中的重基外部来源身份未通过校验。当前会话未接纳新工程修订；请重新读取工程目录核对。${detail}`);
+  }
+  return project.coreLayerContext;
 }

@@ -1,6 +1,6 @@
 import { isPolygonTerrainInputType } from './terrainTopologyTypes';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { BackendGateway, BackendRequestOptions, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { message, text } from '../../shared/workbench';
 import { BoundaryConditionEditor, BOUNDARY_EDITOR_PAGE_IDS } from './BoundaryConditionEditor';
 import { ClassificationEditor } from './ClassificationEditor';
@@ -23,6 +23,9 @@ import { ModelAssociationsPanel } from './associations/ModelAssociationsPanel';
 import type { TerrainMapProjectOwner, TerrainMapViewport, TerrainTopologyResponse } from './terrainTopologyTypes';
 import { projectXmlSha } from '../map/ProjectTreeListener';
 import { hasUncapturedSessionReferences, modelSaveRequest } from '../tools/coreImportWorkflow';
+import { ExternalConnectionCommittedContextError, inspectAndCommitExternalConnection, isSameServerPath,
+  type ExternalConnectionCommitResult, type ExternalConnectionValues } from '../project/ExternalConnectionWorkflow';
+import { rebaseBoundaryExternalConnection } from './payloadExternalConnectionWorkflow';
 
 type DisplayMode = 'model' | 'catalog';
 interface SourceContext { context: WorkbenchContext; owner: string }
@@ -32,6 +35,11 @@ type Transition =
   | { kind: 'source'; source: SourceContext };
 interface CatalogState { schemas: EditorSchema[]; tables: NonNullable<PageProps['tableSchemas']> }
 interface LoadState { status: 'idle' | 'loading' | 'unavailable' | 'error' | 'ready'; error?: string }
+interface PayloadConnectionContinuation {
+  lineID: string;
+  values: ExternalConnectionValues;
+  result: ExternalConnectionCommitResult;
+}
 interface BoundaryInitialConditionsAttachRequest {
   model: Record<string, unknown>;
   projectRevision: string;
@@ -57,6 +65,7 @@ interface BoundaryInitialConditionsOperation {
 export default function EditorWorkbench(props: FeaturePageProps) {
   const { backend, backendRevision, language, onContextChange, onContextCommit, onDirtyStateChange } = props;
   const [source, setSource] = useState<SourceContext>(() => sourceFor(props.context));
+  const [editorMountKey, setEditorMountKey] = useState(source.owner);
   const activeOwner = useRef(source.owner);
   activeOwner.current = source.owner;
   const [snapshot, setSnapshot] = useState<ModelSnapshot | null>(null);
@@ -74,6 +83,18 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const [view, setView] = useState<DisplayMode>('model');
   const [pending, setPending] = useState<Transition | null>(null);
   const [busy, setBusy] = useState(false);
+  const [payloadConnectionCreating, setPayloadConnectionCreating] = useState(false);
+  const [payloadConnectionState, setPayloadConnectionState] = useState<'idle' | 'refresh' | 'uncertain'>('idle');
+  const [payloadForms, setPayloadForms] = useState<ReadonlySet<string>>(() => new Set());
+  const onPayloadFormDirtyChange = useCallback((lineID: string, formDirty: boolean): void => {
+    setPayloadForms(current => {
+      if (current.has(lineID) === formDirty) return current;
+      const next = new Set(current);
+      if (formDirty) next.add(lineID); else next.delete(lineID);
+      return next;
+    });
+  }, []);
+  const payloadConnectionContinuation = useRef<PayloadConnectionContinuation | null>(null);
   const [classificationImportRunning, setClassificationImportRunning] = useState(false);
   const [classificationImportUncertainVersion, setClassificationImportUncertainVersion] = useState(0);
   const [saveMessage, setSaveMessage] = useState('');
@@ -126,6 +147,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     return isModelDraftDirty(snapshot, { ...currentDraft, fields });
   }, [snapshot, draft]);
   const asset = source.context.selectedAsset;
+  const hasUnsavedEditorState = dirty || payloadForms.size > 0 || payloadConnectionState !== 'idle';
 
   useEffect(() => {
     let cancelled = false;
@@ -139,9 +161,9 @@ export default function EditorWorkbench(props: FeaturePageProps) {
 
   useEffect(() => {
     if (desiredSource.owner === source.owner || pending?.kind === 'source') return;
-    if (dirty) setPending({ kind: 'source', source: desiredSource });
+    if (hasUnsavedEditorState) setPending({ kind: 'source', source: desiredSource });
     else acceptSource(desiredSource);
-  }, [desiredSource, dirty, pending?.kind, source.owner]);
+  }, [desiredSource, hasUnsavedEditorState, pending?.kind, source.owner]);
 
   useEffect(() => {
     const operation = initialConditionsOperationRef.current;
@@ -152,9 +174,9 @@ export default function EditorWorkbench(props: FeaturePageProps) {
 
   useEffect(() => {
     if (!onDirtyStateChange) return;
-    onDirtyStateChange(source.owner, dirty);
+    onDirtyStateChange(source.owner, hasUnsavedEditorState);
     return () => onDirtyStateChange(source.owner, false);
-  }, [dirty, onDirtyStateChange, source.owner]);
+  }, [hasUnsavedEditorState, onDirtyStateChange, source.owner]);
 
   useEffect(() => () => {
     const request = activeSave.current;
@@ -230,6 +252,11 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     setPending(null);
     setBusy(false);
     setSource(next);
+    setEditorMountKey(next.owner);
+    payloadConnectionContinuation.current = null;
+    setPayloadConnectionState('idle');
+    setPayloadConnectionCreating(false);
+    setPayloadForms(new Set());
     setPageID(defaultPage(next.context.selectedAsset?.kind ?? ''));
     setView(next.context.selectedAsset ? 'model' : 'catalog');
     setSaveMessage('');
@@ -490,6 +517,10 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const onBoundaryTransform: PageProps['onBoundaryTransform'] = async (lineID, operation, payloadID, payloadFields) => {
     setSaveErrorDetails('');
     if (activeSave.current || busy) return false;
+    if (payloadConnectionState !== 'idle') {
+      setSaveMessage(text(language, '请先核对工程连接并重新读取载荷选项，当前边界草稿已保留。', 'Reconcile the project connection and refresh payload choices first. The boundary draft is preserved.'));
+      return false;
+    }
     const boundaryView = draft?.boundaryView ?? snapshot?.boundary;
     const line = boundaryView?.lines.find((candidate) => candidate.id === lineID);
     if (!snapshot || !draft || !asset || !source.context.projectPath || !snapshot.canEdit || !line) return false;
@@ -591,6 +622,144 @@ export default function EditorWorkbench(props: FeaturePageProps) {
         activeSave.current = null;
         setBusy(false);
       }
+    }
+  };
+
+  const loadPayloadConnectionCatalog = async (): Promise<CatalogTreeSnapshot> => {
+    const requested = source;
+    if (!requested.context.projectPath || !requested.context.projectRevision ||
+        desiredSource.owner !== requested.owner || !backend.supports('catalog.tree.load') ||
+        !backend.supports('workspace.file.inspect')) throw new Error('当前工程会话未提供可核验的结果目录。');
+    const inspectProject = async (): Promise<void> => {
+      const file = await backend.request<{ canonicalPath: string; revision: string }>('workspace.file.inspect', {
+        sourcePath: requested.context.projectPath,
+      });
+      if (activeOwner.current !== requested.owner || !isSameServerPath(file.canonicalPath, requested.context.projectPath!) ||
+          file.revision?.toUpperCase() !== requested.context.projectRevision?.toUpperCase()) {
+        throw new Error('工程或会话在读取连接来源期间变化，请重新打开来源列表。');
+      }
+    };
+    await inspectProject();
+    const core = requested.context.selectedAsset ? coreLayerContext(requested.context, requested.context.selectedAsset) : undefined;
+    const result = await backend.request<CatalogTreeSnapshot>('catalog.tree.load', {
+      projectPath: requested.context.projectPath, projectXml: requested.context.projectXml,
+      projectSessionID: requested.context.projectSessionID, mode: 'Catalog', ...(core ? { coreLayerContext: core } : {}),
+    });
+    await inspectProject();
+    if (!Array.isArray(result?.roots)) throw new Error('工程服务没有返回可读取的结果目录。');
+    return result;
+  };
+
+  const createPayloadExternalConnection = async (lineID: string, values: ExternalConnectionValues): Promise<string | null> => {
+    const baseline = snapshotRef.current;
+    const currentDraft = draftRef.current;
+    const requested = source;
+    const currentAsset = requested.context.selectedAsset;
+    const begin = props.onBeginProjectContextMutation;
+    const adopt = props.onCommitProjectContextMutation;
+    const end = props.onEndProjectContextMutation;
+    if (activeSave.current || busy || payloadConnectionState === 'uncertain' || initialConditionsBlocksDraft ||
+        !baseline || !currentDraft || !currentAsset || currentAsset.kind !== 'Boundary Conditions' ||
+        !baseline.canEdit || !requested.context.projectPath || !requested.context.projectRevision ||
+        desiredSource.owner !== requested.owner || !begin || !adopt || !end || values.action !== 'add') {
+      throw new Error('当前边界条件或工程会话不能创建连接，已有草稿保持不变。');
+    }
+    if (validations.length > 0) throw new Error('请先修正当前边界草稿的无效值，再新增工程连接。');
+    const line = (currentDraft.boundaryView ?? baseline.boundary)?.lines.find(item => item.id === lineID);
+    if (!line?.newPayload) throw new Error('新建载荷的边界线身份已变化。');
+    const continuation = payloadConnectionContinuation.current;
+    if (continuation && (continuation.lineID !== lineID || JSON.stringify(continuation.values) !== JSON.stringify(values))) {
+      throw new Error('已有连接保存成功但选项尚未刷新，请先重新读取该连接选项，不能重复创建。');
+    }
+    const leaseID = begin(requested.context, requested.owner);
+    if (!leaseID) throw new Error('当前工程还有其他编辑器的草稿或正在提交的操作，请先处理后再创建连接。');
+    const requestState = { owner: requested.owner, controller: new AbortController() };
+    activeSave.current = requestState;
+    setBusy(true); setPayloadConnectionCreating(true); setSaveMessage(''); setSaveErrorDetails('');
+    let commitSubmitted = false;
+    let known = continuation;
+    const isCurrent = (): boolean => activeSave.current === requestState && activeOwner.current === requestState.owner &&
+      !requestState.controller.signal.aborted;
+    try {
+      if (!known) {
+        // Mark the mutating boundary separately from inspection so an unknown
+        // commit outcome cannot be mistaken for a safely retryable inspection.
+        const connectionBackend: BackendGateway = {
+          supports: method => backend.supports(method),
+          request: <T,>(method: string, parameters: unknown, options?: BackendRequestOptions): Promise<T> => {
+            if (method === 'project.connection.commit') commitSubmitted = true;
+            return backend.request<T>(method, parameters, options);
+          },
+        };
+        const result = await inspectAndCommitExternalConnection(connectionBackend, requested.context, values,
+          requestState.controller.signal, isCurrent);
+        const connectionName = result.receipt.after?.name;
+        if (!connectionName) throw new ExternalConnectionCommittedContextError(result.receipt, '连接已提交，但回执缺少新连接名称。');
+        known = { lineID, values: { ...values }, result };
+        payloadConnectionContinuation.current = known;
+        setPayloadConnectionState('refresh');
+        if (!adopt(result.source, result.committed, leaseID)) {
+          setPayloadConnectionState('uncertain');
+          throw new ExternalConnectionCommittedContextError(result.receipt, '连接已保存，但当前工程会话没有接纳回执；请重新打开工程核对。');
+        }
+        const nextSource = sourceFor(result.committed);
+        // This acknowledged project-only update retains the editor mount and
+        // its baseline/draft. The ordinary acceptSource path intentionally resets them.
+        requestState.owner = nextSource.owner;
+        activeOwner.current = nextSource.owner;
+        loadedOwner.current = nextSource.owner;
+        acceptedReceipt.current = null;
+        setSource(nextSource);
+      }
+      if (!isCurrent()) throw new Error('连接已保存，但边界编辑器身份已变化；未采用过期的载荷选项。');
+      const nextContext = known.result.committed;
+      const nextAsset = nextContext.selectedAsset;
+      if (!nextAsset || sourceFor(nextContext).owner !== requestState.owner) {
+        throw new Error('已保存连接与当前边界条件身份不一致，未重新创建连接。');
+      }
+      const readOnly = new Set([...(baseline.readOnlyFields ?? []), ...(currentDraft.boundaryReadOnlyFields ?? [])]);
+      const fields = Object.fromEntries(Object.entries(currentDraft.fields).filter(([id, value]) =>
+        value !== baseline.fields[id] && !readOnly.has(id)));
+      const refreshed = await backend.request<ModelSnapshot>('model.boundaryRefresh', {
+        ...modelRequest(nextContext, nextAsset), revision: baseline.revision,
+        sourceState: currentDraft.sourceState ?? baseline.sourceState, fields, images: {},
+        rows: currentDraft.rows, samples: samplesForBoundaryDraft(baseline, currentDraft),
+        changedCells: changedModelCells(currentDraft, snapshotRows(baseline)),
+      }, { signal: requestState.controller.signal });
+      if (!isCurrent() || snapshotRef.current !== baseline || draftRef.current !== currentDraft) {
+        throw new Error('连接已保存，但边界草稿在刷新期间变化；原草稿未被替换。');
+      }
+      assertModelSnapshot(refreshed);
+      if (coreContextIdentity(refreshed.coreLayerContext) !== coreContextIdentity(nextContext.coreLayerContext)) {
+        throw new Error('载荷选项刷新没有返回已提交工程的会话身份。');
+      }
+      const connectionName = known.result.receipt.after!.name;
+      const rebased = rebaseBoundaryExternalConnection(baseline, currentDraft, refreshed, lineID, connectionName);
+      snapshotRef.current = rebased.snapshot; draftRef.current = rebased.draft;
+      setSnapshot(rebased.snapshot); setDraft(rebased.draft);
+      payloadConnectionContinuation.current = null; setPayloadConnectionState('idle');
+      setSaveMessage(text(language, `工程连接“${connectionName}”已保存，载荷选项已刷新；边界草稿仍待父级保存。`,
+        `Project connection “${connectionName}” was saved and the payload choices were refreshed. The boundary draft still requires a parent save.`));
+      return connectionName;
+    } catch (error) {
+      if (known && !(error instanceof ExternalConnectionCommittedContextError)) {
+        setPayloadConnectionState('refresh');
+        const explanation = `连接“${known.result.receipt.after?.name ?? ''}”已保存；载荷选项刷新未完成。原草稿已保留，重试只重新读取选项，不会再创建连接。`;
+        setSaveMessage(explanation); setSaveErrorDetails(message(error, language));
+        throw new Error(explanation);
+      }
+      if (commitSubmitted || error instanceof ExternalConnectionCommittedContextError) {
+        setPayloadConnectionState('uncertain');
+        setSaveMessage(text(language, '工程连接提交结果或会话身份需要核对；请重新打开工程。当前边界草稿已保留，保存和重复创建已锁定。',
+          'Reopen the project to reconcile the connection outcome or session identity. The boundary draft is preserved; saving and repeated creation are locked.'));
+      }
+      setSaveErrorDetails(message(error, language));
+      throw error;
+    } finally {
+      if (activeSave.current === requestState) {
+        activeSave.current = null; setBusy(false); setPayloadConnectionCreating(false);
+      }
+      end(leaseID);
     }
   };
 
@@ -2194,7 +2363,11 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const requestTransition = (next: Transition): void => {
     if (pending || busy) return;
     if (next.kind === 'page' && next.pageID === activePageID || next.kind === 'view' && next.view === view) return;
-    if (dirty) setPending(next);
+    if (payloadConnectionState !== 'idle') {
+      setSaveMessage(text(language, '工程连接流程尚未完成；请先重读载荷选项，或重新打开工程核对提交结果。', 'The project connection workflow is incomplete. Refresh the payload choices or reopen the project to reconcile the commit.'));
+      return;
+    }
+    if (hasUnsavedEditorState) setPending(next);
     else applyTransition(next);
   };
   const applyTransition = (next: Transition): void => {
@@ -2207,6 +2380,10 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const save = async (): Promise<boolean> => {
     setSaveErrorDetails('');
     if (activeSave.current) return false;
+    if (payloadConnectionState !== 'idle' || payloadForms.size > 0) {
+      setSaveMessage(text(language, '请先完成或取消载荷表单，并完成工程连接选项刷新，再保存边界条件。', 'Finish or cancel the payload form and complete connection-choice refresh before saving boundary conditions.'));
+      return false;
+    }
     const initialOperation = initialConditionsOperationRef.current;
     if (initialOperation?.owner === source.owner && initialOperation.state !== 'conflict') {
       setSaveMessage(text(language, '初始条件事务尚未完成回执接纳；请先恢复同一操作，再编辑或保存。', 'The initial-condition transaction is waiting for receipt acceptance. Recover the same operation before editing or saving.'));
@@ -2421,6 +2598,21 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     commit: onClassificationImportCommit,
   } : undefined;
 
+  const payloadConnectionSupported = ['project.connection.inspect', 'project.connection.commit', 'model.boundaryRefresh', 'workspace.file.inspect']
+    .every(method => backend.supports(method)) && !!props.onBeginProjectContextMutation &&
+    !!props.onCommitProjectContextMutation && !!props.onEndProjectContextMutation;
+  const boundaryExternalConnection = asset?.kind === 'Boundary Conditions' && snapshot && draft ? {
+    canCreate: payloadConnectionCreating || (payloadConnectionSupported && snapshot.canEdit && !busy &&
+      !initialConditionsBlocksDraft && payloadConnectionState !== 'uncertain' && desiredSource.owner === source.owner),
+    blockedMessage: payloadConnectionState === 'uncertain'
+      ? text(language, '连接提交结果需要核对，请重新打开工程；当前边界草稿已保留。', 'Reopen the project to reconcile the connection outcome. The boundary draft is preserved.')
+      : !payloadConnectionSupported
+        ? text(language, '当前服务或工作区未提供完整的工程连接和边界草稿刷新能力。', 'The service or workspace does not provide the complete connection and boundary-draft refresh workflow.')
+        : text(language, '请等待当前模型操作完成后再新增连接。', 'Wait for the current model operation before adding a connection.'),
+    loadCatalog: loadPayloadConnectionCatalog,
+    create: createPayloadExternalConnection,
+  } : undefined;
+
   const pageProps: EditorPageProps | null = snapshot && draft && asset ? {
     backend, language, asset, snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
     pageId: activePageID, onPageChange: (next) => requestTransition({ kind: 'page', pageID: next }),
@@ -2429,6 +2621,8 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     canTransformSeries: snapshot.canEdit && !!source.context.projectPath && validations.length === 0,
     ...(backend.supports('model.seriesTransform') && backend.supports('model.save') ? { onSeriesTransform } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.boundaryTransform') && backend.supports('model.save') ? { onBoundaryTransform } : {}),
+    ...(boundaryExternalConnection ? { boundaryExternalConnection } : {}),
+    onPayloadFormDirtyChange,
     canTransformSpatial: snapshot.canEdit && !!source.context.projectPath && validations.length === 0 && !busy
       && backend.supports('model.spatialTransform') && backend.supports('model.save'),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.spatialTransform') && backend.supports('model.save') ? { onSpatialTransform } : {}),
@@ -2453,7 +2647,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       && !dirty && !busy && backend.supports('nvalue.preview'),
     ...(!!source.context.projectPath && !!source.context.projectRevision && backend.supports('nvalue.preview') ? { onNValuePreview } : {}),
   } : null;
-  const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy && !initialConditionsBlocksDraft;
+  const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy && !initialConditionsBlocksDraft && payloadConnectionState === 'idle' && payloadForms.size === 0;
 
   return (
     <main className="editor-workbench">
@@ -2464,11 +2658,17 @@ export default function EditorWorkbench(props: FeaturePageProps) {
           {asset && <p className="editor-workbench-subtitle">{editorAssetKind(language, asset.kind)} · {asset.path}</p>}
         </div>
         <div className="editor-workbench-actions">
+          {payloadConnectionState === 'refresh' && payloadConnectionContinuation.current && <button type="button"
+            className="editor-button" data-testid="payload-external-connection-refresh" disabled={busy}
+            onClick={() => {
+              const continuation = payloadConnectionContinuation.current;
+              if (continuation) void createPayloadExternalConnection(continuation.lineID, continuation.values).catch(() => { /* The workflow retains its receipt and reports details. */ });
+            }}>{text(language, '重新读取连接选项', 'Refresh connection choices')}</button>}
           {view === 'model' && classificationImportRunning && <button type="button" className="editor-button" data-testid="classification-import-cancel" onClick={cancelClassificationImport}>{text(language, '请求取消分类导入', 'Request classification import cancellation')}</button>}
           <button type="button" className={view === 'model' ? 'editor-button editor-button-selected' : 'editor-button'} disabled={!asset} onClick={() => requestTransition({ kind: 'view', view: 'model' })}>{text(language, '模型页面', 'Model')}</button>
           <button type="button" className={view === 'catalog' ? 'editor-button editor-button-selected' : 'editor-button'} onClick={() => requestTransition({ kind: 'view', view: 'catalog' })}>{text(language, '控件目录 · 开发预览', 'Control catalog · preview')}</button>
-          {view === 'model' && <button type="button" className="editor-button" disabled={!dirty || busy || !snapshot} onClick={discard}>{text(language, '丢弃草稿', 'Discard draft')}</button>}
-          {view === 'model' && <button type="submit" form="source-model-editor-form" className="editor-button editor-button-primary" disabled={!canSave}>{busy ? text(language, '保存中…', 'Saving…') : text(language, '保存', 'Save')}</button>}
+          {view === 'model' && <button type="button" className="editor-button" disabled={!dirty || busy || !snapshot || payloadConnectionState !== 'idle' || payloadForms.size > 0} onClick={discard}>{text(language, '丢弃草稿', 'Discard draft')}</button>}
+          {view === 'model' && <button type="submit" form="source-model-editor-form" className="editor-button editor-button-primary" disabled={!canSave}>{payloadConnectionCreating ? text(language, '连接处理中…', 'Updating connection…') : busy ? text(language, '保存中…', 'Saving…') : text(language, '保存', 'Save')}</button>}
         </div>
       </header>
 
@@ -2489,15 +2689,15 @@ export default function EditorWorkbench(props: FeaturePageProps) {
           </nav>}
           {asset && snapshot && loadState.status === 'ready' && ['Plan', 'Geometry'].includes(asset.kind) &&
             <ModelAssociationsPanel {...props} context={source.context} activeAsset={asset}
-              modelRevision={snapshot.revision} modelDirty={dirty || busy || initialConditionsBlocksDraft} />}
+              modelRevision={snapshot.revision} modelDirty={hasUnsavedEditorState || busy || initialConditionsBlocksDraft} />}
           <form id="source-model-editor-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             {!asset && <div className="editor-config-notice">{text(language, '当前没有载入模型。请从项目浏览器选择计划、地形或边界条件；此处不会创建虚构模型。控件目录可作为开发预览查看源编辑器字段定义。', 'No model is loaded. Select a plan, terrain, or boundary condition from the project browser; this page will not create a model. The control catalog is available as a development preview of source editor field definitions.')}</div>}
             {asset && loadState.status === 'loading' && <div className="editor-empty-state" aria-live="polite">{text(language, '正在从 C# 服务端载入模型…', 'Loading the model from the C# server…')}</div>}
             {asset && loadState.status === 'unavailable' && <div className="editor-config-notice" role="status">{text(language, 'C# 能力未就绪：model.load 当前不可用。此页面不会伪造模型或保存结果。打开“控件目录”可浏览原始 UI 定义。', 'Backend capability is not ready: model.load is unavailable. No model or save result is fabricated. Open the control catalog to browse source UI definitions.')}</div>}
             {asset && loadState.status === 'error' && <div className="editor-inline-error" role="alert">{text(language, '模型载入失败。', 'Model load failed.')}<details><summary>{text(language, '错误详情', 'Error details')}</summary><pre>{loadState.error}</pre></details></div>}
             {asset && !source.context.projectPath && snapshot && <div className="editor-config-notice">{text(language, '已载入模型快照，但当前会话没有所属项目路径；此快照不可保存。', 'The model snapshot is loaded, but this session has no owning project path; it cannot be saved.')}</div>}
-            {pageProps && <div key={source.owner} className="editor-model-page">
-              <fieldset disabled={busy || initialConditionsBlocksDraft} style={{ margin: 0, padding: 0, border: 0, minWidth: 0 }}>{renderEditor(pageProps)}</fieldset>
+            {pageProps && <div key={editorMountKey} className="editor-model-page">
+              <fieldset disabled={busy || initialConditionsBlocksDraft || payloadConnectionState === 'uncertain'} style={{ margin: 0, padding: 0, border: 0, minWidth: 0 }}>{renderEditor(pageProps)}</fieldset>
               {validations.length > 0 && dirty && <section className="editor-validation-summary" aria-live="polite"><h2>{text(language, '需要修正', 'Needs attention')}</h2><ul>{validations.slice(0, 20).map((error) => <li key={error.fieldID}><strong>{error.title}</strong> · {error.message} <code>{error.fieldID}</code></li>)}</ul>{validations.length > 20 && <small>{text(language, `另有 ${validations.length - 20} 项`, `${validations.length - 20} more issues`)}</small>}</section>}
             </div>}
             {asset?.kind === 'Boundary Conditions' && activePageID === 'BoundaryConditionsSummary' &&
@@ -2514,10 +2714,11 @@ export default function EditorWorkbench(props: FeaturePageProps) {
           <p className="editor-eyebrow">{text(language, '草稿保护', 'Draft protection')}</p>
           <h2 id="editor-pending-title">{pending.kind === 'source' ? text(language, '要切换模型吗？', 'Switch models?') : text(language, '要离开当前编辑页吗？', 'Leave this editor page?')}</h2>
           <p>{text(language, '当前模型有未保存更改。先保存、丢弃，或留在此页。', 'The current model has unsaved changes. Save them, discard them, or stay on this page.')}</p>
+          {(payloadConnectionState !== 'idle' || payloadForms.size > 0) && <p>{text(language, '载荷表单或连接刷新尚未完成，暂不能保存并继续。丢弃会放弃本页输入；已写入工程的连接仍会保留。', 'The payload form or connection refresh is incomplete, so save and continue is unavailable. Discard abandons this page input; connections already written to the project remain saved.')}</p>}
           <div className="editor-confirm-actions">
             <button type="button" className="editor-button" onClick={() => { if (pending.kind === 'source') onContextChange(source.context); setPending(null); }}>{text(language, '留在此页', 'Stay')}</button>
             <button type="button" className="editor-button" onClick={discard}>{text(language, '丢弃并继续', 'Discard and continue')}</button>
-            <button type="button" className="editor-button editor-button-primary" disabled={busy || !backend.supports('model.save') || !snapshot?.canEdit || !source.context.projectPath} onClick={() => void saveAndContinue()}>{busy ? text(language, '保存中…', 'Saving…') : text(language, '保存并继续', 'Save and continue')}</button>
+            <button type="button" className="editor-button editor-button-primary" disabled={busy || payloadConnectionState !== 'idle' || payloadForms.size > 0 || !backend.supports('model.save') || !snapshot?.canEdit || !source.context.projectPath} onClick={() => void saveAndContinue()}>{busy ? text(language, '保存中…', 'Saving…') : text(language, '保存并继续', 'Save and continue')}</button>
           </div>
         </section>
       </div>}

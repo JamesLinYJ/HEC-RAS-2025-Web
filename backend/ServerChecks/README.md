@@ -79,6 +79,14 @@ dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --r
 
 This check copies the completed fixture into a new output directory, then exercises ordinary File (`.txt`) add, update and remove through `project.connection.inspect/commit`. It verifies canonical path and source SHA readback, rejects a changed target source and a stale Project revision without modifying the Project, and confirms each commit through `project.open` and `catalog.tree.load`. Original and copied HDF files are checked byte-for-byte; only files and XML in the new output copy are modified. The command requires an already-running loopback server and does not launch one.
 
+Verify adding a Project connection while retaining an unsaved Boundary Conditions draft:
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --run-boundary-inline-connection-http http://127.0.0.1:5080 /tmp/hecras-boundary-inline-connection
+```
+
+This check generates an isolated project with a real boundary line and time series. It creates structural, field and sample drafts, commits a file connection to `.ras`, and calls the read-only `model.boundaryRefresh` with the rebased session capability. It checks draft identities and connection choices, creates a Remote payload selecting the committed connection, then saves the parent model and reopens it. Stale core capabilities and HDF revisions must be rejected. Only the Project changes during connection commit; only the Boundary HDF changes during parent save. The `.txt` fixture proves connection identity and source capture, not remote-series parsing. The manifest reports the actual visualization-file count, which can be zero. Browser interaction is a separate check.
+
 Verify saved Plan and Geometry association edits against the same completed fixture:
 
 ```sh

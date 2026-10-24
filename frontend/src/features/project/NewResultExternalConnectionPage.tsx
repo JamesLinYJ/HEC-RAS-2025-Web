@@ -48,7 +48,7 @@ export function NewResultExternalConnectionPage({ language, snapshot, busy, onSu
 
   return (
     <form className="project-external-form" onSubmit={submit}>
-      <div className="project-operation-kicker">NewResultExternalConnectionPage</div>
+      <div className="project-operation-kicker">{text(language, '结果连接', 'External connection')}</div>
       <h3>{text(language, '添加工程结果连接', 'Add project result connection')}</h3>
       <p className="project-form-hint">{text(language, '结果文件来自当前工程目录；列表为空时请先刷新工程目录。', 'Result files come from the active project catalog. Refresh the catalog if this list is empty.')}</p>
       <label className="project-form-field">

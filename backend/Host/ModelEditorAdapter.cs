@@ -311,6 +311,34 @@ public static partial class ModelEditorAdapter
         return result;
     }
 
+    /// <summary>
+    /// Rebuilds a boundary editor snapshot against the supplied current project
+    /// context while replaying its captured draft. This operation is read-only:
+    /// it never mutates payload structure or writes the project/model files.
+    /// </summary>
+    public static async Task<ModelSnapshot> RefreshBoundaryAsync(ModelSaveRequest request)
+    {
+        VerifyKind(request);
+        if (request.Kind != "Boundary Conditions")
+            throw new ArgumentException("Boundary refresh requires a Boundary Condition source.");
+        if (string.IsNullOrEmpty(request.ProjectPath))
+            throw new ArgumentException("Refreshing boundary choices requires the owning project.");
+        if (string.IsNullOrWhiteSpace(request.SourceState) || request.Fields is null ||
+            request.Rows is null || request.Samples is null)
+            throw new ArgumentException("Boundary refresh requires the captured source state and complete field, row, and sample drafts.");
+        if (Revision(request.AssetPath) != request.Revision) throw new SourceFileChangedException();
+
+        using var context = new ModelContext(request);
+        var boundary = Boundary(context, request.AssetPath, request.Revision, request.SourceState)
+            ?? throw new NotSupportedException("This model has no boundary payloads.");
+        ApplyFields(context, boundary, request.Fields);
+        boundary.ApplyData(request.Rows, request.Samples);
+
+        ModelSnapshot result = await Snapshot(context, request.Revision, true, boundary);
+        if (Revision(request.AssetPath) != request.Revision) throw new SourceFileChangedException();
+        return result with { CoreLayerContext = request.CoreLayerContext };
+    }
+
     public static async Task<ModelSnapshot> TransformSpatialAsync(SpatialTransformRequest request)
     {
         ModelSaveRequest model = request.Model;

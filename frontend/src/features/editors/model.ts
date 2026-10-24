@@ -2,6 +2,8 @@ import type { AssetReference, BackendGateway, Language } from '../../shared/work
 import { editorPageTitle } from './editorLocalization';
 import type { TerrainMapProjectOwner, TerrainTopologyCommand, TerrainTopologyResponse } from './terrainTopologyTypes';
 import type { CumulusImportWorkflow } from './cumulusTypes';
+import type { CatalogTreeSnapshot } from '../project/CatalogTreeSnapshot';
+import type { ExternalConnectionValues } from '../project/ExternalConnectionWorkflow';
 
 export interface SchemaChoice {
   id: string;
@@ -409,6 +411,13 @@ export interface TerrainTransformCommand {
   leveeForceSet?: { command: 'forceSetMode' | 'forceSetModType'; value: string; rowIDs: string[] };
 }
 
+export interface BoundaryExternalConnectionWorkflow {
+  canCreate: boolean;
+  blockedMessage?: string;
+  loadCatalog: () => Promise<CatalogTreeSnapshot>;
+  create: (lineID: string, values: ExternalConnectionValues) => Promise<string | null>;
+}
+
 export interface EditorPageProps {
   backend?: BackendGateway;
   canEditTerrainTopology?: boolean;
@@ -429,6 +438,8 @@ export interface EditorPageProps {
   canTransformSeries?: boolean;
   onSeriesTransform?: (pageID: string, operation: SeriesTransformOperation) => Promise<void>;
   onBoundaryTransform?: (lineID: string, operation: BoundaryPayloadTransformOperation, payloadID: string | null, fields: Record<string, string>) => Promise<boolean>;
+  boundaryExternalConnection?: BoundaryExternalConnectionWorkflow;
+  onPayloadFormDirtyChange?: (lineID: string, dirty: boolean) => void;
   boundaryInitialConditions?: BoundaryInitialConditionsWorkflow;
   canTransformSpatial?: boolean;
   onSpatialTransform?: (layerID: string, operation: SpatialTransformOperation, itemID: string | null) => Promise<boolean>;

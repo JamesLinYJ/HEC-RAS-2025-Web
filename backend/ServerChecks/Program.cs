@@ -10,6 +10,17 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-boundary-inline-connection-http", string boundaryConnectionBase, string boundaryConnectionOutput])
+            {
+                TextWriter protocol = Console.Out;
+                BoundaryInlineConnectionAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunBoundaryInlineConnectionAsync(
+                    new Uri(EnsureTrailingSlash(boundaryConnectionBase)), boundaryConnectionOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-geometry-gdb-deep-connect-http", string gdbTraceBase, string gdbTraceManifest, string gdbTraceOutput])
             {
                 TextWriter protocol = Console.Out;
@@ -361,6 +372,7 @@ internal static class Program
             }
 
             Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-boundary-inline-connection-http <loopback-base-url> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-gdb-deep-connect-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-mesh-generation-http <loopback-base-url> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-polyline-trace-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");

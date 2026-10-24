@@ -102,6 +102,10 @@ export interface FeaturePageProps {
   onBeginMapVisualizationMutation?: (source: WorkbenchContext, target: MapVisualizationTarget, draftOwner: string) => string | null;
   onCommitMapVisualization?: (source: WorkbenchContext, target: MapVisualizationTarget, receipt: MapVisualizationCommitReceipt, leaseID: string) => boolean;
   onEndMapVisualizationMutation?: (leaseID: string) => void;
+  /** Preserve one editor's draft while committing an acknowledged project-only change. */
+  onBeginProjectContextMutation?: (source: WorkbenchContext, draftOwner: string) => string | null;
+  onCommitProjectContextMutation?: (source: WorkbenchContext, committed: WorkbenchContext, leaseID: string) => boolean;
+  onEndProjectContextMutation?: (leaseID: string) => void;
   /** Invalidates saved-map captures after an acknowledged write in another workspace. */
   mapRevision?: number;
   onDirtyStateChange?: (owner: string, dirty: boolean) => void;

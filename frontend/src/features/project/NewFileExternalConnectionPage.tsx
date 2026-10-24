@@ -47,7 +47,7 @@ export function NewFileExternalConnectionPage({ language, action, kind = 'file',
 
   return (
     <form className="project-external-form" onSubmit={submit}>
-      <div className="project-operation-kicker">NewFileExternalConnectionPage</div>
+      <div className="project-operation-kicker">{text(language, '文件连接', 'External connection')}</div>
       <h3>{text(language, action === 'add' ? '添加外部文件连接' : '编辑外部连接', action === 'add' ? 'Add external file connection' : 'Edit external connection')}</h3>
       {action === 'update' && connection && <p className="project-form-hint">{text(language, '当前连接', 'Current connection')}: <code>{connection.name}</code></p>}
       <label className="project-form-field"><span>{text(language, '连接名称', 'Connection name')} <b>*</b></span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={180} autoComplete="off" /></label>

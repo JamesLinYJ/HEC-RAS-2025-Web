@@ -148,7 +148,7 @@
       },
       {
         "id": "boundary-condition-line-and-payload-editor",
-        "mount": "EditorWorkbench → BoundaryConditionEditor → BoundaryConditionLineEditorPage → DetailedBoundaryConditionHeader / BoundaryConditionTimeWindow / BoundaryConditionLineAndPayloadPickerPage → BCLinesLayerActiveFeatures / BoundaryConditionLineEditor → BCLineLayerLastSelectedFeatureLineEditor / BoundaryConditionLinePayloadsList / NewPayloadDialog → NewPayloadPage → ExternalConnectionLinker / payload editors",
+        "mount": "EditorWorkbench → BoundaryConditionEditor → BoundaryConditionLineEditorPage → DetailedBoundaryConditionHeader / BoundaryConditionTimeWindow / BoundaryConditionLineAndPayloadPickerPage → BCLinesLayerActiveFeatures / BoundaryConditionLineEditor → BCLineLayerLastSelectedFeatureLineEditor / BoundaryConditionLinePayloadsList / NewPayloadDialog → NewPayloadPage → ExternalConnectionLinker → PayloadExternalConnectionFlow → NewExternalConnectionPage → NewFileExternalConnectionPage / NewResultExternalConnectionPage / payload editors",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
           "frontend/src/features/editors/BoundaryConditionEditor.tsx",
@@ -171,13 +171,32 @@
           "frontend/src/features/editors/RegularTimeSeriesPayloadEditor.tsx",
           "frontend/src/features/editors/SpatiallyVariableTimeSeriesPayloadEditor.tsx",
           "frontend/src/features/editors/NewPayloadPage.tsx",
-          "frontend/src/controls/ExternalConnectionLinker.tsx"
+          "frontend/src/controls/ExternalConnectionLinker.tsx",
+          "frontend/src/features/editors/PayloadExternalConnectionFlow.tsx",
+          "frontend/src/features/editors/payloadExternalConnectionWorkflow.ts",
+          "frontend/src/features/project/ExternalConnectionWorkflow.ts",
+          "frontend/src/shared/projectContextMutation.ts",
+          "frontend/src/shared/sessionReferences.ts",
+          "frontend/src/interface/RasMainWindow.tsx",
+          "backend/Host/ProjectConnectionService.cs",
+          "backend/Host/BoundaryEditorService.cs",
+          "backend/Host/ModelEditorAdapter.cs",
+          "backend/Host/BackendWorker.cs"
         ],
-        "stateOwner": "The selected model session, source path/revision and ModelDraft own line fields, aliases, rows, samples, payload values and transform sourceState. BoundaryConditionLineAndPayloadPickerPage derives selection from snapshot lines and keeps the current line in local view state using the stable snapshot line GUID; its detail projection does not mutate the parent draft or save baseline. PayloadListItem only highlights the snapshot/draft selectedPayloadId; it does not invent a selection callback. For Remote payloads, ExternalConnectionLinker receives only the Host-provided NewPayloadPage/ViewModel_SelectedExternalConnection choices and holds no separate connection owner.",
+        "stateOwner": "The selected model session, source path/revision and ModelDraft own line fields, aliases, rows, samples, payload values and transform sourceState. BoundaryConditionLineAndPayloadPickerPage keeps the current line in local view state by stable snapshot line GUID; PayloadListItem only reflects snapshot/draft selectedPayloadId. ExternalConnectionLinker consumes Host choices at NewPayloadPage/ViewModel_SelectedExternalConnection. The inline PayloadExternalConnectionFlow keeps its target lineID and file/result wizard state, while NewPayloadDialog owns ViewModel_* form values locally; opening the form and pending connection recovery register dirty state to the same EditorWorkbench owner. After the project connection receipt is adopted and choices rebase successfully, the wizard callback selects the returned connection name in the local form only if the target lineID is still current. No payload is added to the parent draft until the user submits the form.",
         "readActions": [
-          "model.load"
+          "model.load",
+          "workspace.file.inspect",
+          "catalog.tree.load",
+          "project.connection.inspect",
+          "model.boundaryRefresh"
         ],
-        "writeBoundary": "The selected line name and payload fields/tables remain parent ModelDraft edits. Payload create/remove uses model.boundaryTransform and accepts only a revision-matched draft projection with changed sourceState and stable payload IDs; field, date/time, table and sample edits stay in the same draft. ExternalConnectionLinker selects an existing connection ID through the existing setValue(\"SelectedExternalConnection\", id) path; NewPayloadDialog validation, parent transform and model.save remain authoritative. The linker does not import or create connections and explicitly reports that limitation. Line selection is view-only. Only parent model.save commits the model HDF. Source-level contract only; no batch-9 build or runtime acceptance is claimed."
+        "writeBoundary": "Payload create/remove still calls model.boundaryTransform and accepts only a revision-matched draft projection with changed sourceState and stable payload IDs; ordinary field, date/time, table and sample edits remain in that same ModelDraft. From a Remote payload, the inline flow reuses the existing file or project-Result connection pages under the original C# NewPayloadPage.AddExternalConnectionRequested / target-page OnNavigatedTo context contract. project.connection.inspect/commit writes the project .ras immediately as a separate transaction, guarded by a parent ProjectContextLease whose identity includes project session/path/revision/XML, the selected Boundary Conditions asset identity and core-layer identity; other dirty owners and concurrent project/map/reference writes block it. The commit receipt must match the captured project, source, connection and references; parent adoption preserves the editor mount and existing model draft. model.boundaryRefresh then rebuilds choices against the committed project context while replaying the original Boundary Conditions HDF revision, sourceState and current fields/rows/samples; Host does not write the model HDF. rebaseBoundaryExternalConnection verifies unchanged boundary line/payload IDs, scopes, order and selection, and exactly one new connection choice for the requested lineID; it changes only the boundary choice projection/metadata and updated core-layer context, preserving the parent draft and local form. The wizard callback places the committed connection name in local SelectedExternalConnection when the same line remains active. The .ras connection is already saved independently; only a later payload submit creates a draft through model.boundaryTransform, and only parent model.save commits that payload to Boundary Conditions HDF. A known commit with failed choice refresh retains its receipt continuation so retry performs boundary refresh only, never another project commit. An unknown commit outcome or unaccepted project-context receipt locks retry/save and requires project reconciliation. An open local payload form enters the workbench draft-protection prompt, and a non-idle connection state blocks ordinary page/view transitions; form/pending state also hard-blocks parent save and save-and-continue. Explicit discard may abandon local form input but leaves any committed .ras connection intact. This is static source wiring, not runtime acceptance; the adapter/workflow glue does not add an original C# UI inventory item.",
+        "writeActions": [
+          "project.connection.commit",
+          "model.boundaryTransform",
+          "model.save"
+        ]
       },
       {
         "id": "geometry-culvert-editor",

@@ -11,6 +11,8 @@ export interface NewPayloadPageProps extends EditorPageProps {
   readValue: (name: string) => string;
   error: string;
   disabled: boolean;
+  externalConnectionCreating?: boolean;
+  onCreateExternalConnection?: () => void;
   onCancel: () => void;
   onSubmit: () => void;
 }
@@ -62,6 +64,11 @@ export function NewPayloadPage({ line, values, setValue, readValue, error, disab
         emptyMessage={label('没有可用的外部连接。', 'No external connections are available.')}
         formatChoice={choiceTitle}
         onSelectionChange={(connectionId) => setValue('SelectedExternalConnection', connectionId)}
+        onCreate={props.boundaryExternalConnection?.canCreate ? props.onCreateExternalConnection : undefined}
+        createDisabledReason={props.boundaryExternalConnection?.canCreate && props.onCreateExternalConnection
+          ? undefined
+          : props.boundaryExternalConnection?.blockedMessage ?? label('当前工程会话未提供安全的连接创建事务。', 'The current project session does not provide a safe connection-creation workflow.')}
+        creating={props.externalConnectionCreating}
       />}
       {dataType === 'Remote' && <div className="editor-field"><label htmlFor={`new-payload-${line.id}-path`}>{label('外部数据路径', 'External data path')}</label><input id={`new-payload-${line.id}-path`} type="text" value={readValue('Path')} readOnly={disabled} onChange={(event) => setValue('Path', event.currentTarget.value)} /></div>}
     </div>

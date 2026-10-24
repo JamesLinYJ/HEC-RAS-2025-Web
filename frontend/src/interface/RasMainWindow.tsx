@@ -11,6 +11,7 @@ import type { PendingProjectCommand } from '../features/project';
 import { ConfirmActionControlDialog } from '../controls/ConfirmActionControlDialog';
 import { FramedContentDialog } from '../controls/FramedContentDialog';
 import { captureMapVisualizationLease, matchesMapVisualizationReceipt, type MapVisualizationLease } from '../shared/mapVisualizationMutation';
+import { captureProjectContextLease, matchesProjectContextCommit, type ProjectContextLease } from '../shared/projectContextMutation';
 
 const features: { id: FeatureId; zh: string; en: string }[] = [
   { id: 'project', zh: '工程', en: 'Project' },
@@ -60,6 +61,8 @@ export function RasMainWindow() {
   const mapWriteLease = useRef<{ capture: MapVisualizationLease; receipt: string | null } | null>(null);
   const [mapWriting, setMapWriting] = useState(false);
   const [mapRevision, setMapRevision] = useState(0);
+  const projectWriteLease = useRef<ProjectContextLease | null>(null);
+  const [projectWriting, setProjectWriting] = useState(false);
   const [backendRevision, setBackendRevision] = useState(0);
   const [dirtyOwners, setDirtyOwners] = useState<Set<string>>(() => new Set());
   const dirtyOwnersRef = useRef(dirtyOwners);
@@ -89,7 +92,7 @@ export function RasMainWindow() {
   }, [themeMode]);
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (dirtyOwnersRef.current.size > 0 || referenceWriteLease.current || mapWriteLease.current) { event.preventDefault(); event.returnValue = ''; }
+      if (dirtyOwnersRef.current.size > 0 || referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
@@ -98,12 +101,12 @@ export function RasMainWindow() {
   useEffect(() => () => transport.dispose(), [transport]);
 
   const onNavigate = useCallback((feature: FeatureId) => {
-    if (referenceWriteLease.current || mapWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
     setActiveFeature(feature);
     window.history.replaceState(null, '', `#/${feature}`);
   }, []);
   const onProjectCommand = useCallback((kind: 'open' | 'new') => {
-    if (referenceWriteLease.current || mapWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
     setPendingProjectCommand({ id: crypto.randomUUID(), kind });
     onNavigate('project');
   }, [onNavigate]);
@@ -133,7 +136,7 @@ export function RasMainWindow() {
     else onNavigate('editors');
   }, [onNavigate]);
   const onContextChange = useCallback((incoming: WorkbenchContext, options?: ContextChangeOptions) => {
-    if (referenceWriteLease.current || mapWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
     let next: WorkbenchContext;
     try { next = mergeSessionReferenceContext(incoming, contextRef.current); }
     catch (error) { setRuntimeError(message(error)); return; }
@@ -145,7 +148,7 @@ export function RasMainWindow() {
   }, [commitContext]);
   const onContextCommit = useCallback((source: WorkbenchContext, committed: WorkbenchContext): boolean => {
     const current = contextRef.current;
-    if (referenceWriteLease.current || mapWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return false;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return false;
     if (sessionReferenceIdentity(source) !== sessionReferenceIdentity(current) || identity(source) !== identity(current) || source.projectXml !== current.projectXml || source.projectRevision !== current.projectRevision
       || source.selectedAsset?.kind !== current.selectedAsset?.kind
       || source.projectSessionID !== committed.projectSessionID || source.projectPath !== committed.projectPath
@@ -156,7 +159,7 @@ export function RasMainWindow() {
     return true;
   }, [commitContext]);
   const onBeginSessionReferenceMutation = useCallback((source: WorkbenchContext): string | null => {
-    if (referenceWriteLease.current || mapWriteLease.current || dirtyOwnersRef.current.size || !source.projectPath ||
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || dirtyOwnersRef.current.size || !source.projectPath ||
         sessionReferenceSourceIdentity(source) !== sessionReferenceSourceIdentity(contextRef.current)) return null;
     const id = crypto.randomUUID();
     referenceWriteLease.current = { id, source: sessionReferenceSourceIdentity(source) };
@@ -182,7 +185,7 @@ export function RasMainWindow() {
     setReferenceWriting(false);
   }, []);
   const onBeginMapVisualizationMutation = useCallback((source: WorkbenchContext, target: MapVisualizationTarget, draftOwner: string): string | null => {
-    if (referenceWriteLease.current || mapWriteLease.current) return null;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current) return null;
     const capture = captureMapVisualizationLease(contextRef.current, source, target, draftOwner, dirtyOwnersRef.current);
     if (!capture) return null;
     mapWriteLease.current = { capture, receipt: null };
@@ -210,6 +213,27 @@ export function RasMainWindow() {
     mapWriteLease.current = null;
     setMapWriting(false);
   }, []);
+  const onBeginProjectContextMutation = useCallback((source: WorkbenchContext, draftOwner: string): string | null => {
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current) return null;
+    const lease = captureProjectContextLease(contextRef.current, source, draftOwner, dirtyOwnersRef.current);
+    if (!lease) return null;
+    projectWriteLease.current = lease;
+    setProjectWriting(true);
+    return lease.id;
+  }, []);
+  const onCommitProjectContextMutation = useCallback((source: WorkbenchContext, committed: WorkbenchContext, leaseID: string): boolean => {
+    const lease = projectWriteLease.current;
+    if (!lease || lease.id !== leaseID || !matchesProjectContextCommit(lease, contextRef.current, source, committed)) return false;
+    try {
+      commitContext(mergeSessionReferenceContext(committed, contextRef.current, true), { navigation: 'preserve' });
+      return true;
+    } catch (error) { setRuntimeError(message(error)); return false; }
+  }, [commitContext]);
+  const onEndProjectContextMutation = useCallback((leaseID: string): void => {
+    if (projectWriteLease.current?.id !== leaseID) return;
+    projectWriteLease.current = null;
+    setProjectWriting(false);
+  }, []);
   const closeProject = useCallback(() => onContextChange(blankContext()), [onContextChange]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -226,7 +250,7 @@ export function RasMainWindow() {
     catch (error) { setRuntimeState('failed'); setRuntimeError(message(error)); }
   }, [backend]);
   useEffect(() => { void connect(); }, [connect]);
-  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
+  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting || projectWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, onBeginProjectContextMutation, onCommitProjectContextMutation, onEndProjectContextMutation, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
   const title = context.selectedAsset?.name ?? context.projectPath?.split(/[\\/]/).at(-1) ?? t('尚未打开工程', 'No project open');
 
   return <main className="ras-main-window">
@@ -237,7 +261,7 @@ export function RasMainWindow() {
       <RasContent activeFeature={activeFeature} {...props} />
       {showInspector && <aside className="ras-inspector" aria-label={t('属性', 'Properties')}><h2>{t('属性', 'Properties')}</h2>{context.selectedAsset ? <><dl><dt>{t('名称', 'Name')}</dt><dd>{context.selectedAsset.name}</dd><dt>{t('类型', 'Type')}</dt><dd>{assetKindLabel(context.selectedAsset.kind, language)}</dd><dt>{t('文件', 'File')}</dt><dd>{context.selectedAsset.path}</dd></dl><button onClick={() => onNavigate(context.selectedAsset?.kind.toLowerCase().includes('geometry') ? 'geometry' : 'editors')}>{t('打开编辑器', 'Open editor')}</button></> : <p>{t('选择工程中的对象查看属性。', 'Select a project object to inspect its properties.')}</p>}{runtimeError && <details className="ras-runtime-error"><summary>{t('服务连接失败', 'Server connection failed')}</summary><p>{t('无法连接 C# 服务，请确认服务已启动且当前地址可访问。', 'Cannot connect to the C# server. Confirm that it is running and reachable.')}</p><pre>{runtimeError}</pre></details>}</aside>}
     </div>
-    <footer className="ras-statusbar"><span role="status">{mapWriting ? t('正在加入地图图层…', 'Adding a map layer…') : hasActiveMapWrite(dirtyOwners) ? t('正在保存地图…', 'Saving the map…') : referenceWriting ? t('正在提交外部来源…', 'Committing external source…') : dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
+    <footer className="ras-statusbar"><span role="status">{projectWriting ? t('正在更新工程连接…', 'Updating a project connection…') : mapWriting ? t('正在加入地图图层…', 'Adding a map layer…') : hasActiveMapWrite(dirtyOwners) ? t('正在保存地图…', 'Saving the map…') : referenceWriting ? t('正在提交外部来源…', 'Committing external source…') : dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
     <ConfirmActionControlDialog
       open={pendingContext !== null}
       title={t('保留未保存的修改？', 'Keep unsaved changes?')}
@@ -249,7 +273,7 @@ export function RasMainWindow() {
       autoFocusCancel
       onCancel={() => setPendingContext(null)}
       onContinue={() => {
-        if (referenceWriteLease.current || mapWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
+        if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
         if (!pendingContext || pendingContext.source !== identity(contextRef.current)) { setPendingContext(null); return; }
         dirtyOwnersRef.current = new Set(); setDirtyOwners(dirtyOwnersRef.current); commitContext(pendingContext.target, pendingContext.options); setPendingContext(null);
       }}
