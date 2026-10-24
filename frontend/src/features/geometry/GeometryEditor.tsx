@@ -233,7 +233,7 @@ export default function GeometryPage(props: FeaturePageProps) {
       {workspace.errors.save && <GeometryError language={language} error={workspace.errors.save} style={{ marginTop: 12 }} />}
       {workspace.savedNotice && <div className="geometry-ok" role="status" style={{ marginTop: 10 }}>{gt(language, workspace.savedNotice === 'saved' ? 'saved' : 'idle')}</div>}
       <footer className="geometry-table-footer"><span>{gt(language, 'dirtyCaption')}</span><span>{gt(language, 'operation')}: {operationLabel(language, workspace.busyOperation)}</span></footer>
-      <ArcImportDialog key={workspace.ownerKey} open={arcImportOpen} language={language} context={props.context} backend={props.backend}
+      <ArcImportDialog key={`arc-import:${workspace.ownerKey}`} open={arcImportOpen} language={language} context={props.context} backend={props.backend}
         model={workspace.model} topology={workspace.topology} capture={workspace.vectorImportCapture}
         canInspect={workspace.canInspectVectorImport} canApply={workspace.canApplyVectorImport}
         onInspect={workspace.inspectVectorImport} onApply={workspace.applyVectorImport} onClose={() => setArcImportOpen(false)} />

@@ -51,8 +51,8 @@ export function NodeEditor({ selectedRows, ...props }: NodeEditorProps) {
       </div>}
     </section>
     <div className="geometry-inline-help">{props.language === 'zh'
-      ? `节点身份与坐标来自拓扑快照（源修订 ${props.topologySnapshot?.revision ?? '—'}）。Host 支持地图拖动节点；此表格页没有地图拖动捕获，因此坐标在这里保持只读。`
-      : `Node identity and coordinates come from the topology snapshot (source revision ${props.topologySnapshot?.revision ?? '—'}). The host supports map-based node dragging; this table page has no map drag capture, so coordinates remain read-only here.`}</div>
+      ? `节点身份与坐标来自拓扑快照（源修订 ${props.topologySnapshot?.revision ?? '—'}）。节点表中的坐标只读；可在上方拓扑地图拖动节点，修改先进入几何草稿，保存后写入源文件。`
+      : `Node identity and coordinates come from the topology snapshot (source revision ${props.topologySnapshot?.revision ?? '—'}). Coordinates in the node table are read-only. Drag nodes on the topology map above to edit the geometry draft, then save to write the source file.`}</div>
   </div>;
 }
 
