@@ -281,6 +281,7 @@ export function MapMeshTimeSeriesPanel({ backend, language, capture, meshHit }: 
     const generation = ++executionGeneration.current;
     const current = (): boolean => generation === executionGeneration.current &&
       ownerIdentityRef.current === ownerIdentity && !controller.signal.aborted;
+    let terminalResultReceived = false;
     setExecutionState({ ownerIdentity, requestKey, phase: 'running', cancelRequested: false });
     try {
       const raw = await backend.request<unknown>('map.result.meshTimeSeries.execute', {
@@ -309,6 +310,7 @@ export function MapMeshTimeSeriesPanel({ backend, language, capture, meshHit }: 
             : previous);
         },
       });
+      terminalResultReceived = true;
       if (ownerIdentityRef.current !== ownerIdentity || generation !== executionGeneration.current) return;
       const result = parseMeshTimeSeriesExecution(raw, capture, inspection, selection);
       if (ownerIdentityRef.current !== ownerIdentity || generation !== executionGeneration.current) return;
@@ -317,7 +319,7 @@ export function MapMeshTimeSeriesPanel({ backend, language, capture, meshHit }: 
       if (generation !== executionGeneration.current || ownerIdentityRef.current !== ownerIdentity) return;
       if (isAbortError(error) && executionTransportID.current) {
         setExecutionState({ ownerIdentity, requestKey, phase: 'cancelled' });
-      } else if (errorHasConfirmedTerminal(error)) {
+      } else if (terminalResultReceived || errorHasConfirmedTerminal(error)) {
         setExecutionState({ ownerIdentity, requestKey, phase: 'failed', error });
       } else {
         setExecutionState({ ownerIdentity, requestKey, phase: 'unconfirmed', error });

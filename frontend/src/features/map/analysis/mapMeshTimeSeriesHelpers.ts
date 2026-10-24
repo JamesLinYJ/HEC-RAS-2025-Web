@@ -442,7 +442,8 @@ export function parseMeshTimeSeriesExecution(
   }
   const flowAreaIndex = nonNegativeInteger(item.flowAreaIndex, 'flowAreaIndex');
   const meshHash = integer(item.meshHash, 'meshHash');
-  const expectedVariable = selection.elementKind === 'Cell' ? 'Depth' : 'Velocity';
+  // The Host returns OutputVariable.Name, including its source mesh element.
+  const expectedVariable = selection.elementKind === 'Cell' ? 'Cell Depth' : 'Face Velocity';
   const flowArea = inspection.flowAreas.find((area) => area.flowAreaIndex === selection.flowArea.flowAreaIndex);
   if (!flowArea || !flowArea.hasMesh || flowAreaIndex !== flowArea.flowAreaIndex ||
       item.flowAreaID !== flowArea.flowAreaID || item.flowAreaName !== flowArea.name || meshHash !== flowArea.meshHash ||

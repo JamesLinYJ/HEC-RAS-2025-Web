@@ -129,15 +129,91 @@ export interface GeometryTopologySpatialSelectionResult {
   selections: GeometryTopologySelectedFeature[];
 }
 
-export interface GeometryTopologyMapCommand {
-  action: 'moveNode';
-  featureKind: 'node';
-  featureIDs: number[];
-  nodeFID: number;
-  nodeFIDs: number[];
-  coordinates: GeometryTopologyCoordinate[];
-  mapCellSize: number;
-}
+export type GeometryTopologyMapTool =
+  | 'select'
+  | 'addArc'
+  | 'moveArcPoint'
+  | 'insertArcPoint'
+  | 'deleteArcPoint'
+  | 'splitArc';
+
+/** Map commands replay through the owning topology draft; map owner tokens stay in the request envelope. */
+export type GeometryTopologyMapCommand =
+  | {
+      action: 'moveNode';
+      featureKind: 'node';
+      featureIDs: number[];
+      nodeFID: number;
+      nodeFIDs: number[];
+      coordinates: [GeometryTopologyCoordinate];
+      mapCellSize: number;
+    }
+  | {
+      action: 'addArc';
+      featureKind: 'arc';
+      featureIDs: [];
+      coordinates: GeometryTopologyCoordinate[];
+      mapCellSize: number;
+      startArcTarget?: { arcFID: number; sourceSegmentIndex: number; point: GeometryTopologyCoordinate };
+      startNodeFID?: number;
+      splitMode?: 'Anywhere' | 'AtVertex';
+    }
+  | {
+      action: 'moveArcPoint';
+      featureKind: 'arc';
+      featureIDs: [];
+      arcFID: number;
+      pointIndex: number;
+      coordinates: [GeometryTopologyCoordinate];
+      mapCellSize: number;
+    }
+  | {
+      action: 'insertArcPoint';
+      featureKind: 'arc';
+      featureIDs: [];
+      arcFID: number;
+      sourceSegmentIndex: number;
+      coordinates: [GeometryTopologyCoordinate];
+      mapCellSize: number;
+    }
+  | {
+      action: 'deleteArcPoint';
+      featureKind: 'arc';
+      featureIDs: [];
+      arcFID: number;
+      pointIndex: number;
+      mapCellSize: number;
+    }
+  | {
+      action: 'splitArc';
+      featureKind: 'arc';
+      featureIDs: [];
+      arcFID: number;
+      coordinates: [GeometryTopologyCoordinate];
+      mapCellSize: number;
+      splitMode?: 'Anywhere' | 'AtVertex';
+    }
+  | {
+      action: 'reverseArc';
+      featureKind: 'arc';
+      featureIDs: number[];
+      mapCellSize: number;
+    }
+  | {
+      action: 'filterArc';
+      featureKind: 'arc';
+      featureIDs: number[];
+      mapCellSize: number;
+      epsilon: number;
+    }
+  | {
+      action: 'smoothArc';
+      featureKind: 'arc';
+      featureIDs: number[];
+      mapCellSize: number;
+      smoothWindowSize: number;
+      smoothIterations: number;
+    };
 
 export interface GeometryTopologyCompletionMessage {
   id: string;

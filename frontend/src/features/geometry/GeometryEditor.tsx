@@ -74,7 +74,7 @@ export default function GeometryPage(props: FeaturePageProps) {
   const { language } = props;
   const workbenchBusy = !!workspace.busyOperation;
   const topologyMapWorkspace = useGeometryTopologyMap({
-    active: page === 'nodes',
+    active: page === 'nodes' || page === 'arcs',
     owner: workspace.ownerKey,
     backend: props.backend,
     backendRevision: props.backendRevision,
@@ -83,6 +83,7 @@ export default function GeometryPage(props: FeaturePageProps) {
     topology: workspace.topology,
     canEdit: !!workspace.topology?.canEdit && workspace.supports('topology.edit'),
     busy: workbenchBusy,
+    onLoadArcPoints: workspace.loadArcPoints,
     onMapCommand: workspace.editTopologyMapCommand,
   });
   const busy = workbenchBusy || topologyMapWorkspace.interactionBusy;
@@ -129,7 +130,9 @@ export default function GeometryPage(props: FeaturePageProps) {
     onApplyTopologyFactor: workspace.applyTopologyFactor,
     onArcPointCoordinateChange: workspace.editArcPointCoordinate,
     onApplyRecipe: workspace.applyTopologyRecipe,
-    ...(kind === 'node' ? { onSelectionChange: topologyMapWorkspace.onTableSelectionChange } : {}),
+    ...((kind === 'node' || kind === 'arc') ? {
+      onSelectionChange: (rows: GeometryRow[]) => topologyMapWorkspace.onTableSelectionChange(kind, rows),
+    } : {}),
     onTopologyResize: (featureKind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => {
       void workspace.resizeTopology(featureKind, row, operation, axis)
         .catch((error: unknown) => workspace.setError('topology', geometryDiagnosticMessage(error)));
@@ -144,7 +147,7 @@ export default function GeometryPage(props: FeaturePageProps) {
       case 'topologySummary': return <GeometryTopologySummaryPage language={language} snapshot={displayedTopology} onNavigate={(target) => setPage(target)}
         canEdit={!!workspace.topology?.canEdit && workspace.supports('topology.edit')} busy={busy} onApplyFactor={workspace.applyTopologyFactor} />;
       case 'nodes': return <GeometryTopologyNodesPage key={workspace.ownerKey} {...topologyPageProps('node')} mapWorkspace={topologyMapWorkspace} />;
-      case 'arcs': return <GeometryTopologyArcsPage key={workspace.ownerKey} {...topologyPageProps('arc')} />;
+      case 'arcs': return <GeometryTopologyArcsPage key={workspace.ownerKey} {...topologyPageProps('arc')} mapWorkspace={topologyMapWorkspace} />;
       case 'regions': return <GeometryTopologyRegionsPage key={workspace.ownerKey} {...topologyPageProps('region')} />;
       case 'mesh': return <GeometryMeshPage key={workspace.ownerKey}
         language={language}

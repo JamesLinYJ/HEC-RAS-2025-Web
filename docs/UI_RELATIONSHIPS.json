@@ -1273,7 +1273,7 @@
       },
       {
         "id": "geometry-topology-map-canvas",
-        "mount": "GeometryEditor (nodes page) → useGeometryTopologyMap → GeometryTopologyNodesPage → TopologyNodesEditor → GeometryTopologyCanvas",
+        "mount": "GeometryEditor (nodes/arcs pages) → useGeometryTopologyMap → GeometryTopologyNodesPage → TopologyNodesEditor → GeometryTopologyMapPanel → GeometryTopologyCanvas; arcs page → TopologyArcsEditor → TopologyArcActiveFeatures → same GeometryTopologyMapPanel / GeometryTopologyCanvas + TopologyMapArcTools",
         "source": [
           "frontend/src/features/geometry/GeometryEditor.tsx",
           "frontend/src/features/geometry/GeometryTopologyNodesPage.tsx",
@@ -1285,17 +1285,27 @@
           "backend/Host/GeometryProjectMapService.cs",
           "backend/Host/GeometryTopologyMapService.cs",
           "backend/Host/GeometryTopologyService.cs",
-          "backend/Host/BackendWorker.cs"
+          "backend/Host/BackendWorker.cs",
+          "frontend/src/features/geometry/GeometryTopologyArcsPage.tsx",
+          "frontend/src/features/geometry/TopologyArcsEditor.tsx",
+          "frontend/src/features/geometry/TopologyArcActiveFeatures.tsx",
+          "frontend/src/features/geometry/GeometryTopologyMapPanel.tsx",
+          "frontend/src/features/geometry/TopologyMapArcTools.tsx",
+          "frontend/src/features/geometry/geometryMapDrawing.ts",
+          "frontend/src/features/geometry/geometryMapHitTesting.ts",
+          "backend/Host/GeometryTopologyToolsService.cs",
+          "backend/Host/GeometryTopologyContracts.cs"
         ],
-        "stateOwner": "The Geometry workbench owns the editable topology snapshot, revision, draftState, draftIdentity and undo history. useGeometryTopologyMap owns the current saved-map target and transient capture; canvas camera is view-only, and spatial selection is synchronized by stable source FIDs with the node table.",
+        "stateOwner": "The Geometry workbench owns the editable topology snapshot, revision, draftState, draftIdentity and undo history. useGeometryTopologyMap owns the current saved-map target and transient map capture, spatial-selection FIDs, selected arc source-point snapshot and request generations. Node and arc table selections update their own feature-kind set while retaining the other. Canvas camera and unfinished arc drawing are view-local and are discarded when their captured owner changes.",
         "readActions": [
           "map.document.list",
           "map.tree.load",
           "map.geometry.load",
           "topology.load",
+          "topology.arcPoints",
           "topology.spatialSelect"
         ],
-        "writeBoundary": "The saved map catalog/tree is matched to the exact Geometry locator and the currently loaded Geometry path/revision. map.geometry.load supplies the actual map context token and viewport capture; displayed editable features come from the current topology.load snapshot. topology.spatialSelect accepts world coordinates and current MapCellSize and only changes selected source FIDs; click selection uses All scope while extent selection can use the selected scope/hit mode. Node dragging uses topology.edit mapCommand/moveNode and extends the existing topology draft/undo history; only parent model.save writes Geometry HDF. The context token is a real map.geometry.load receipt, but current topology endpoints only validate nonempty map identity/token strings plus Geometry revision and draft identity; they do not verify that this token was issued by the map loader. Original TopologyNodesEditor/NodeEditor duties were selection and details, with no coordinate-edit fields; native map movement lived in MoveNodeHandler. The React canvas is connection glue for that map interaction, not another original C# UI inventory item. Static source wiring only; no batch-12 browser/UI acceptance is claimed."
+        "writeBoundary": "The saved map catalog/tree is matched to the exact Geometry locator and currently loaded Geometry path/revision. map.geometry.load supplies the actual map context token, map/.vis identity and viewport; the drawn editable features come only from the current topology.load snapshot. topology.spatialSelect accepts world coordinates and measured MapCellSize and returns stable source FIDs for node/arc/region selection. Node drag and the eight arc actions (addArc, moveArcPoint, insertArcPoint, deleteArcPoint, splitArc, reverseArc, filterArc, smoothArc) use topology.edit mapCommand mutations in the existing parent Geometry draft and undo/redo history; only parent model.save writes Geometry HDF. Arc points are read by topology.arcPoints for one uniquely selected arc and are bound to arcFID, revision and draftIdentity; move/delete use the source internalPointIndex rather than table row or endpoint indices, while endpoints remain tied to node operations. Insert/split segment indices follow the Host topology.map path order. The first vertex of a new arc can bind to a captured source node or a unique arc segment; at a shared internal vertex the lowest sourceSegmentIndex is chosen. Cross-arc/self-intersection ambiguity does not choose a snap target and retains the raw click coordinate; splitting requires a unique real-arc hit. Terrain-raster SnapArcByClick/SnapArcByLasso, SmartAdd and DeepConnect are not connected to this React canvas: SmartAdd still lacks the captured Terrain association/raster viewport/window/options gate, and DeepConnect lacks exact persisted vector/topology source and anchor capture. These are not complete UI actions. The Host contextToken is returned by map.geometry.load and echoed through topology edits, but current Host endpoints validate nonempty map/token identity plus Geometry revision and draft identity; they do not prove the token was issued by map.geometry.load. The TypeScript hook rejects stale owners/generations but does not upgrade that Host guarantee. Original behavior is supplied by AddNewArcHandler, MoveArcPointsHandler, InsertLineFeaturePointHandler, DeleteArcPointsHandler, SplitArcHandler, ReverseArcHandler, FilterArcHandler and SmoothArcHandler; the React panel/toolbar/canvas/helper modules and Host request envelope are integration glue, not additional original C# UI inventory items. Static source wiring only; no Batch 13 runtime acceptance is claimed."
       },
       {
         "id": "map-result-analysis-panels",
@@ -1335,7 +1345,51 @@
           "map.result.culvertTimeSeries",
           "map.resultSampleLine"
         ],
-        "writeBoundary": "Mesh inspection supplies authoritative FlowArea choices; execution reads stored Depth for an exact Cell index or Velocity for an exact Face index. This is time-series extraction, not contour/isolines generation. Mesh time-series reads and sample-line CumulativeVolume integration use ResultPostProcessReadScope → PostProcessor.CreateReadCache in a unique temporary directory; processing operates on that read cache, and disposal closes its HDF resources and removes the directory without modifying the source Result/HDF. This does not imply that sample-line Flow mode writes the shared cache. Culvert panels read Host-returned barrel IDs and stored profile/Flow/Velocity data; positive Flow/Velocity output and direction have no batch-12 fixture acceptance; source wiring does not establish numerical or sign correctness. The sample-line panel requires one persisted selected line feature and an explicit part for MultiLineString, sends project XY and the primary source SHA, and displays Host times, units, NoData and side-effect receipts. Host binds source path/revision and coordinate hash but does not verify that featureID exists in the persisted source record table. The sample-line DTO still declares ResultPostProcessCacheMayBeCreatedOrUpdated against the expected default cache path as a conservative side-effect receipt; that declaration alone does not prove the shared cache was written or changed by this execution. These panels do not save .ras, .vis or the source Result/HDF. The closest original UI responsibilities are DynamicTimeSeriesProfilePlot/DynamicProfilePlot with Geometry arc/culvert line sources; there is no direct original UI class for the new cross-Result mesh time series or stored culvert result endpoints. New panel files are Host integration glue, not additional original C# inventory items. Static source wiring only; no batch-12 browser/HTTP/fixture acceptance is claimed."
+        "writeBoundary": "Mesh inspection supplies authoritative FlowArea choices; Cell execution requires the retained OutputVariables.Name `Cell Depth`, while Face execution requires `Face Velocity`, for the exact selected index. This is time-series extraction, not contour/isolines generation. After a successful HTTP response, a local receipt-parser error is a confirmed terminal failure; only a transport without confirmed terminal state is unconfirmed. Mesh time-series reads and sample-line CumulativeVolume integration use ResultPostProcessReadScope → PostProcessor.CreateReadCache in a unique temporary directory; processing operates on that read cache, and disposal closes its HDF resources and removes the directory without modifying the source Result/HDF. This does not imply that sample-line Flow mode writes the shared cache. Culvert panels read Host-returned barrel IDs and stored profile/Flow/Velocity data; positive Flow/Velocity output and direction have no batch-12 fixture acceptance; source wiring does not establish numerical or sign correctness. The sample-line panel requires one persisted selected line feature and an explicit part for MultiLineString, sends project XY and the primary source SHA, and displays Host times, units, NoData and side-effect receipts. Host binds source path/revision and coordinate hash but does not verify that featureID exists in the persisted source record table. The sample-line DTO still declares ResultPostProcessCacheMayBeCreatedOrUpdated against the expected default cache path as a conservative side-effect receipt; that declaration alone does not prove the shared cache was written or changed by this execution. These panels do not save .ras, .vis or the source Result/HDF. The closest original UI responsibilities are DynamicTimeSeriesProfilePlot/DynamicProfilePlot with Geometry arc/culvert line sources; there is no direct original UI class for the new cross-Result mesh time series or stored culvert result endpoints. New panel files are Host integration glue, not additional original C# inventory items. Static source wiring only; no batch-12 browser/HTTP/fixture acceptance is claimed."
+      },
+      {
+        "id": "map-terrain-measurement",
+        "mount": "MapFeaturePage measureLength finish path → useTerrainElevationMeasurement → TerrainMeasurementReadout",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/measure/terrainElevationCapture.ts",
+          "frontend/src/features/map/measure/useTerrainElevationMeasurement.ts",
+          "frontend/src/features/map/measure/TerrainMeasurementReadout.tsx",
+          "frontend/src/features/map/useAssociatedMapLayers.ts",
+          "frontend/src/features/map/useMapResultFrames.ts",
+          "backend/Host/MapTerrainElevationService.cs",
+          "backend/Host/MapResultChartService.cs",
+          "backend/Host/MapResultChartContracts.cs",
+          "backend/Host/MapResultRenderService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "MapFeaturePage owns the planar length result and its map owner; useTerrainElevationMeasurement owns the current Terrain sample state, AbortController and request generation. captureVisibleTerrainForMeasurement accepts only the current saved map/context/catalog and an exact checked, effectively visible Terrain capture selected from the tree or uniquely available.",
+        "readActions": [
+          "map.resultSources",
+          "map.associations.load",
+          "map.measureTerrainElevations"
+        ],
+        "writeBoundary": "The existing measureLength finish path computes and retains planar length in map-coordinate units, then sends only the last two measured vertices to map.measureTerrainElevations. The request preserves original RasSlopeDelegate endpoint order (latest point, then previous point), plus the exact map/catalog selection overrides, context token, Terrain locator/path/revision, Terrain HDF and raster-input dependency SHAs, and active Result owners. Only source-hdf and terrain-input-raster dependencies enter expectedDependencies; the full association dependencies, including Plan sources, remain part of the capture identity. The request Terrain revision is the source HDF SHA; the receipt terrainRevision is a combined dependency fingerprint, while the source HDF SHA is checked separately through sourceDependencies. Host samples the retained Terrain at those two project-world points and verifies all source, project/map/.vis and dependency identities again; React computes slope as (previous elevation - latest elevation)/last-segment length and retains the original tool direction/units. No valid capture keeps planar measurement available and explains why elevations are unavailable; multiple visible Terrain layers require an explicit tree selection. Sampling is read-only and does not save project, Terrain or Result. This wires the slope delegate of original MeasureToolHandler/RasSlopeDelegate; the UI helper/readout and Host request contract are integration glue, not extra source UI items. Static source wiring only; no runtime acceptance is claimed."
+      },
+      {
+        "id": "terrain-raster-export-panel",
+        "mount": "ProjectTreeModeReactView → RasCatalogTreeMode → RasCatalogInfoPane (selected ObservableTerrain) → TerrainCatalogSummary / TerrainRasterExportPanel",
+        "source": [
+          "frontend/src/features/project/RasCatalogInfoPane.tsx",
+          "frontend/src/features/project/TerrainCatalogSummary.tsx",
+          "frontend/src/features/project/TerrainRasterExportPanel.tsx",
+          "frontend/src/features/tools/coreImportWorkflow.ts",
+          "backend/Host/TerrainRasterExportService.cs",
+          "backend/Host/WorkspaceFileSelectionService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "RasCatalogInfoPane mounts the panel only for the selected ObservableTerrain. TerrainRasterExportPanel owns the cell-size text, exact project/Terrain capture, request generation and operation/receipt state for that catalog node. The action is disabled unless the project session, core-layer identity, saved Terrain SHA and no-unsaved-drafts condition are verified.",
+        "readActions": [
+          "workspace.file.inspect",
+          "model.load",
+          "terrain.raster.export"
+        ],
+        "writeBoundary": "Before export, the panel inspects project and Terrain files, loads the selected Terrain snapshot, then rechecks both SHAs. It submits a ModelSaveRequest with empty fields/images/rows/samples/changedCells and the captured sourceState; it does not save model changes. The Host uses TerrainBehaviors.ExportFullRaster/TiffExportEngine.ExportWithOverviews semantics, the valid raster extent and projection, and chooses a unique TIFF path in the project default export directory; the UI controls cell size but has no output-path picker or browser download. On completed terminal receipt, the panel inspects the TIFF and rechecks project/Terrain source identities before displaying output SHA/length. Cancellation can leave a reported partial TIFF and is not shown as success. No .ras/project commit occurs. This React panel is workflow glue for the retained Terrain export behavior, not an additional source UI inventory item. Static source wiring only; no build or runtime acceptance is claimed."
       }
     ],
     "stateInvariants": [

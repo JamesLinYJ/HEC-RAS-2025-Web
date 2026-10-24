@@ -15,6 +15,7 @@ import { ProjectCatalogSummary } from './ProjectCatalogSummary';
 import { RasCatalogSummary } from './RasCatalogSummary';
 import { ResultCatalogSummary } from './ResultCatalogSummary';
 import { TerrainCatalogSummary } from './TerrainCatalogSummary';
+import { TerrainRasterExportPanel } from './TerrainRasterExportPanel';
 import { catalogNodeIcon, catalogNodeTypeLabel } from './DefaultRasCatalogNode';
 import { localizeProjectTreeStatus } from './ProjectTreeModeSectionTitles';
 
@@ -39,7 +40,8 @@ export function RasCatalogInfoPane({ language, backend, context, hasUnsavedDraft
     case 'ModelSectionContext': summary = <ProjectCatalogSummary {...summaryProps} typeLabel={text(language, '工程', 'Project')} />; break;
     case 'BackupNodeVM': summary = <BackupCatalogSummary {...summaryProps} {...backupActionProps} />; break;
     case 'ObservableGeometry': summary = <><GeometryCatalogSummary {...summaryProps} /><GeometryBackupAction {...backupActionProps} node={node} action="create" /></>; break;
-    case 'ObservableTerrain': summary = <TerrainCatalogSummary {...summaryProps} />; break;
+    case 'ObservableTerrain': summary = <><TerrainCatalogSummary {...summaryProps} /><TerrainRasterExportPanel
+      language={language} backend={backend} context={context} node={node} hasUnsavedDrafts={hasUnsavedDrafts} /></>; break;
     case 'ObservableBoundaryCondition': summary = <BoundaryConditionCatalogSummary {...summaryProps} />; break;
     case 'ObservablePlan': summary = <PlanCatalogSummary {...summaryProps} />; break;
     case 'ObservableResult': summary = <ResultCatalogSummary {...summaryProps} />; break;

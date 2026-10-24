@@ -48,6 +48,9 @@ import type {
   MapSampleLineSource,
 } from './analysis/mapAnalysisTypes';
 import { useMapResultMeshHoverCapture } from './analysis/useMapResultMeshHoverCapture';
+import { captureVisibleTerrainForMeasurement } from './measure/terrainElevationCapture';
+import { TerrainMeasurementReadout } from './measure/TerrainMeasurementReadout';
+import { useTerrainElevationMeasurement } from './measure/useTerrainElevationMeasurement';
 import { rgbaFrameImage } from './mapImages';
 import { importMapSources } from './importMapSources';
 import { MapSourceImportControl } from './MapSourceImportControl';
@@ -244,6 +247,8 @@ function MapPage(props: MapFeaturePageProps) {
   const [contextMenu, setContextMenu] = useState<FeatureContextMenu | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [measurementResult, setMeasurementResult] = useState<string | null>(null);
+  const [measurementResultOwner, setMeasurementResultOwner] = useState<string | null>(null);
+  const [measurementResultKind, setMeasurementResultKind] = useState<'length' | 'area' | null>(null);
   const [importError, setImportError] = useState('');
   const [busyNodeID, setBusyNodeID] = useState<string | null>(null);
   const [sourceImportBusy, setSourceImportBusy] = useState(false);
@@ -320,6 +325,23 @@ function MapPage(props: MapFeaturePageProps) {
   const resultFrames = useMapResultFrames({ backend, context, document: activeDocument, language, viewport: resultViewport, backendRevision });
   const associatedLayers = useAssociatedMapLayers({ backend, context, document: activeDocument,
     viewport: resultViewport, controller: resultFrames, language, backendRevision });
+  const terrainMeasurementCaptureState = useMemo(() => captureVisibleTerrainForMeasurement({
+    backend,
+    context,
+    catalog: resultFrames.sources,
+    document: activeDocument,
+    map: resultFrames.mapRequest,
+    layers: associatedLayers.layers,
+    selectedNodeID: selectedBackendNode?.owner === owner ? selectedBackendNode.nodeID : null,
+  }), [activeDocument, associatedLayers.layers, backend, context, owner, resultFrames.mapRequest, resultFrames.sources,
+    selectedBackendNode?.nodeID, selectedBackendNode?.owner, backendRevision]);
+  const terrainElevationMeasurement = useTerrainElevationMeasurement(backend, terrainMeasurementCaptureState.capture);
+  const clearMeasurement = () => {
+    setMeasurementResult(null);
+    setMeasurementResultOwner(null);
+    setMeasurementResultKind(null);
+    terrainElevationMeasurement.clear();
+  };
   const mapTreeDocument = useMemo(() => activeDocument && mapCatalogMatchesDocument(resultFrames.sources, context, activeDocument)
     ? { ...activeDocument, roots: resultFrames.sources.treeRoots } : activeDocument,
   [activeDocument, context.projectPath, context.projectRevision, resultFrames.sources]);
@@ -871,7 +893,7 @@ function MapPage(props: MapFeaturePageProps) {
     editMapDraft((state) => ({ ...state, layers: [...state.layers, layer], points: [] }));
     setSelectedFeature({ owner, layerID: layer.id, featureID: layer.features[0].id });
     setSelectedBackendNode(null);
-    setMeasurementResult(null);
+    clearMeasurement();
     setStatusMessage(text(language, '绘制草稿已加入本地预览，尚未保存到工程。', 'The drawing draft was added to the local preview and has not been saved to the project.'));
   };
 
@@ -883,11 +905,20 @@ function MapPage(props: MapFeaturePageProps) {
     } else if (activeTool === 'measureLength' && draftPoints.length >= 2) {
       const value = measurement(draftPoints, false);
       setMeasurementResult(text(language, '长度（源坐标单位）: ', 'Length (source units): ') + numberLabel(value));
+      setMeasurementResultOwner(owner);
+      setMeasurementResultKind('length');
+      const latest = draftPoints[draftPoints.length - 1];
+      const previous = draftPoints[draftPoints.length - 2];
+      terrainElevationMeasurement.sample(latest, previous,
+        Math.hypot(latest[0] - previous[0], latest[1] - previous[1]), terrainMeasurementCaptureState.reason);
       updateDraftPoints(() => []);
       setStatusMessage(text(language, '平面距离测量完成；单位沿用源坐标。', 'Planar distance measurement completed in source coordinate units.'));
     } else if (activeTool === 'measureArea' && draftPoints.length >= 3) {
       const value = measurement(draftPoints, true);
       setMeasurementResult(text(language, '面积（源坐标单位²）: ', 'Area (source units²): ') + numberLabel(value));
+      setMeasurementResultOwner(owner);
+      setMeasurementResultKind('area');
+      terrainElevationMeasurement.clear();
       updateDraftPoints(() => []);
       setStatusMessage(text(language, '平面面积测量完成；单位沿用源坐标。', 'Planar area measurement completed in source coordinate units.'));
     } else {
@@ -924,7 +955,7 @@ function MapPage(props: MapFeaturePageProps) {
       return;
     }
     updateDraftPoints((current) => [...current, coordinate]);
-    setMeasurementResult(null);
+    clearMeasurement();
   };
 
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -988,7 +1019,7 @@ function MapPage(props: MapFeaturePageProps) {
     if (event.key === 'Escape') {
       event.preventDefault();
       updateDraftPoints(() => []);
-      setMeasurementResult(null);
+      clearMeasurement();
       setStatusMessage(text(language, '已取消当前绘制或测量草稿。', 'The current drawing or measurement draft was cancelled.'));
     } else if (event.key === 'Backspace') {
       event.preventDefault();
@@ -1003,7 +1034,7 @@ function MapPage(props: MapFeaturePageProps) {
     setHoverPointer(null);
     if (draftPoints.length > 0 && tool !== activeTool) setStatusMessage(text(language, '切换工具已取消未完成草稿。', 'Changing tools cancelled the unfinished draft.'));
     if (draftPoints.length > 0) updateDraftPoints(() => []);
-    setMeasurementResult(null);
+    clearMeasurement();
     setActiveTool(tool);
     setContextMenu(null);
   };
@@ -1259,7 +1290,13 @@ function MapPage(props: MapFeaturePageProps) {
           <button type="button" onClick={() => updateDraftPoints(() => [])}>{copy.cancel}</button>
         </div>
       )}
-      {measurementResult && <div className="map-measurement-result" role="status">{measurementResult}</div>}
+      {measurementResult && measurementResultOwner === owner && <div className="map-measurement-result" role="status">{measurementResult}</div>}
+      <TerrainMeasurementReadout
+        language={language}
+        visible={activeTool === 'measureLength' || (measurementResultOwner === owner && measurementResultKind === 'length')}
+        captureState={terrainMeasurementCaptureState}
+        state={terrainElevationMeasurement.state}
+      />
       {statusMessage && <div className="map-status-message" role="status">{statusMessage}</div>}
       {(persistedVectors.error != null || persistedGdb.error != null || persistedVectors.issues.length > 0 || persistedGdb.issues.length > 0 || persistedRasters.errors.length > 0 || associatedLayers.errors.length > 0 || resultImages.error != null || velocityField.error != null) && <div className="map-inline-error" role="alert">
         {persistedVectors.error != null && <div>{persistedVectors.error.message}</div>}

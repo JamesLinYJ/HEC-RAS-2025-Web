@@ -9,8 +9,12 @@ import { TopologyArcQuickEditPicker } from './TopologyArcQuickEditPicker';
 import { TopologyFeatureErrorControl } from './TopologyFeatureErrorControl';
 import { TagFilterControl } from './TagFilterControl';
 import type { GeometryRow } from './geometryTypes';
+import { GeometryTopologyMapPanel } from './GeometryTopologyMapPanel';
+import type { GeometryTopologyMapWorkspace } from './useGeometryTopologyMap';
 
-export type TopologyArcActiveFeaturesProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
+export type TopologyArcActiveFeaturesProps = Omit<GeometryTopologyTablePageProps, 'kind'> & {
+  mapWorkspace?: GeometryTopologyMapWorkspace;
+};
 
 /** Source arc active-feature context: one stable row selection drives the table, filters, and details. */
 export function TopologyArcActiveFeatures(props: TopologyArcActiveFeaturesProps) {
@@ -18,6 +22,9 @@ export function TopologyArcActiveFeatures(props: TopologyArcActiveFeaturesProps)
   const [editingArcFID, setEditingArcFID] = useState<number>();
   const rows = useMemo(() => [...(props.table?.rows ?? []), ...props.localRows], [props.table?.rows, props.localRows]);
   const selectedRows = rows.filter((row) => selectedIDs.includes(row.id));
+  const mapArcSelection = props.mapWorkspace?.canvasProps.selectedFIDByKind.arc ?? [];
+  const mapArcSelectionKey = mapArcSelection.join(',');
+  const hasMapWorkspace = !!props.mapWorkspace;
   const selectRows = (selected: GeometryRow[]): void => {
     setSelectedIDs(selected.map((row) => row.id));
     props.onSelectionChange?.(selected);
@@ -32,7 +39,15 @@ export function TopologyArcActiveFeatures(props: TopologyArcActiveFeaturesProps)
     });
   }, [rows]);
 
+  useEffect(() => {
+    if (!hasMapWorkspace) return;
+    const wanted = new Set(mapArcSelectionKey ? mapArcSelectionKey.split(',').map(Number) : []);
+    const next = rows.filter((row) => Number.isInteger(row.fid) && wanted.has(row.fid!)).map((row) => row.id);
+    setSelectedIDs((current) => current.length === next.length && current.every((id, index) => id === next[index]) ? current : next);
+  }, [hasMapWorkspace, mapArcSelectionKey, rows]);
+
   return <div className="geometry-grid">
+    {props.mapWorkspace && <GeometryTopologyMapPanel language={props.language} workspace={props.mapWorkspace} showArcTools />}
     <ArcsTable {...props} selectedRowIDs={selectedIDs} onSelectionChange={selectRows} />
     <TagFilterControl language={props.language} featureKind="arc" rows={rows} snapshot={props.topologySnapshot}
       canFilter={!!props.canFilterTopology} busy={props.busy} onFilter={props.onTopologyFilter}

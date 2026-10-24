@@ -1,0 +1,98 @@
+.topology-map-arc-tools {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border-subtle, #d8dee8);
+  border-radius: 0.55rem;
+  background: var(--surface-subtle, #f7f9fc);
+  color: var(--text-primary, #172033);
+  font-size: 0.875rem;
+}
+
+.topology-map-arc-tools__row,
+.topology-map-arc-tools__tool-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.topology-map-arc-tools button {
+  min-height: 2rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border-subtle, #c7cfdb);
+  border-radius: 0.35rem;
+  background: var(--surface, #fff);
+  color: inherit;
+  cursor: pointer;
+}
+
+.topology-map-arc-tools button[aria-pressed="true"] {
+  border-color: var(--accent, #3274c8);
+  background: var(--accent-subtle, #e8f1ff);
+}
+
+.topology-map-arc-tools button:disabled,
+.topology-map-arc-tools fieldset:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.topology-map-arc-tools__split-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.2rem 0.55rem 0.4rem;
+  border: 1px solid var(--border-subtle, #d8dee8);
+  border-radius: 0.4rem;
+}
+
+.topology-map-arc-tools__split-mode legend {
+  padding: 0 0.25rem;
+}
+
+.topology-map-arc-tools__split-mode label,
+.topology-map-arc-tools__parameter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.topology-map-arc-tools__parameter {
+  position: relative;
+  flex-wrap: wrap;
+}
+
+.topology-map-arc-tools__parameter input {
+  width: 5.5rem;
+  min-height: 1.9rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border-subtle, #c7cfdb);
+  border-radius: 0.3rem;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+}
+
+.topology-map-arc-tools__parameter input[aria-invalid="true"] {
+  border-color: var(--danger, #b42318);
+}
+
+.topology-map-arc-tools__error {
+  flex-basis: 100%;
+  color: var(--danger, #b42318);
+  font-size: 0.78rem;
+}
+
+.topology-map-arc-tools__selection {
+  min-width: max-content;
+  padding: 0.25rem 0.45rem;
+  border-radius: 999px;
+  background: var(--surface, #fff);
+}
+
+.topology-map-arc-tools__status {
+  color: var(--text-secondary, #526077);
+  font-size: 0.8rem;
+}

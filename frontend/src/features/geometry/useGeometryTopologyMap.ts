@@ -4,7 +4,8 @@ import type { CatalogTreeNode, CatalogTreeNodeLocator, MapDocumentTab } from '..
 import { loadMapDocumentCatalog, projectXmlSha } from '../map/ProjectTreeListener';
 import { sameSourcePath } from '../tools/attributes/attributeTableTypes';
 import type {
-  GeometryModelRequest, GeometryRow, GeometryTopologyMapCommand, GeometryTopologyMapRequestContext,
+  GeometryModelRequest, GeometryRow, GeometryTopologyArcPointsSnapshot, GeometryTopologyMapCommand,
+  GeometryTopologyMapRequestContext, GeometryTopologyMapTool,
   GeometryTopologySelectionMode, GeometryTopologySelectionScope, GeometryTopologyMarqueeHitMode,
   GeometryTopologySnapshot, GeometryTopologySpatialSelectionResult,
 } from './geometryTypes';
@@ -39,6 +40,14 @@ interface GeometryMapSelection {
 }
 
 interface OwnerValue<T> { owner: string; value: T }
+interface ArcPointsCapture {
+  owner: string;
+  arcFID: number;
+  revision: string;
+  draftState: string;
+  draftIdentity: string;
+  snapshot: GeometryTopologyArcPointsSnapshot;
+}
 
 export interface GeometryTopologyMapWorkspace {
   targets: Array<{ key: string; label: string }>;
@@ -54,7 +63,17 @@ export interface GeometryTopologyMapWorkspace {
   onSelectionModeChange: (mode: GeometryTopologySelectionMode) => void;
   marqueeHitMode: GeometryTopologyMarqueeHitMode;
   onMarqueeHitModeChange: (mode: GeometryTopologyMarqueeHitMode) => void;
-  onTableSelectionChange: (rows: GeometryRow[]) => void;
+  activeTool: GeometryTopologyMapTool;
+  onActiveToolChange: (tool: GeometryTopologyMapTool) => void;
+  splitMode: 'Anywhere' | 'AtVertex';
+  onSplitModeChange: (mode: 'Anywhere' | 'AtVertex') => void;
+  selectedArcFIDs: number[];
+  arcPoints: GeometryTopologyArcPointsSnapshot | null;
+  mapCellSize: number | null;
+  draftReady: boolean;
+  draftDirty: boolean;
+  onTableSelectionChange: (kind: 'node' | 'arc', rows: GeometryRow[]) => void;
+  onMapCommand: (command: GeometryTopologyMapCommand) => Promise<void>;
   canvasProps: Omit<GeometryTopologyCanvasProps, 'language'>;
 }
 
@@ -68,6 +87,7 @@ interface UseGeometryTopologyMapOptions {
   topology?: GeometryTopologySnapshot;
   canEdit: boolean;
   busy: boolean;
+  onLoadArcPoints: (arcFID: number) => Promise<GeometryTopologyArcPointsSnapshot>;
   onMapCommand: (expected: { revision: string; draftState: string; draftIdentity: string },
     mapOwner: Pick<GeometryTopologyMapRequestContext, 'mapID' | 'contextToken' | 'geometryRevision'>,
     command: GeometryTopologyMapCommand) => Promise<GeometryTopologySnapshot>;
@@ -193,12 +213,14 @@ function emptySelection(): GeometryMapSelection {
 }
 
 export function useGeometryTopologyMap({ active, owner, backend, backendRevision, context, model, topology,
-  canEdit, busy, onMapCommand }: UseGeometryTopologyMapOptions): GeometryTopologyMapWorkspace {
+  canEdit, busy, onLoadArcPoints, onMapCommand: editMapCommand }: UseGeometryTopologyMapOptions): GeometryTopologyMapWorkspace {
   const [targetsEntry, setTargetsEntry] = useState<OwnerValue<MapTarget[]> | null>(null);
   const [selectedTargetKey, setSelectedTargetKey] = useState('');
   const [captureEntry, setCaptureEntry] = useState<OwnerValue<MapGeometryCapture> | null>(null);
   const [viewportCapture, setViewportCapture] = useState<GeometryTopologyViewportCapture | null>(null);
   const [selectionEntry, setSelectionEntry] = useState<OwnerValue<GeometryMapSelection> | null>(null);
+  const [arcPointsEntry, setArcPointsEntry] = useState<ArcPointsCapture | null>(null);
+  const [arcPointsLoading, setArcPointsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [spatialBusy, setSpatialBusy] = useState(false);
@@ -207,11 +229,17 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const [selectionScope, setSelectionScope] = useState<GeometryTopologySelectionScope>('All');
   const [selectionMode, setSelectionMode] = useState<GeometryTopologySelectionMode>('Replace');
   const [marqueeHitMode, setMarqueeHitMode] = useState<GeometryTopologyMarqueeHitMode>('Intersects');
+  const [activeTool, setActiveTool] = useState<GeometryTopologyMapTool>('select');
+  const [splitMode, setSplitMode] = useState<'Anywhere' | 'AtVertex'>('Anywhere');
+  const [mapCellSize, setMapCellSize] = useState<number | null>(null);
   const catalogGenerationRef = useRef(0);
   const mapCaptureGenerationRef = useRef(0);
   const spatialGenerationRef = useRef(0);
   const spatialControllerRef = useRef<AbortController | null>(null);
   const moveGenerationRef = useRef(0);
+  const mapCommandInFlightRef = useRef(false);
+  const arcPointsGenerationRef = useRef(0);
+  const onLoadArcPointsRef = useRef(onLoadArcPoints); onLoadArcPointsRef.current = onLoadArcPoints;
   const topologyRef = useRef(topology); topologyRef.current = topology;
   const captureRef = useRef(captureEntry); captureRef.current = captureEntry;
   const targetKeyRef = useRef(selectedTargetKey); targetKeyRef.current = selectedTargetKey;
@@ -260,6 +288,15 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const draftIdentity = topology?.completion?.draftIdentity;
   const mapCaptureReady = !!active && !!capture && !!topology && !!draftIdentity &&
     topology.revision === capture.geometryRevision && sameRevision(topology.completion?.sourceRevision, topology.revision);
+  const selectedArcFIDs = selection.arc;
+  const selectedArcFID = selectedArcFIDs.length === 1 ? selectedArcFIDs[0] : null;
+  const arcPoints = arcPointsEntry && topology && draftIdentity &&
+    arcPointsEntry.owner === owner && arcPointsEntry.arcFID === selectedArcFID &&
+    arcPointsEntry.revision === topology.revision && arcPointsEntry.draftState === topology.draftState &&
+    arcPointsEntry.draftIdentity === draftIdentity
+      ? arcPointsEntry.snapshot : null;
+  const draftReady = mapCaptureReady && canEdit && !busy && !loading && !capturing && !spatialBusy &&
+    !moveBusy && !arcPointsLoading && mapCellSize != null && Number.isFinite(mapCellSize) && mapCellSize > 0;
 
   useEffect(() => {
     spatialGenerationRef.current += 1;
@@ -274,6 +311,46 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   }, [active, backend, backendRevision, owner, selectedTarget?.key, topology?.revision, topology?.draftState, draftIdentity]);
 
   useEffect(() => {
+    const generation = ++arcPointsGenerationRef.current;
+    setArcPointsEntry(null);
+    setArcPointsLoading(false);
+    if (!active || selectedArcFID == null || !topology || !draftIdentity) return;
+    const expected = {
+      owner,
+      arcFID: selectedArcFID,
+      revision: topology.revision,
+      draftState: topology.draftState,
+      draftIdentity,
+    };
+    setArcPointsLoading(true);
+    void onLoadArcPointsRef.current(expected.arcFID)
+      .then((snapshot) => {
+        const latest = topologyRef.current;
+        const latestSelection = selectionRef.current;
+        if (generation !== arcPointsGenerationRef.current || ownerRef.current !== expected.owner ||
+            latest?.revision !== expected.revision || latest.draftState !== expected.draftState ||
+            latest.completion?.draftIdentity !== expected.draftIdentity ||
+            latestSelection?.owner !== expected.owner || latestSelection.value.arc.length !== 1 ||
+            latestSelection.value.arc[0] !== expected.arcFID) return;
+        if (snapshot.arcFID !== expected.arcFID || snapshot.revision !== expected.revision ||
+            snapshot.draftIdentity !== expected.draftIdentity || snapshot.rows.some((point) =>
+              point.pointKind === 'internal' && (!Number.isInteger(point.internalPointIndex) || point.internalPointIndex! < 0))) {
+          throw new Error('弧段点快照与当前来源弧段、修订或草稿不匹配。');
+        }
+        setArcPointsEntry({ ...expected, snapshot });
+      })
+      .catch((caught: unknown) => {
+        if (generation === arcPointsGenerationRef.current && !(caught instanceof DOMException && caught.name === 'AbortError')) {
+          setError(caught instanceof Error ? caught.message : String(caught));
+        }
+      })
+      .finally(() => { if (generation === arcPointsGenerationRef.current) setArcPointsLoading(false); });
+    return () => {
+      if (arcPointsGenerationRef.current === generation) arcPointsGenerationRef.current += 1;
+    };
+  }, [active, draftIdentity, owner, selectedArcFID, topology?.draftState, topology?.revision]);
+
+  useEffect(() => {
     if (!active) return;
     const generation = ++catalogGenerationRef.current;
     const controller = new AbortController();
@@ -283,6 +360,10 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     setTargetsEntry(null);
     setCaptureEntry(null);
     setViewportCapture(null);
+    setMapCellSize(null);
+    setArcPointsEntry(null);
+    setArcPointsLoading(false);
+    setActiveTool('select');
     setSelectedTargetKey('');
     setSelectionEntry((current) => current?.owner === owner ? current : { owner, value: emptySelection() });
     if (!model || !context.projectPath || !context.projectRevision) {
@@ -388,14 +469,16 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     selectedTarget, topology, viewportCapture]);
 
   const onViewportReady = useCallback((next: GeometryTopologyViewportCapture): void => {
+    if (!Number.isFinite(next.mapCellSize) || next.mapCellSize <= 0) return;
+    setMapCellSize((current) => current === next.mapCellSize ? current : next.mapCellSize);
     if (captureRef.current?.owner === ownerContextKey && captureRef.current.value.targetKey === targetKeyRef.current) return;
     setViewportCapture(next);
   }, [ownerContextKey]);
 
-  const onTableSelectionChange = useCallback((rows: GeometryRow[]): void => {
-    const node = [...new Set(rows.flatMap((row) => Number.isInteger(row.fid) && row.fid! >= 0 ? [row.fid!] : []))];
+  const onTableSelectionChange = useCallback((kind: 'node' | 'arc', rows: GeometryRow[]): void => {
+    const fids = [...new Set(rows.flatMap((row) => Number.isInteger(row.fid) && row.fid! >= 0 ? [row.fid!] : []))];
     const current = selectionRef.current?.owner === owner ? selectionRef.current.value : emptySelection();
-    const next = { ...current, node };
+    const next = { ...current, [kind]: fids };
     selectionRef.current = { owner, value: next };
     setSelectionEntry({ owner, value: next });
   }, [owner]);
@@ -467,40 +550,129 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   }, [active, backend, capture, draftIdentity, mapCaptureReady, marqueeHitMode, model, owner, ownerContextKey,
     selection, selectionMode, selectionScope, selectedTarget?.key, topology]);
 
-  const onMoveNode = useCallback((event: GeometryTopologyNodeMove): void => {
-    if (!active || !mapCaptureReady || !canEdit || !topology || !capture || !draftIdentity || busy) return;
-    const generation = ++moveGenerationRef.current;
-    const expected = { revision: topology.revision, draftState: topology.draftState, draftIdentity };
-    const selectedNodeFIDs = selection.node.includes(event.nodeFID) ? selection.node : [event.nodeFID];
-    const command: GeometryTopologyMapCommand = {
-      action: 'moveNode',
-      featureKind: 'node',
-      featureIDs: [],
-      nodeFID: event.nodeFID,
-      nodeFIDs: selectedNodeFIDs,
-      coordinates: [event.end],
-      mapCellSize: event.mapCellSize,
+  const runMapCommand = useCallback(async (command: GeometryTopologyMapCommand): Promise<void> => {
+    const current = topologyRef.current;
+    const currentCapture = captureRef.current?.owner === ownerContextKey &&
+      captureRef.current.value.targetKey === targetKeyRef.current ? captureRef.current.value : undefined;
+    const currentDraftIdentity = current?.completion?.draftIdentity;
+    const currentSelection = selectionRef.current?.owner === owner ? selectionRef.current.value : emptySelection();
+    if (!active || !canEdit || busy || spatialBusy || moveBusy || mapCommandInFlightRef.current || !current || !currentCapture || !currentDraftIdentity ||
+        current.revision !== currentCapture.geometryRevision || !sameRevision(current.completion?.sourceRevision, current.revision)) {
+      throw new DOMException('当前几何地图或拓扑草稿已过期，未提交地图操作。', 'AbortError');
+    }
+    if (!Number.isFinite(command.mapCellSize) || command.mapCellSize <= 0) {
+      throw new Error('地图操作需要当前有效的源坐标单位/像素比例。');
+    }
+    const map = current.map;
+    const arcFeatures = (fid: number) => map?.features.filter((feature) => feature.featureKind === 'arc' && feature.fid === fid) ?? [];
+    const nodeFeatures = (fid: number) => map?.features.filter((feature) => feature.featureKind === 'node' && feature.fid === fid) ?? [];
+    const arcFeature = (fid: number) => {
+      const matches = arcFeatures(fid);
+      return matches.length === 1 ? matches[0] : undefined;
     };
-    const mapOwner = { mapID: capture.mapID, contextToken: capture.contextToken,
-      geometryRevision: capture.geometryRevision };
+    const nodeFeature = (fid: number) => {
+      const matches = nodeFeatures(fid);
+      return matches.length === 1 ? matches[0] : undefined;
+    };
+    const validArc = (fid: number): boolean => Number.isSafeInteger(fid) && fid >= 0 && !!arcFeature(fid) &&
+      current.arcs.rows.some((row) => row.fid === fid);
+    const validNode = (fid: number): boolean => Number.isSafeInteger(fid) && fid >= 0 && !!nodeFeature(fid) &&
+      current.nodes.rows.some((row) => row.fid === fid);
+    const validSegment = (fid: number, segment: number): boolean => {
+      const feature = arcFeature(fid);
+      const path = feature?.paths.length === 1 ? feature.paths[0] : null;
+      return !!path && path.length >= 2 && Number.isInteger(segment) && segment >= 0 && segment < path.length - 1;
+    };
+    const validCoordinate = (point: { x: number; y: number }): boolean => Number.isFinite(point.x) && Number.isFinite(point.y);
+    const currentArcPointsCapture = (fid: number): boolean => !!arcPoints &&
+      arcPointsEntry?.owner === owner && arcPointsEntry.arcFID === fid && arcPointsEntry.revision === current.revision &&
+      arcPointsEntry.draftState === current.draftState && arcPointsEntry.draftIdentity === currentDraftIdentity &&
+      arcPointsEntry.snapshot === arcPoints && arcPoints.arcFID === fid && arcPoints.revision === current.revision &&
+      arcPoints.draftIdentity === currentDraftIdentity;
+    if (command.action === 'moveNode') {
+      const uniqueNodes = [...new Set(command.nodeFIDs)];
+      if (!validNode(command.nodeFID) || !uniqueNodes.length || uniqueNodes.length !== command.nodeFIDs.length ||
+          !uniqueNodes.includes(command.nodeFID) ||
+          uniqueNodes.some((fid) => !validNode(fid) || (!currentSelection.node.includes(fid) && fid !== command.nodeFID)) ||
+          !command.coordinates.every(validCoordinate)) {
+        throw new DOMException('节点编辑目标或坐标已不在当前地图拓扑快照中。', 'AbortError');
+      }
+    } else if (command.action === 'addArc') {
+      if (command.coordinates.length < 2 || command.coordinates.some((point) => !validCoordinate(point)) ||
+          (command.startNodeFID != null && !validNode(command.startNodeFID)) ||
+          (command.startArcTarget != null && (!validArc(command.startArcTarget.arcFID) ||
+            !validSegment(command.startArcTarget.arcFID, command.startArcTarget.sourceSegmentIndex) ||
+            !validCoordinate(command.startArcTarget.point)))) {
+        throw new DOMException('绘制弧段的节点、源弧段或坐标已不在当前地图快照中。', 'AbortError');
+      }
+    }
+    if (command.action === 'moveArcPoint' || command.action === 'deleteArcPoint') {
+      if (!validArc(command.arcFID) || !Number.isInteger(command.pointIndex) || command.pointIndex < 0 ||
+          !currentSelection.arc.includes(command.arcFID) || !arcPoints || !currentArcPointsCapture(command.arcFID) ||
+          !arcPoints.rows.some((point) => point.pointKind === 'internal' && point.internalPointIndex === command.pointIndex)) {
+        throw new DOMException('弧段点快照已过期或目标不是当前选中弧段的内部点。', 'AbortError');
+      }
+      if (command.action === 'moveArcPoint' && command.coordinates.some((point) => !validCoordinate(point))) {
+        throw new Error('弧段内点坐标必须是有限源坐标。');
+      }
+    }
+    if (command.action === 'insertArcPoint' && (!validArc(command.arcFID) || !currentSelection.arc.includes(command.arcFID) ||
+        !currentArcPointsCapture(command.arcFID) || !validSegment(command.arcFID, command.sourceSegmentIndex) ||
+        command.coordinates.some((point) => !validCoordinate(point)))) {
+      throw new DOMException('插入点目标已不在当前弧段地图快照中。', 'AbortError');
+    }
+    if (command.action === 'splitArc' && (!validArc(command.arcFID) || !validCoordinate(command.coordinates[0]))) {
+      throw new DOMException('分割目标已不在当前弧段地图快照中。', 'AbortError');
+    }
+    if (command.action === 'reverseArc' || command.action === 'filterArc' || command.action === 'smoothArc') {
+      const targetFIDs = [...new Set(command.featureIDs)];
+      if (targetFIDs.length === 0 || targetFIDs.length !== command.featureIDs.length ||
+          targetFIDs.length !== currentSelection.arc.length ||
+          targetFIDs.some((fid) => !currentSelection.arc.includes(fid) || !validArc(fid))) {
+        throw new DOMException('弧段变换目标与当前稳定 FID 选集不一致。', 'AbortError');
+      }
+    }
+    const expected = { revision: current.revision, draftState: current.draftState, draftIdentity: currentDraftIdentity };
+    const mapOwner = { mapID: currentCapture.mapID, contextToken: currentCapture.contextToken,
+      geometryRevision: currentCapture.geometryRevision };
+    const generation = ++moveGenerationRef.current;
+    mapCommandInFlightRef.current = true;
     setMoveBusy(true);
     setError(undefined);
-    void onMapCommand(expected, mapOwner, command)
-      .catch((caught: unknown) => {
-        if (generation === moveGenerationRef.current && !(caught instanceof DOMException && caught.name === 'AbortError')) {
-          setError(caught instanceof Error ? caught.message : String(caught));
-        }
-      })
-      .finally(() => { if (generation === moveGenerationRef.current) setMoveBusy(false); });
-  }, [active, busy, canEdit, capture, draftIdentity, mapCaptureReady, onMapCommand, selection.node, topology]);
+    try {
+      await editMapCommand(expected, mapOwner, command);
+    } catch (caught) {
+      if (generation === moveGenerationRef.current && !(caught instanceof DOMException && caught.name === 'AbortError')) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+      throw caught;
+    } finally {
+      mapCommandInFlightRef.current = false;
+      if (generation === moveGenerationRef.current) setMoveBusy(false);
+    }
+  }, [active, arcPoints, arcPointsEntry, busy, canEdit, editMapCommand, moveBusy, owner, ownerContextKey, spatialBusy]);
+
+  const onMoveNode = useCallback((event: GeometryTopologyNodeMove): void => {
+    const currentSelection = selectionRef.current?.owner === owner ? selectionRef.current.value : emptySelection();
+    const selectedNodeFIDs = currentSelection.node.includes(event.nodeFID) ? currentSelection.node : [event.nodeFID];
+    const command: GeometryTopologyMapCommand = {
+      action: 'moveNode', featureKind: 'node', featureIDs: [], nodeFID: event.nodeFID,
+      nodeFIDs: selectedNodeFIDs, coordinates: [event.end], mapCellSize: event.mapCellSize,
+    };
+    void runMapCommand(command).catch(() => undefined);
+  }, [owner, runMapCommand]);
 
   const canvasProps = useMemo<Omit<GeometryTopologyCanvasProps, 'language'>>(() => ({
     sourceKey: JSON.stringify([owner, selectedTarget?.key ?? null]),
+    tool: activeTool,
+    splitMode,
+    currentDraftIdentity: draftIdentity ?? null,
     map: topology?.map ?? null,
+    arcPoints,
     selectedFIDByKind: selection,
     canSelect: backend.supports('topology.spatialSelect'),
-    canMoveNodes: canEdit,
-    busy: busy || loading || capturing || spatialBusy || moveBusy,
+    canMoveNodes: canEdit && mapCaptureReady,
+    busy: busy || loading || capturing || spatialBusy || moveBusy || arcPointsLoading,
     mapCaptureReady,
     selectionScope,
     selectionMode,
@@ -508,9 +680,10 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     onViewportReady,
     onSpatialSelect,
     onMoveNode,
-  }), [backend, canEdit, capturing, loading, mapCaptureReady, marqueeHitMode, moveBusy, onMoveNode,
-    onSpatialSelect, onViewportReady, owner, selection, selectionMode, selectionScope, selectedTarget?.key,
-    spatialBusy, topology?.canEdit, topology?.map, busy]);
+    onMapCommand: runMapCommand,
+  }), [activeTool, arcPoints, arcPointsLoading, backend, canEdit, capturing, draftIdentity, loading, splitMode,
+    mapCaptureReady, marqueeHitMode, moveBusy, onMoveNode, onViewportReady, onSpatialSelect, owner, runMapCommand,
+    selection, selectionMode, selectionScope, selectedTarget?.key, spatialBusy, topology?.map, busy]);
 
   return {
     targets: targets.map(({ key, label }) => ({ key, label })),
@@ -518,7 +691,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     onTargetChange: setSelectedTargetKey,
     loading,
     capturing,
-    interactionBusy: spatialBusy || moveBusy,
+    interactionBusy: spatialBusy || moveBusy || arcPointsLoading,
     error,
     selectionScope,
     onSelectionScopeChange: setSelectionScope,
@@ -526,7 +699,17 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     onSelectionModeChange: setSelectionMode,
     marqueeHitMode,
     onMarqueeHitModeChange: setMarqueeHitMode,
+    activeTool,
+    onActiveToolChange: setActiveTool,
+    splitMode,
+    onSplitModeChange: setSplitMode,
+    selectedArcFIDs,
+    arcPoints,
+    mapCellSize,
+    draftReady,
+    draftDirty: !!topology?.isDirty,
     onTableSelectionChange,
+    onMapCommand: runMapCommand,
     canvasProps,
   };
 }

@@ -10,6 +10,28 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-culvert-result-http", string culvertBaseUrl, string culvertOutput])
+            {
+                TextWriter protocol = Console.Out;
+                CulvertResultAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunCulvertResultAsync(
+                    new Uri(EnsureTrailingSlash(culvertBaseUrl)), culvertOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--run-geometry-arc-map-http", string arcBaseUrl, string arcManifest, string arcOutput])
+            {
+                TextWriter protocol = Console.Out;
+                GeometryArcMapAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunGeometryArcMapAsync(
+                    new Uri(EnsureTrailingSlash(arcBaseUrl)), arcManifest, arcOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-map-line-hash-vectors"])
             {
                 Console.WriteLine(JsonSerializer.Serialize(ServerAcceptance.CoordinateHashVectors(), JsonOptions));
@@ -295,6 +317,8 @@ internal static class Program
             }
 
             Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-culvert-result-http <loopback-base-url> <new-output-directory>");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-arc-map-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-map-line-hash-vectors");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-map-analysis-http <loopback-base-url> <result-hover-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-topology-map-http <loopback-base-url> <saved-project.ras> <new-output-directory>");
