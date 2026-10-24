@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Geospatial.Rendering;
 using Geospatial.Rendering.Editing;
 using Geospatial.Rendering.Editing.Handlers.Topology;
@@ -21,6 +23,7 @@ public static partial class ModelEditorAdapter
 {
     private const int MaximumMapCommandFeatures = 10_000;
     private const int MaximumMapCommandCoordinates = 100_000;
+    private const int MaximumMapCommandWaypoints = 512;
 
     public static Task<GeometryTopologySpatialSelectResult> SelectGeometryTopologySpatialAsync(
         GeometryTopologySpatialSelectRequest request)
@@ -213,19 +216,128 @@ public static partial class ModelEditorAdapter
         return new GeometryTopologyMutation("mapCommand", "map", []) { MapCommand = stable };
     }
 
+    /// <summary>
+    /// Resolves a source-backed map path against the current topology draft,
+    /// without applying it or changing the draft journal. The returned path
+    /// hash lets a later edit prove that it is committing the path the user
+    /// last saw.
+    /// </summary>
+    public static Task<GeometryTopologyMapCommandPreviewResponse> PreviewGeometryTopologyMapCommandAsync(
+        GeometryTopologyEditRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        VerifyGeometryTopologyModel(request.Model);
+        GeometryTopologyDraftState state = ReadTopologyDraft(request.DraftState,
+            request.Model.AssetPath, request.Revision);
+        if (!string.Equals(Revision(request.Model.AssetPath), state.Revision, StringComparison.Ordinal))
+            throw new SourceFileChangedException();
+        GeometryTopologyMutation mutation = request.Mutation
+            ?? throw new ArgumentException("A topology path preview requires a map command.");
+        GeometryTopologyMapRequestContext mapOwner = request.MapRequestContext
+            ?? throw new ArgumentException("A topology path preview requires its captured map owner.");
+        if (!string.Equals(mutation.Operation, "mapCommand", StringComparison.Ordinal)
+            || mutation.MapCommand is not { Action: "smartAdd" or "deepConnect" } command)
+            throw new ArgumentException("Only SmartAdd and DeepConnect paths can be previewed by this operation.");
+        ValidateMapRequestContext(mapOwner, request.Revision, request.DraftState);
+        ValidateMapMutationEnvelope(mutation);
+
+        using var context = new ModelContext(ToModelRequest(request.Model));
+        var replay = ReplayGeometryTopologyDraft(context, request.Model.AssetPath,
+            request.Revision, state);
+        GeometryTopologyMapCommand prepared = PrepareMapCommand(context, request.Model,
+            request.DraftState, mapOwner, replay.Session, command);
+        GeometryTopologyMapFinalPath finalPath = SimulateFinalMapPath(request.Model,
+            request.DraftState, mapOwner, prepared);
+        GeometryTopologyCoordinate[] coordinates = finalPath.Coordinates;
+        string pathSHA256 = MapPathSHA256(coordinates);
+
+        GeometryTopologySmartAddTerrainCapture? terrainCapture = null;
+        GeometryTopologyDeepConnectSource? deepSource = null;
+        string sourceRevision;
+        if (command.Action == "smartAdd")
+        {
+            terrainCapture = CaptureGeometryTopologySmartAddTerrain(context, request.Model,
+                request.Revision) ?? throw new SourceFileChangedException();
+            if (command.SmartAddSource?.TerrainCapture != terrainCapture)
+                throw new SourceFileChangedException();
+            VerifyGeometryCulvertDependencyRevision(new GeometryCulvertModelRequest(
+                request.Model.AssetPath, request.Model.Kind, request.Model.ProjectPath,
+                request.Model.ProjectXml, request.Model.CoreLayerContext), terrainCapture.SourceRevision);
+            sourceRevision = terrainCapture.SourceRevision;
+        }
+        else
+        {
+            deepSource = command.DeepConnectSource
+                ?? throw new ArgumentException("DeepConnect is missing its exact source capture.");
+            GeometryTopologyCoordinate[] verified = ResolveDeepConnectCoordinates(request.Model,
+                request.DraftState, mapOwner, replay.Session, deepSource);
+            if (!CoordinateSequenceEqual(verified, prepared.Coordinates!))
+                throw new SourceFileChangedException();
+            sourceRevision = deepSource.SourceRevision;
+        }
+
+        if (!string.Equals(Revision(request.Model.AssetPath), state.Revision, StringComparison.Ordinal))
+            throw new SourceFileChangedException();
+        string draftIdentity = DraftIdentity(request.DraftState);
+        return Task.FromResult(new GeometryTopologyMapCommandPreviewResponse(mapOwner.RequestID,
+            mapOwner.MapID, mapOwner.ContextToken, mapOwner.GeometryRevision, request.Revision,
+            draftIdentity, command.Action, coordinates, pathSHA256, sourceRevision,
+            terrainCapture, deepSource, finalPath.ConnectionArcFID,
+            finalPath.StartNodeFID, finalPath.EndNodeFID));
+    }
+
     private static GeometryTopologyMapCommand PrepareMapCommand(ModelContext context,
         GeometryTopologyModelRequest model, string draftState, GeometryTopologyMapRequestContext mapRequestContext,
         TopologyCompletionSession completion, GeometryTopologyMapCommand command)
     {
         ValidateMapCommandShape(command);
-        if (command.Action == "deepConnect")
-            return command with { Coordinates = ResolveDeepConnectCoordinates(model, draftState,
-                    mapRequestContext, completion, command.DeepConnectSource!),
-                DeepConnectSource = null, SmartAddSource = null };
-        if (command.Action == "smartAdd")
-            return command with { Coordinates = ResolveSmartAddCoordinates(context, model,
-                    completion, command), DeepConnectSource = null, SmartAddSource = null };
-        return command;
+        GeometryTopologyMapCommand resolved = command.Action switch
+        {
+            "deepConnect" => command with { Coordinates = ResolveDeepConnectCoordinates(model,
+                draftState, mapRequestContext, completion, command.DeepConnectSource!) },
+            "smartAdd" => command with { Coordinates = ResolveSmartAddCoordinates(context, model,
+                completion, command) },
+            _ => command
+        };
+        if (command.ExpectedPathSHA256 is string expected)
+        {
+            GeometryTopologyMapFinalPath finalPath = SimulateFinalMapPath(model, draftState,
+                mapRequestContext, resolved);
+            if (!string.Equals(MapPathSHA256(finalPath.Coordinates), expected, StringComparison.Ordinal))
+                throw new SourceFileChangedException();
+            VerifyMapCommandSource(context, model, draftState, mapRequestContext, completion, command,
+                resolved.Coordinates!);
+        }
+        return resolved with
+        {
+            DeepConnectSource = null,
+            SmartAddSource = null,
+            ExpectedPathSHA256 = null
+        };
+    }
+
+    private static void VerifyMapCommandSource(ModelContext context, GeometryTopologyModelRequest model,
+        string draftState, GeometryTopologyMapRequestContext mapRequestContext,
+        TopologyCompletionSession completion, GeometryTopologyMapCommand sourceCommand,
+        GeometryTopologyCoordinate[] resolvedCoordinates)
+    {
+        if (sourceCommand.Action == "smartAdd")
+        {
+            GeometryTopologySmartAddTerrainCapture current = CaptureGeometryTopologySmartAddTerrain(
+                context, model, mapRequestContext.GeometryRevision) ?? throw new SourceFileChangedException();
+            if (sourceCommand.SmartAddSource?.TerrainCapture != current)
+                throw new SourceFileChangedException();
+            VerifyGeometryCulvertDependencyRevision(new GeometryCulvertModelRequest(model.AssetPath,
+                model.Kind, model.ProjectPath, model.ProjectXml, model.CoreLayerContext), current.SourceRevision);
+            return;
+        }
+
+        GeometryTopologyDeepConnectSource deepSource = sourceCommand.DeepConnectSource
+            ?? throw new ArgumentException("DeepConnect is missing its exact source capture.");
+        GeometryTopologyCoordinate[] currentCoordinates = ResolveDeepConnectCoordinates(model,
+            draftState, mapRequestContext, completion, deepSource);
+        if (!CoordinateSequenceEqual(currentCoordinates, resolvedCoordinates))
+            throw new SourceFileChangedException();
     }
 
     private static GeometryTopologyCoordinate[] ResolveSmartAddCoordinates(ModelContext context,
@@ -233,8 +345,9 @@ public static partial class ModelEditorAdapter
         GeometryTopologyMapCommand command)
     {
         if (command.DeepConnectSource is not null || command.SmartAddSource is null
-            || command.Coordinates is not { Length: 2 } endpoints)
-            throw new ArgumentException("SmartAdd requires two captured endpoints, a current terrain capture, and its raster window.");
+            || command.Coordinates is not { Length: >= 2 } waypoints
+            || waypoints.Length > MaximumMapCommandWaypoints)
+            throw new ArgumentException("SmartAdd requires an ordered bounded waypoint path, a current terrain capture, and its raster window.");
         GeometryTopologySmartAddTerrainCapture current = CaptureGeometryTopologySmartAddTerrain(context,
             model, Revision(model.AssetPath)) ?? throw new InvalidOperationException(
                 "SmartAdd is unavailable because this Geometry has no loaded associated Terrain sampler.");
@@ -254,32 +367,55 @@ public static partial class ModelEditorAdapter
         GeometryCulvertSmartAddOptions options = SmartAddOptions(source.Options);
         if (!ValidSmartAddOptions(options))
             throw new ArgumentException("SmartAdd algorithm options are outside the source-supported bounds.");
-        GeometryTopologyCoordinate samplerStart = endpoints[0];
+        GeometryTopologyCoordinate samplerStart = waypoints[0];
         if (command.StartNodeFID is int capturedStartNodeFID)
         {
             int nodeIndex = ResolveCapturedStartNodeIndex(completion.ObservableTopology,
-                capturedStartNodeFID, endpoints[0], command.MapCellSize);
+                capturedStartNodeFID, waypoints[0], command.MapCellSize);
             Point nodePoint = completion.Topology.Nodes[nodeIndex].Point;
             samplerStart = new GeometryTopologyCoordinate(nodePoint.X, nodePoint.Y);
         }
         GeometryCulvertDraftState emptyDraft = NewGeometryCulvertDraft(model.AssetPath,
             current.GeometryRevision, dependencyRevision);
         string encodedDraft = System.Text.Json.JsonSerializer.Serialize(emptyDraft, BackendJson.Options);
-        var previewRequest = new GeometryCulvertSmartAddPreviewRequest(samplerModel,
-            current.GeometryRevision, encodedDraft, Guid.NewGuid().ToString("N"),
-            new GeometryCulvertCoordinate(samplerStart.X, samplerStart.Y),
-            new GeometryCulvertCoordinate(endpoints[1].X, endpoints[1].Y), window, options);
         ObservableTerrain? terrain = GeometryCulvertGeometry(context).AssociatedTerrain;
         if (terrain?.Layer is null)
             throw new InvalidOperationException("SmartAdd is unavailable because its associated Terrain sampler is not loaded.");
-        GeometryCulvertSmartAddPreviewResponse preview = TryComputeSmartAddSegment(previewRequest,
-            options, terrain, current.GeometryRevision, dependencyRevision);
+        var workScope = new SmartAddSegmentWorkScope(terrain, current.CanonicalTerrainPath,
+            dependencyRevision, window);
+        var pathPoints = new List<GeometryTopologyCoordinate>();
+        GeometryTopologyCoordinate segmentStart = samplerStart;
+        for (int waypointIndex = 1; waypointIndex < waypoints.Length; waypointIndex++)
+        {
+            GeometryTopologyCoordinate destination = waypoints[waypointIndex];
+            var previewRequest = new GeometryCulvertSmartAddPreviewRequest(samplerModel,
+                current.GeometryRevision, encodedDraft, Guid.NewGuid().ToString("N"),
+                new GeometryCulvertCoordinate(segmentStart.X, segmentStart.Y),
+                new GeometryCulvertCoordinate(destination.X, destination.Y), window, options);
+            GeometryCulvertSmartAddPreviewResponse preview = TryComputeSmartAddSegment(previewRequest,
+                options, terrain, current.GeometryRevision, dependencyRevision, workScope);
+            if (!preview.CanAppend || preview.Path is null || preview.Path.Length < 2)
+                throw new InvalidOperationException("The source Terrain sampler could not build SmartAdd segment "
+                    + waypointIndex.ToString(CultureInfo.InvariantCulture) + ": "
+                    + (preview.ErrorCode ?? "pathUnavailable"));
+            GeometryTopologyCoordinate[] segment = preview.Path.Select(point =>
+                new GeometryTopologyCoordinate(point.X, point.Y)).ToArray();
+            ValidatePolylineCoordinates(segment);
+            if (segment[0].X != segmentStart.X || segment[0].Y != segmentStart.Y)
+                throw new SourceFileChangedException();
+            if (pathPoints.Count == 0) pathPoints.AddRange(segment);
+            else
+            {
+                if (pathPoints[^1].X != segment[0].X || pathPoints[^1].Y != segment[0].Y)
+                    throw new SourceFileChangedException();
+                pathPoints.AddRange(segment.Skip(1));
+            }
+            if (pathPoints.Count > MaximumMapCommandCoordinates)
+                throw new ArgumentException("The resolved SmartAdd path exceeds the supported coordinate limit.");
+            segmentStart = pathPoints[^1];
+        }
         VerifyGeometryCulvertDependencyRevision(samplerModel, dependencyRevision);
-        if (!preview.CanAppend || preview.Path is null || preview.Path.Length < 2)
-            throw new InvalidOperationException("The source Terrain sampler could not build a SmartAdd path: "
-                + (preview.ErrorCode ?? "pathUnavailable"));
-        GeometryTopologyCoordinate[] path = preview.Path.Select(point =>
-            new GeometryTopologyCoordinate(point.X, point.Y)).ToArray();
+        GeometryTopologyCoordinate[] path = pathPoints.ToArray();
         ValidatePolylineCoordinates(path);
         if (path[0].X != samplerStart.X || path[0].Y != samplerStart.Y)
             throw new SourceFileChangedException();
@@ -360,12 +496,88 @@ public static partial class ModelEditorAdapter
 
         GeometryTopologyCoordinate[] actualPoints = Coordinates(line);
         if (!CoordinateSequenceEqual(actualPoints, source.Points)) throw new SourceFileChangedException();
-        PointOnPolyline start = Anchor(line, source.StartSegmentIndex, source.StartSegmentFraction);
-        PointOnPolyline end = Anchor(line, source.EndSegmentIndex, source.EndSegmentFraction);
-        Polyline subsection = line.SubsectionDirected(start, end)
-            ?? throw new ArgumentException("The selected DeepConnect anchors do not form a source path.");
-        GeometryTopologyCoordinate[] result = Coordinates(subsection);
-        if (result.Length < 2) throw new ArgumentException("DeepConnect needs two distinct source anchors.");
+        GeometryTopologyDeepConnectAnchor[] anchors = source.Anchors ??
+        [
+            new GeometryTopologyDeepConnectAnchor(source.StartSegmentIndex, source.StartSegmentFraction),
+            new GeometryTopologyDeepConnectAnchor(source.EndSegmentIndex, source.EndSegmentFraction)
+        ];
+        if (anchors.Length is < 2 or > MaximumMapCommandWaypoints || anchors.Any(anchor => anchor is null))
+            throw new ArgumentException("DeepConnect requires between two and 512 ordered anchors on one exact source.");
+        var result = new List<GeometryTopologyCoordinate>();
+        for (int index = 1; index < anchors.Length; index++)
+        {
+            GeometryTopologyDeepConnectAnchor from = anchors[index - 1];
+            GeometryTopologyDeepConnectAnchor to = anchors[index];
+            PointOnPolyline start = Anchor(line, from.SegmentIndex, from.Fraction);
+            PointOnPolyline end = Anchor(line, to.SegmentIndex, to.Fraction);
+            Polyline subsection = line.SubsectionDirected(start, end)
+                ?? throw new ArgumentException("The selected DeepConnect anchors do not form a source path.");
+            GeometryTopologyCoordinate[] segment = Coordinates(subsection);
+            if (segment.Length < 2)
+                throw new ArgumentException("Consecutive DeepConnect anchors must define a non-zero source path.");
+            if (result.Count == 0) result.AddRange(segment);
+            else
+            {
+                if (result[^1].X != segment[0].X || result[^1].Y != segment[0].Y)
+                    throw new ArgumentException("DeepConnect anchors are not continuous on the exact source line.");
+                result.AddRange(segment.Skip(1));
+            }
+            if (result.Count > MaximumMapCommandCoordinates)
+                throw new ArgumentException("The resolved DeepConnect path exceeds the supported coordinate limit.");
+        }
+        GeometryTopologyCoordinate[] resolved = result.ToArray();
+        ValidatePolylineCoordinates(resolved);
+        return resolved;
+    }
+
+    private static string MapPathSHA256(GeometryTopologyCoordinate[] coordinates)
+    {
+        ArgumentNullException.ThrowIfNull(coordinates);
+        string canonical = string.Join("\n", coordinates.Select(point =>
+            point.X.ToString("R", CultureInfo.InvariantCulture) + ","
+            + point.Y.ToString("R", CultureInfo.InvariantCulture)));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
+
+    private sealed record GeometryTopologyMapFinalPath(int ConnectionArcFID, int StartNodeFID,
+        int EndNodeFID, GeometryTopologyCoordinate[] Coordinates);
+
+    private static GeometryTopologyMapFinalPath SimulateFinalMapPath(
+        GeometryTopologyModelRequest model, string draftState,
+        GeometryTopologyMapRequestContext mapRequestContext, GeometryTopologyMapCommand resolvedCommand)
+    {
+        string revision = Revision(model.AssetPath);
+        ValidateMapRequestContext(mapRequestContext, revision, draftState);
+        GeometryTopologyDraftState state = ReadTopologyDraft(draftState, model.AssetPath, revision);
+        GeometryTopologyMapFinalPath result;
+        using (var simulationContext = new ModelContext(ToModelRequest(model)))
+        {
+            var replay = ReplayGeometryTopologyDraft(simulationContext, model.AssetPath, revision, state);
+            int? connectionArcFID = null;
+            GeometryTopologyMapCommand simulationCommand = resolvedCommand with
+            {
+                ExpectedPathSHA256 = null,
+                DeepConnectSource = null,
+                SmartAddSource = null
+            };
+            bool changed = ApplyGeometryTopologyMapCommand(replay.Session.ObservableTopology,
+                replay.Session.EditContext, replay.Session.CompletionContext, simulationCommand,
+                fid => connectionArcFID = fid);
+            if (!changed || connectionArcFID is not int createdFID)
+                throw new InvalidOperationException("The captured map command did not create a topology connection arc.");
+
+            int arcIndex = ResolveSingleIndex(replay.Session.ObservableTopology.Arcs, createdFID,
+                arc => arc.Fid, "arc");
+            Arc arc = replay.Session.Topology.Arcs[arcIndex];
+            GeometryTopologyCoordinate[] coordinates = Coordinates(
+                replay.Session.Topology.GetArcPolyline(arcIndex));
+            ValidatePolylineCoordinates(coordinates);
+            result = new GeometryTopologyMapFinalPath(createdFID,
+                replay.Session.ObservableTopology.Nodes[arc.StartNode].Fid,
+                replay.Session.ObservableTopology.Nodes[arc.EndNode].Fid, coordinates);
+        }
+        if (!string.Equals(Revision(model.AssetPath), revision, StringComparison.Ordinal))
+            throw new SourceFileChangedException();
         return result;
     }
 
@@ -613,6 +825,10 @@ public static partial class ModelEditorAdapter
         bool allowResolvedSourcePath = false)
     {
         ArgumentNullException.ThrowIfNull(command);
+        if (command.ExpectedPathSHA256 is string expectedPathSHA256
+            && (!IsTopologyDraftSHA256(expectedPathSHA256)
+                || command.Action is not ("smartAdd" or "deepConnect")))
+            throw new ArgumentException("A confirmed map path requires a lowercase SHA-256 preview receipt.");
         if (command.FeatureIDs is null || command.FeatureIDs.Length > MaximumMapCommandFeatures
             || command.FeatureIDs.Any(fid => fid < 0)
             || command.FeatureIDs.Distinct().Count() != command.FeatureIDs.Length)
@@ -695,7 +911,7 @@ public static partial class ModelEditorAdapter
                     ? command.SmartAddSource is null && command.DeepConnectSource is null
                         && lineCoordinates
                     : command.SmartAddSource is not null && command.DeepConnectSource is null
-                        && command.Coordinates is { Length: 2 }),
+                        && command.Coordinates is { Length: >= 2 and <= MaximumMapCommandWaypoints }),
             _ => false
         };
         if (!valid)
@@ -737,14 +953,18 @@ public static partial class ModelEditorAdapter
 
     private static GeometryTopologyCoordinate? DeepConnectStartPoint(GeometryTopologyDeepConnectSource? source)
     {
-        if (source?.Points is not { Length: >= 2 } points || source.StartSegmentIndex < 0
-            || source.StartSegmentIndex >= points.Length - 1
-            || !double.IsFinite(source.StartSegmentFraction) || source.StartSegmentFraction is < 0d or > 1d)
+        if (source?.Points is not { Length: >= 2 } points)
             return null;
-        GeometryTopologyCoordinate first = points[source.StartSegmentIndex];
-        GeometryTopologyCoordinate second = points[source.StartSegmentIndex + 1];
-        return new GeometryTopologyCoordinate(first.X + (second.X - first.X) * source.StartSegmentFraction,
-            first.Y + (second.Y - first.Y) * source.StartSegmentFraction);
+        GeometryTopologyDeepConnectAnchor anchor = source.Anchors is { Length: > 0 } anchors
+            ? anchors[0]
+            : new GeometryTopologyDeepConnectAnchor(source.StartSegmentIndex, source.StartSegmentFraction);
+        if (anchor.SegmentIndex < 0 || anchor.SegmentIndex >= points.Length - 1
+            || !double.IsFinite(anchor.Fraction) || anchor.Fraction is < 0d or > 1d)
+            return null;
+        GeometryTopologyCoordinate first = points[anchor.SegmentIndex];
+        GeometryTopologyCoordinate second = points[anchor.SegmentIndex + 1];
+        return new GeometryTopologyCoordinate(first.X + (second.X - first.X) * anchor.Fraction,
+            first.Y + (second.Y - first.Y) * anchor.Fraction);
     }
 
     private static bool ValidStartArcTargetShape(GeometryTopologyMapCommand command)
@@ -770,17 +990,10 @@ public static partial class ModelEditorAdapter
         if (command.Action is "addArc" or "smartAdd")
             return command.Coordinates is { Length: >= 2 } coordinates
                 && coordinates[0].X == target.Point.X && coordinates[0].Y == target.Point.Y;
-        if (command.Action != "deepConnect" || command.DeepConnectSource is not { } source
-            || source.Points is null || source.StartSegmentIndex < 0
-            || source.StartSegmentIndex >= source.Points.Length - 1
-            || !double.IsFinite(source.StartSegmentFraction) || source.StartSegmentFraction < 0d
-            || source.StartSegmentFraction > 1d)
+        if (command.Action != "deepConnect" || command.DeepConnectSource is not { } source)
             return false;
-        GeometryTopologyCoordinate first = source.Points[source.StartSegmentIndex];
-        GeometryTopologyCoordinate second = source.Points[source.StartSegmentIndex + 1];
-        double x = first.X + (second.X - first.X) * source.StartSegmentFraction;
-        double y = first.Y + (second.Y - first.Y) * source.StartSegmentFraction;
-        return x == target.Point.X && y == target.Point.Y;
+        GeometryTopologyCoordinate? firstPoint = DeepConnectStartPoint(source);
+        return firstPoint is not null && firstPoint.X == target.Point.X && firstPoint.Y == target.Point.Y;
     }
 
     private static void ValidateSmartAddWindow(GeometryTopologySmartAddWindow window)
@@ -795,7 +1008,7 @@ public static partial class ModelEditorAdapter
 
     private static bool ApplyGeometryTopologyMapCommand(ObservableConceptualMeshTopology observable,
         TopologyEditContext editContext, TopologyCompletionContext completionContext,
-        GeometryTopologyMapCommand command)
+        GeometryTopologyMapCommand command, Action<int>? connectionArcCreated = null)
     {
         ValidateMapCommandShape(command, allowResolvedSourcePath: true);
         if (command.DeepConnectSource is not null || command.SmartAddSource is not null)
@@ -805,12 +1018,14 @@ public static partial class ModelEditorAdapter
         {
             case "addArc":
                 return AddArc(observable, editContext, completionContext, command.Coordinates!,
-                    command.MapCellSize, command.StartArcTarget, command.SplitMode, command.StartNodeFID);
+                    command.MapCellSize, command.StartArcTarget, command.SplitMode, command.StartNodeFID,
+                    connectionArcCreated: connectionArcCreated);
             case "deepConnect":
             case "smartAdd":
                 return AddArc(observable, editContext, completionContext, command.Coordinates!,
                     command.MapCellSize, command.StartArcTarget, command.SplitMode, command.StartNodeFID,
-                    preserveDeepConnectStartAnchor: command.Action == "deepConnect");
+                    preserveDeepConnectStartAnchor: command.Action == "deepConnect",
+                    connectionArcCreated: connectionArcCreated);
             case "moveNode":
             {
                 int nodeIndex = ResolveSingleIndex(observable.Nodes, command.NodeFID, node => node.Fid, "node");
@@ -894,7 +1109,8 @@ public static partial class ModelEditorAdapter
         TopologyEditContext editContext, TopologyCompletionContext completionContext,
         GeometryTopologyCoordinate[] coordinates, double cellSize,
         GeometryTopologyArcSnapTarget? startTarget = null, string? splitMode = null,
-        int? capturedStartNodeFID = null, bool preserveDeepConnectStartAnchor = false)
+        int? capturedStartNodeFID = null, bool preserveDeepConnectStartAnchor = false,
+        Action<int>? connectionArcCreated = null)
     {
         Topology topology = observable.Topology;
         if (coordinates is null || coordinates.Length < 2)
@@ -922,6 +1138,7 @@ public static partial class ModelEditorAdapter
         if (editContext.ArcSelectedSet.Count != 1)
             throw new InvalidOperationException("The retained topology editor did not select the newly added arc.");
         int arcFID = editContext.ArcSelectedSet.Elements.Single();
+        connectionArcCreated?.Invoke(observable.Arcs[arcFID].Fid);
         if (preserveDeepConnectStartAnchor)
         {
             int actualStartNodeIndex = topology.Arcs[arcFID].StartNode;

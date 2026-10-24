@@ -10,6 +10,17 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-geometry-polyline-trace-http", string traceBaseUrl, string traceManifest, string traceOutput])
+            {
+                TextWriter protocol = Console.Out;
+                GeometryPolylineTraceAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunGeometryPolylineTraceAsync(
+                    new Uri(EnsureTrailingSlash(traceBaseUrl)), traceManifest, traceOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-geometry-smart-connect-http", string smartConnectBaseUrl, string smartConnectManifest, string smartConnectOutput])
             {
                 TextWriter protocol = Console.Out;
@@ -328,6 +339,7 @@ internal static class Program
             }
 
             Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-polyline-trace-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-smart-connect-http <loopback-base-url> <arc-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-culvert-result-http <loopback-base-url> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-arc-map-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");

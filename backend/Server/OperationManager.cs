@@ -17,10 +17,9 @@ public sealed class OperationManager : IHostedService
     private const int MaximumQueuedControls = 256;
     private const int MaximumEventsPerOperation = 20_000;
     private const int MaximumProtocolLineCharacters = 8 * 1024 * 1024;
-    // Result rendering and associated-map layers are bounded by an eight
-    // megapixel aggregate Host budget. Their RGBA base64 plus identity
-    // metadata needs a separate terminal budget.
-    private const int MaximumRasterResultLineCharacters = 64 * 1024 * 1024;
+    // Bounded raster frames and vector/path captures can exceed the ordinary
+    // protocol budget. Keep a separate finite limit for their terminal results.
+    private const int MaximumLargeResultLineCharacters = 64 * 1024 * 1024;
     private const long MaximumEventBytesPerOperation = 64L * 1024 * 1024;
     private const long MaximumRetainedEventBytes = 256L * 1024 * 1024;
     private static readonly TimeSpan TerminalRetention = TimeSpan.FromMinutes(15);
@@ -419,7 +418,8 @@ public sealed class OperationManager : IHostedService
     private async Task ReadWorkerProtocolAsync(OperationRecord operation, Process process)
     {
         int maximumLineCharacters = operation.Method is "map.resultRender" or "map.associations.load"
-            ? MaximumRasterResultLineCharacters : MaximumProtocolLineCharacters;
+            or "topology.mapCommand.preview" or "topology.vectorSource.inspect"
+            ? MaximumLargeResultLineCharacters : MaximumProtocolLineCharacters;
         var lines = new BoundedProtocolLineReader(process.StandardOutput, maximumLineCharacters);
         string? line;
         while ((line = await lines.ReadLineAsync().ConfigureAwait(false)) is not null)

@@ -15,6 +15,114 @@ public static partial class ModelEditorAdapter
         string[] RemovedFeatureIDs, string[] RetainedFeatureIDs,
         Polyline[] OutputPolylines, string? ErrorCode);
 
+    /// <summary>
+    /// Request-local scratch and raster cache for a multi-waypoint SmartAdd.
+    /// The owner is deliberately bound to one loaded Terrain, its canonical
+    /// source identity, dependency revision, and every raster-window value.
+    /// </summary>
+    private sealed class SmartAddSegmentWorkScope
+    {
+        private readonly ObservableTerrain _terrain;
+        private readonly string _canonicalTerrainPath;
+        private readonly string _dependencyRevision;
+        private readonly GeometryCulvertSmartAddWindow _window;
+        private RasterDefinition _raster;
+        private bool _rasterCreated;
+        private float[]? _elevations;
+        private double _zMin;
+        private double _zMax;
+        private bool _sampleAttempted;
+        private bool _sampleUsable;
+        private HessianRidgenessWalker? _hessianWalker;
+        private int[]? _parent;
+        private double[]? _gScore;
+        private double[]? _length;
+        private PriorityQueue<int, double>? _open;
+        private List<(int row, int col)>? _pixelPath;
+
+        public SmartAddSegmentWorkScope(ObservableTerrain terrain, string canonicalTerrainPath,
+            string dependencyRevision, GeometryCulvertSmartAddWindow window)
+        {
+            _terrain = terrain ?? throw new ArgumentNullException(nameof(terrain));
+            if (string.IsNullOrWhiteSpace(canonicalTerrainPath) ||
+                !Path.IsPathFullyQualified(canonicalTerrainPath) ||
+                string.IsNullOrWhiteSpace(terrain.Filename) ||
+                !SourceFilePaths.SameSourceFile(canonicalTerrainPath, terrain.Filename))
+                throw new SourceFileChangedException();
+            _canonicalTerrainPath = SourceFilePaths.Canonical(canonicalTerrainPath);
+            _dependencyRevision = dependencyRevision ?? throw new ArgumentNullException(nameof(dependencyRevision));
+            _window = window ?? throw new ArgumentNullException(nameof(window));
+            if (window.Extent is null) throw new SourceFileChangedException();
+        }
+
+        public void Verify(ObservableTerrain terrain, GeometryCulvertSmartAddWindow window,
+            string dependencyRevision)
+        {
+            if (!ReferenceEquals(_terrain, terrain) || string.IsNullOrWhiteSpace(terrain.Filename) ||
+                !SourceFilePaths.SameSourceFile(_canonicalTerrainPath, terrain.Filename) ||
+                !string.Equals(_dependencyRevision, dependencyRevision, StringComparison.Ordinal) ||
+                !SameWindow(_window, window))
+                throw new SourceFileChangedException();
+        }
+
+        public RasterDefinition GetRaster()
+        {
+            if (!_rasterCreated)
+            {
+                GeometryCulvertExtent extent = _window.Extent;
+                _raster = new RasterDefinition(new Extent(extent.MinX, extent.MaxX, extent.MinY, extent.MaxY),
+                    _window.Rows, _window.Columns);
+                _rasterCreated = true;
+            }
+            return _raster;
+        }
+
+        public bool TryGetTerrainGrid(ObservableTerrain terrain, RasterDefinition raster,
+            out float[] elevations, out double zMin, out double zMax)
+        {
+            if (!_sampleAttempted)
+            {
+                _sampleAttempted = true;
+                int count = checked(raster.Rows * raster.Cols);
+                float[] sampled = new float[count];
+                terrain.Layer.Resample(new ResampleArgs(raster, SamplingParams.Default), sampled.AsMemory());
+                _sampleUsable = TryNormalizeTerrainElevations(sampled, out _zMin, out _zMax);
+                _elevations = sampled;
+            }
+
+            elevations = _elevations ?? [];
+            zMin = _zMin;
+            zMax = _zMax;
+            return _sampleUsable;
+        }
+
+        public HessianRidgenessWalker HessianWalker =>
+            _hessianWalker ??= new HessianRidgenessWalker();
+
+        public void GetHighGroundWorkspace(int count, out int[] parent, out double[] gScore,
+            out double[] length, out PriorityQueue<int, double> open,
+            out List<(int row, int col)> pixelPath)
+        {
+            if (_parent is null || _parent.Length < count) _parent = new int[count];
+            if (_gScore is null || _gScore.Length < count) _gScore = new double[count];
+            if (_length is null || _length.Length < count) _length = new double[count];
+            _open ??= new PriorityQueue<int, double>();
+            _pixelPath ??= new List<(int row, int col)>(256);
+            parent = _parent;
+            gScore = _gScore;
+            length = _length;
+            open = _open;
+            pixelPath = _pixelPath;
+        }
+
+        private static bool SameWindow(GeometryCulvertSmartAddWindow left,
+            GeometryCulvertSmartAddWindow right) => left is not null && right is not null &&
+            left.Rows == right.Rows && left.Columns == right.Columns &&
+            left.Extent is not null && right.Extent is not null &&
+            left.Extent.MinX == right.Extent.MinX && left.Extent.MinY == right.Extent.MinY &&
+            left.Extent.MaxX == right.Extent.MaxX && left.Extent.MaxY == right.Extent.MaxY;
+    }
+
     /// <summary>Builds a non-mutating map preview from the current typed child draft.</summary>
     public static Task<GeometryCulvertMapCommandPreviewResponse> PreviewGeometryCulvertMapCommandAsync(
         GeometryCulvertMapCommandPreviewRequest request)
@@ -274,8 +382,10 @@ public static partial class ModelEditorAdapter
 
     private static GeometryCulvertSmartAddPreviewResponse TryComputeSmartAddSegment(
         GeometryCulvertSmartAddPreviewRequest request, GeometryCulvertSmartAddOptions options,
-        ObservableTerrain terrain, string revision, string dependencyRevision)
+        ObservableTerrain terrain, string revision, string dependencyRevision,
+        SmartAddSegmentWorkScope? workScope = null)
     {
+        workScope?.Verify(terrain, request.Window, dependencyRevision);
         if (!ValidSmartAddOptions(options))
             return new(request.PreviewID, revision, request.DraftState, dependencyRevision,
                 terrain.Name, false, [], "invalidOptions");
@@ -295,8 +405,10 @@ public static partial class ModelEditorAdapter
             return new(request.PreviewID, revision, request.DraftState, dependencyRevision,
                 terrain.Name, false, [], "invalidEndpoint");
 
-        var extent = new Extent(windowExtent.MinX, windowExtent.MaxX, windowExtent.MinY, windowExtent.MaxY);
-        var raster = new RasterDefinition(extent, request.Window.Rows, request.Window.Columns);
+        RasterDefinition raster = workScope is null
+            ? new RasterDefinition(new Extent(windowExtent.MinX, windowExtent.MaxX,
+                windowExtent.MinY, windowExtent.MaxY), request.Window.Rows, request.Window.Columns)
+            : workScope.GetRaster();
         int rows = raster.Rows;
         int columns = raster.Cols;
         double cellSize = raster.CellSize;
@@ -314,23 +426,22 @@ public static partial class ModelEditorAdapter
                 terrain.Name, false, [], "segmentTooShort");
 
         int count = checked(rows * columns);
-        var elevations = new float[count];
-        terrain.Layer.Resample(new ResampleArgs(raster, SamplingParams.Default), elevations.AsMemory());
-        double zMin = double.PositiveInfinity;
-        double zMax = double.NegativeInfinity;
-        for (int index = 0; index < elevations.Length; index++)
+        float[] elevations;
+        double zMin;
+        double zMax;
+        if (workScope is null)
         {
-            float elevation = elevations[index];
-            if (elevation < -1e30f) elevations[index] = float.NaN;
-            else if (!float.IsNaN(elevation))
-            {
-                if (elevation < zMin) zMin = elevation;
-                if (elevation > zMax) zMax = elevation;
-            }
+            elevations = new float[count];
+            terrain.Layer.Resample(new ResampleArgs(raster, SamplingParams.Default), elevations.AsMemory());
+            if (!TryNormalizeTerrainElevations(elevations, out zMin, out zMax))
+                return new(request.PreviewID, revision, request.DraftState, dependencyRevision,
+                    terrain.Name, false, [], "terrainSamplingUnavailable");
         }
-        if (double.IsInfinity(zMin) || double.IsInfinity(zMax))
+        else if (!workScope.TryGetTerrainGrid(terrain, raster, out elevations, out zMin, out zMax))
+        {
             return new(request.PreviewID, revision, request.DraftState, dependencyRevision,
                 terrain.Name, false, [], "terrainSamplingUnavailable");
+        }
 
         int startRow = ClampGridIndex((int)Math.Floor((raster.MaxY - request.Start.Y) / cellSize), rows);
         int startColumn = ClampGridIndex((int)Math.Floor((request.Start.X - raster.MinX) / cellSize), columns);
@@ -354,7 +465,7 @@ public static partial class ModelEditorAdapter
         List<(int row, int col)> pixelPath;
         if (options.Algorithm == "HessianRidgeness")
         {
-            var walker = new HessianRidgenessWalker();
+            HessianRidgenessWalker walker = workScope?.HessianWalker ?? new HessianRidgenessWalker();
             if (!walker.TryFindPath(elevations, rows, columns, cellSize, raster.MinX, raster.MaxY,
                 zMin, zMax, startRow, startColumn, endRow, endColumn,
                 options.HessianFrangiBeta, options.HessianFeaturePenaltyKappa,
@@ -365,11 +476,24 @@ public static partial class ModelEditorAdapter
         }
         else
         {
-            int[] parent = new int[count];
-            double[] gScore = new double[count];
-            double[] length = new double[count];
-            var open = new PriorityQueue<int, double>();
-            var pathBuffer = new List<(int row, int col)>();
+            int[] parent;
+            double[] gScore;
+            double[] length;
+            PriorityQueue<int, double> open;
+            List<(int row, int col)> pathBuffer;
+            if (workScope is null)
+            {
+                parent = new int[count];
+                gScore = new double[count];
+                length = new double[count];
+                open = new PriorityQueue<int, double>();
+                pathBuffer = new List<(int row, int col)>();
+            }
+            else
+            {
+                workScope.GetHighGroundWorkspace(count, out parent, out gScore, out length,
+                    out open, out pathBuffer);
+            }
             double bailPixelLength = options.HighGroundBailRatio * euclidPixels;
             int expansionLimit = Math.Max(50000, (int)(128d * euclidPixels * options.HighGroundBailRatio));
             if (!AStarRidgeWalker.TryFindPath(elevations, rows, columns, startRow, startColumn,
@@ -403,6 +527,23 @@ public static partial class ModelEditorAdapter
             new GeometryCulvertCoordinate(point.X, point.Y))];
         return new(request.PreviewID, revision, request.DraftState, dependencyRevision,
             terrain.Name, true, segment, null);
+    }
+
+    private static bool TryNormalizeTerrainElevations(float[] elevations, out double zMin, out double zMax)
+    {
+        zMin = double.PositiveInfinity;
+        zMax = double.NegativeInfinity;
+        for (int index = 0; index < elevations.Length; index++)
+        {
+            float elevation = elevations[index];
+            if (elevation < -1e30f) elevations[index] = float.NaN;
+            else if (!float.IsNaN(elevation))
+            {
+                if (elevation < zMin) zMin = elevation;
+                if (elevation > zMax) zMax = elevation;
+            }
+        }
+        return !double.IsInfinity(zMin) && !double.IsInfinity(zMax);
     }
 
     private static (int Row, int Column) SnapSmartAddTargetToHighest(float[] elevations,

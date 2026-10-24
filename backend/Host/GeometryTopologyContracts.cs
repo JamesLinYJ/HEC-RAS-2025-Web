@@ -67,6 +67,13 @@ public sealed record GeometryTopologyMapCommand(string Action, string FeatureKin
     /// single hit node, matching MoveNodeHandler's selection behavior.
     /// </summary>
     public int[] NodeFIDs { get; init; } = [];
+
+    /// <summary>
+    /// Optional hash of the last read-only map preview. When present, the Host
+    /// resolves the source path again and rejects the edit if it no longer
+    /// produces the path the user confirmed.
+    /// </summary>
+    public string? ExpectedPathSHA256 { get; init; }
 }
 
 /// <summary>
@@ -111,7 +118,28 @@ public sealed record GeometryTopologyDeepConnectSource(string SourceKind, string
     GeometryTopologyCoordinate[] Points, int StartSegmentIndex, double StartSegmentFraction,
     int EndSegmentIndex, double EndSegmentFraction,
     GeometryTopologyDeepConnectVectorSource? VectorSource = null,
-    GeometryTopologyDeepConnectTopologySource? TopologySource = null);
+    GeometryTopologyDeepConnectTopologySource? TopologySource = null)
+{
+    /// <summary>
+    /// Ordered arc-relative anchors for a multi-click DeepConnect trace. Null
+    /// retains the original two-anchor request contract above.
+    /// </summary>
+    public GeometryTopologyDeepConnectAnchor[]? Anchors { get; init; }
+}
+
+public sealed record GeometryTopologyDeepConnectAnchor(int SegmentIndex, double Fraction);
+
+/// <summary>
+/// Read-only, capture-bound path returned by topology.mapCommand.preview.
+/// Coordinates are the exact path the edit will commit when its hash is sent
+/// back as ExpectedPathSHA256.
+/// </summary>
+public sealed record GeometryTopologyMapCommandPreviewResponse(string RequestID, string MapID,
+    string ContextToken, string GeometryRevision, string Revision, string DraftIdentity, string Action,
+    GeometryTopologyCoordinate[] Coordinates, string PathSHA256, string SourceRevision,
+    GeometryTopologySmartAddTerrainCapture? SmartAddTerrainCapture,
+    GeometryTopologyDeepConnectSource? DeepConnectSource, int ConnectionArcFID,
+    int StartNodeFID, int EndNodeFID);
 
 /// <summary>
 /// Persisted map owner and source layer identity for a vector snap target. The
