@@ -31,9 +31,33 @@ export interface VectorSourceFamilyCapture {
   files: VectorSourceFamilyFile[];
 }
 
+/** Exact file-geodatabase directory manifest returned by the Host. */
+export interface GdbSourceFileRevision {
+  relativePath: string;
+  length: number;
+  revision: string;
+}
+
+export interface GdbMapSourceIdentity {
+  sourcePath: string;
+  revision: string;
+  files: GdbSourceFileRevision[];
+}
+
+export interface GdbMapLayerDescriptor {
+  name: string;
+  geometryType: string;
+  geometryTypeCode: number;
+  vectorType: string;
+  featureCount: number;
+  projectionWKT: string | null;
+}
+
 export interface VectorSourceInspectionCandidate {
   node: CatalogTreeNodeLocator;
   expectedFamily: VectorSourceFamilyCapture | null;
+  /** GDB reinspection must echo the complete directory manifest, never a primary-file SHA. */
+  expectedGdbSource?: GdbMapSourceIdentity | null;
 }
 
 export interface TopologyVectorSourceInspectRequest {
@@ -73,6 +97,7 @@ export interface PersistedVectorDeepConnectComponent {
   points: GeometryTopologyCoordinate[];
   sourceFeatureOrdinal: number;
   sourcePartOrdinal: number;
+  sourceID: string | null;
   sourcePolygonIndex: number | null;
   sourceIsHole: boolean | null;
 }
@@ -85,8 +110,12 @@ export interface PersistedVectorDeepConnectSource {
   canDeepConnect: boolean;
   sourceKind: 'shapefile' | 'geojson' | 'gdb' | 'unsupported' | null;
   canonicalSourcePath: string | null;
+  /** Effective source revision: file-family primary SHA or complete GDB directory manifest revision. */
+  sourceRevision: string | null;
   sourceFamily: VectorSourceFamilyCapture | null;
   sourceSHA256: string | null;
+  gdbSource: GdbMapSourceIdentity | null;
+  gdbLayer: GdbMapLayerDescriptor | null;
   components: PersistedVectorDeepConnectComponent[];
   unsupportedGeometryTypes: string[];
   oversizedComponentCount: number;
@@ -119,7 +148,8 @@ export interface PersistedVectorDeepConnectSourceCapture extends GeometryTopolog
   vectorSource: {
     map: VectorDeepConnectMapRequest;
     node: CatalogTreeNodeLocator;
-    expectedFamily: VectorSourceFamilyCapture;
+    expectedFamily: VectorSourceFamilyCapture | null;
+    expectedGdbSource: GdbMapSourceIdentity | null;
   };
   anchors: GeometryTopologyDeepConnectAnchor[];
 }
@@ -252,9 +282,126 @@ function stableJSON(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 
+function isGdbLocator(node: CatalogTreeNodeLocator): boolean {
+  return node.nodeType === 'GdbVectorLayer' || node.mapType === 'GdbVectorLayer';
+}
+
+function gdbSourceIdentity(source: GdbMapSourceIdentity): unknown {
+  return {
+    sourcePath: source.sourcePath,
+    revision: source.revision,
+    files: source.files.map((file) => ({
+      relativePath: file.relativePath,
+      length: file.length,
+      revision: file.revision,
+    })),
+  };
+}
+
+/** Compact key for React selection only; the full manifest stays in command and echo checks. */
+function gdbSourceRevisionKey(source: GdbMapSourceIdentity): unknown {
+  return { sourcePath: source.sourcePath, revision: source.revision };
+}
+
+function gdbLayerIdentity(layer: GdbMapLayerDescriptor): unknown {
+  return {
+    name: layer.name,
+    geometryType: layer.geometryType,
+    geometryTypeCode: layer.geometryTypeCode,
+    vectorType: layer.vectorType,
+    featureCount: layer.featureCount,
+    projectionWKT: layer.projectionWKT,
+  };
+}
+
+function parseGdbSource(value: unknown): GdbMapSourceIdentity {
+  const source = requireRecord(value, 'Host GDB 目录清单');
+  const normalizedPath = typeof source.sourcePath === 'string' ? source.sourcePath.replace(/[\\/]+$/, '') : '';
+  if (!source.sourcePath || typeof source.sourcePath !== 'string' || !isAbsolutePath(source.sourcePath) ||
+      !/\.gdb$/i.test(normalizedPath) || !sha256.test(String(source.revision ?? '')) ||
+      !Array.isArray(source.files) || source.files.length === 0) {
+    throw new Error('Host GDB 目录清单缺少规范目录、SHA-256 修订或文件项。');
+  }
+  const files = source.files.map((value, index): GdbSourceFileRevision => {
+    const file = requireRecord(value, `Host GDB 文件 ${index + 1}`);
+    const relativePath = requireString(file.relativePath, `Host GDB 文件 ${index + 1} 相对路径`);
+    if (relativePath.startsWith('/') || /^[a-z]:[\\/]/i.test(relativePath) ||
+        relativePath.split(/[\\/]/).some((part) => part === '..' || part === '.')) {
+      throw new Error(`Host GDB 文件 ${index + 1} 路径不是目录内相对路径。`);
+    }
+    if (!Number.isSafeInteger(file.length) || (file.length as number) < 0 ||
+        !sha256.test(String(file.revision ?? ''))) {
+      throw new Error(`Host GDB 文件 ${index + 1} 长度或内容修订无效。`);
+    }
+    return { relativePath, length: file.length as number, revision: file.revision as string };
+  });
+  if (new Set(files.map((file) => file.relativePath)).size !== files.length) {
+    throw new Error('Host GDB 目录清单包含重复的相对路径。');
+  }
+  return { sourcePath: source.sourcePath, revision: source.revision as string, files };
+}
+
+function sameGdbSource(left: GdbMapSourceIdentity, right: GdbMapSourceIdentity): boolean {
+  if (!sameSourcePath(left.sourcePath, right.sourcePath) || !sameRevision(left.revision, right.revision) ||
+      left.files.length !== right.files.length) return false;
+  const rightFiles = new Map(right.files.map((file) => [file.relativePath, file]));
+  return left.files.every((file) => {
+    const next = rightFiles.get(file.relativePath);
+    return !!next && file.length === next.length && sameRevision(file.revision, next.revision);
+  });
+}
+
+function parseGdbLayer(value: unknown): GdbMapLayerDescriptor {
+  const layer = requireRecord(value, 'Host GDB 图层描述');
+  if (typeof layer.name !== 'string' || !layer.name.trim() ||
+      typeof layer.geometryType !== 'string' || !layer.geometryType.trim() ||
+      !Number.isSafeInteger(layer.geometryTypeCode) ||
+      typeof layer.vectorType !== 'string' || !layer.vectorType.trim() ||
+      !Number.isSafeInteger(layer.featureCount) || (layer.featureCount as number) < 0 ||
+      !(layer.projectionWKT === null || layer.projectionWKT === undefined || typeof layer.projectionWKT === 'string')) {
+    throw new Error('Host GDB 图层描述字段无效。');
+  }
+  return {
+    name: layer.name,
+    geometryType: layer.geometryType,
+    geometryTypeCode: layer.geometryTypeCode as number,
+    vectorType: layer.vectorType,
+    featureCount: layer.featureCount as number,
+    projectionWKT: (layer.projectionWKT ?? null) as string | null,
+  };
+}
+
+export function persistedVectorSourceRevision(source: PersistedVectorDeepConnectSource): string | null {
+  return source.sourceKind === 'gdb' ? source.gdbSource?.revision ?? null : source.sourceSHA256;
+}
+
+export function hasConnectableVectorCapture(source: PersistedVectorDeepConnectSource): boolean {
+  if (!source.canDeepConnect || !source.checked || !source.effectiveVisible || !source.canonicalSourcePath ||
+      !persistedVectorSourceRevision(source)) return false;
+  if (source.sourceKind === 'gdb') {
+    const layerType = source.gdbLayer?.vectorType;
+    return isGdbLocator(source.node) && source.sourceFamily === null && source.sourceSHA256 === null &&
+      !!source.gdbSource && !!source.gdbLayer &&
+      sameSourcePath(source.canonicalSourcePath, source.gdbSource.sourcePath) &&
+      sameRevision(source.sourceRevision, source.gdbSource.revision) &&
+      (layerType === 'Line' || layerType === 'LineCollection');
+  }
+  if ((source.sourceKind !== 'shapefile' && source.sourceKind !== 'geojson') ||
+      source.sourceFamily === null || source.sourceSHA256 === null || source.gdbSource !== null ||
+      source.sourceFamily.family !== source.sourceKind ||
+      !sameSourcePath(source.canonicalSourcePath, source.sourceFamily.sourcePath) ||
+      !sameRevision(source.sourceRevision, source.sourceSHA256)) return false;
+  const primary = source.sourceFamily.files.find((file) => file.role === 'source' && file.required);
+  return !!primary?.revision && sameRevision(source.sourceSHA256, primary.revision);
+}
+
 /** Stable identity used by the source picker to select one exact persisted map node. */
 export function vectorSourceCandidateKey(candidate: VectorSourceInspectionCandidate): string {
-  return stableJSON(locatorEchoIdentity(candidate.node));
+  return stableJSON([
+    locatorEchoIdentity(candidate.node),
+    candidate.expectedFamily ? candidate.expectedFamily.revision : null,
+    candidate.expectedGdbSource ? gdbSourceRevisionKey(candidate.expectedGdbSource) : null,
+  ]);
 }
 
 /** Must stay identical to the active component key used by useGeometryVectorSources. */
@@ -263,11 +410,16 @@ export function vectorDeepConnectComponentSelectionKey(source: PersistedVectorDe
   return stableJSON([
     source.node,
     source.canonicalSourcePath,
-    source.sourceSHA256,
+    source.sourceRevision,
     source.sourceFamily?.revision ?? null,
+    source.gdbSource ? gdbSourceRevisionKey(source.gdbSource) : null,
+    source.gdbLayer ? gdbLayerIdentity(source.gdbLayer) : null,
     component.featureFID,
     component.pathIndex,
     component.componentIdentity,
+    component.sourceFeatureOrdinal,
+    component.sourcePartOrdinal,
+    component.sourceID,
   ]);
 }
 
@@ -411,10 +563,15 @@ export function deepConnectSourceEchoIdentity(value: unknown): unknown {
   })();
   const vectorSource = source.vectorSource == null ? null : (() => {
     const vector = requireRecord(source.vectorSource, 'DeepConnect 回执矢量来源');
+    const expectedFamily = vector.expectedFamily == null ? null : parseFamily(vector.expectedFamily);
+    const expectedGdbSource = vector.expectedGdbSource == null ? null : parseGdbSource(vector.expectedGdbSource);
     return {
       ...vector,
       map: mapRequestEchoIdentity(vector.map),
       node: locatorEchoIdentity(vector.node),
+      // .NET includes these nullable capture fields in old SHP/GeoJSON receipts too.
+      expectedFamily,
+      expectedGdbSource: expectedGdbSource ? gdbSourceIdentity(expectedGdbSource) : null,
     };
   })();
   return { ...source, topologySource, vectorSource };
@@ -574,6 +731,10 @@ function parseComponent(value: unknown, sourceRevision: string, sourceKey: strin
   }
   const sourceFeatureOrdinal = requireInteger(component.sourceFeatureOrdinal, '源要素序号');
   const sourcePartOrdinal = requireInteger(component.sourcePartOrdinal, '源部件序号');
+  const sourceIDValue = component.sourceID;
+  if (!(sourceIDValue === null || sourceIDValue === undefined || typeof sourceIDValue === 'string')) {
+    throw new Error('Host 来源要素 ID 无效。');
+  }
   const polygonValue = component.sourcePolygonIndex;
   const holeValue = component.sourceIsHole;
   if (!(polygonValue === null || polygonValue === undefined ||
@@ -582,13 +743,15 @@ function parseComponent(value: unknown, sourceRevision: string, sourceKey: strin
     throw new Error('Host 多边形来源部件分组元数据无效。');
   }
   return {
-    key: stableJSON([sourceKey, sourceRevision, featureFID, pathIndex, componentIdentity]),
+    key: stableJSON([sourceKey, sourceRevision, featureFID, pathIndex, componentIdentity,
+      sourceFeatureOrdinal, sourcePartOrdinal, sourceIDValue ?? null]),
     featureFID,
     pathIndex,
     componentIdentity,
     points,
     sourceFeatureOrdinal,
     sourcePartOrdinal,
+    sourceID: (sourceIDValue ?? null) as string | null,
     sourcePolygonIndex: (polygonValue ?? null) as number | null,
     sourceIsHole: (holeValue ?? null) as boolean | null,
   };
@@ -604,7 +767,13 @@ function validateExpectedMapRequest(request: TopologyVectorSourceInspectRequest)
   }
   const locators = request.sources.map((source, index) => {
     const node = requireLocator(source.node, `来源节点 ${index + 1}`);
-    if (source.expectedFamily !== null) parseFamily(source.expectedFamily);
+    const expectedFamily = source.expectedFamily ?? null;
+    const expectedGdbSource = source.expectedGdbSource ?? null;
+    if (expectedFamily !== null) parseFamily(expectedFamily);
+    if (expectedGdbSource !== null) parseGdbSource(expectedGdbSource);
+    if ((isGdbLocator(node) && expectedFamily !== null) || (!isGdbLocator(node) && expectedGdbSource !== null)) {
+      throw new Error(`来源节点 ${index + 1} 的文件组捕获类型与地图图层类型不匹配。`);
+    }
     return stableJSON(locatorEchoIdentity(node));
   });
   if (new Set(locators).size !== locators.length) throw new Error('矢量来源检查不能重复提交同一地图节点。');
@@ -621,6 +790,10 @@ export function createTopologyVectorSourceInspectRequest(input: TopologyVectorSo
       expectedFamily: source.expectedFamily ? {
         ...source.expectedFamily,
         files: source.expectedFamily.files.map((file) => ({ ...file })),
+      } : null,
+      expectedGdbSource: source.expectedGdbSource ? {
+        ...source.expectedGdbSource,
+        files: source.expectedGdbSource.files.map((file) => ({ ...file })),
       } : null,
     })),
   };
@@ -667,11 +840,18 @@ export function parseTopologyVectorSourceInspection(
     const sourceFamily = item.sourceFamily === null || item.sourceFamily === undefined ? null : parseFamily(item.sourceFamily);
     const canonicalSourcePath = (item.canonicalSourcePath ?? null) as string | null;
     const sourceSHA256 = (item.sourceSHA256 ?? null) as string | null;
+    const sourceKind = (item.sourceKind ?? null) as PersistedVectorDeepConnectSource['sourceKind'];
+    const gdbSource = item.gdbSource === null || item.gdbSource === undefined ? null : parseGdbSource(item.gdbSource);
+    const gdbLayer = item.gdbLayer === null || item.gdbLayer === undefined ? null : parseGdbLayer(item.gdbLayer);
     const isSupportedFamily = sourceFamily?.family === 'shapefile' || sourceFamily?.family === 'geojson';
+    let sourceRevision: string | null = null;
     if (sourceFamily && (!canonicalSourcePath || !sameSourcePath(canonicalSourcePath, sourceFamily.sourcePath))) {
       throw new Error(`Host 矢量来源 ${node.nodeName} 的路径与 source family 不匹配。`);
     }
     if (sourceFamily) {
+      if (sourceKind !== sourceFamily.family || gdbSource !== null || gdbLayer !== null) {
+        throw new Error(`Host 矢量来源 ${node.nodeName} 的来源类型与文件组捕获不匹配。`);
+      }
       const primary = sourceFamily.files.filter((file) => file.role === 'source' && file.required);
       if (primary.length !== 1 || !primary[0]?.revision ||
           !sameRevision(sourceSHA256, primary[0].revision)) {
@@ -680,18 +860,36 @@ export function parseTopologyVectorSourceInspection(
       if (requestCandidate.expectedFamily && !sameFamily(sourceFamily, requestCandidate.expectedFamily)) {
         throw new Error(`Host 矢量来源 ${node.nodeName} 的文件组与先前捕获不一致。`);
       }
-    } else if (sourceSHA256 !== null ||
-        (canonicalSourcePath !== null && !isAbsolutePath(canonicalSourcePath))) {
-      throw new Error(`Host 矢量来源 ${node.nodeName} 缺少文件组但仍返回了无效路径或 SHA。`);
+      sourceRevision = sourceSHA256;
+    } else if (sourceKind === 'gdb') {
+      if (!isGdbLocator(node) || sourceSHA256 !== null || canonicalSourcePath && !isAbsolutePath(canonicalSourcePath)) {
+        throw new Error(`Host GDB 来源 ${node.nodeName} 的节点、路径或单文件 SHA 字段无效。`);
+      }
+      if (gdbSource) {
+        if (!canonicalSourcePath || !sameSourcePath(canonicalSourcePath, gdbSource.sourcePath) ||
+            requestCandidate.expectedGdbSource && !sameGdbSource(gdbSource, requestCandidate.expectedGdbSource)) {
+          throw new Error(`Host GDB 来源 ${node.nodeName} 的目录清单与当前节点或先前捕获不一致。`);
+        }
+        sourceRevision = gdbSource.revision;
+      } else if (requestCandidate.expectedGdbSource) {
+        throw new Error(`Host GDB 来源 ${node.nodeName} 未回显先前捕获的目录清单。`);
+      }
+      if (gdbLayer && !gdbSource) throw new Error(`Host GDB 来源 ${node.nodeName} 返回图层但没有目录清单。`);
+    } else {
+      if (sourceSHA256 !== null || gdbSource !== null || gdbLayer !== null ||
+          (canonicalSourcePath !== null && !isAbsolutePath(canonicalSourcePath))) {
+        throw new Error(`Host 矢量来源 ${node.nodeName} 缺少有效的来源捕获。`);
+      }
     }
 
-    const sourceKey = stableJSON([owner.ownerKey, node, canonicalSourcePath, sourceSHA256,
-      sourceFamily?.revision ?? null]);
-    if (sourceFamily === null && item.components.length !== 0) {
-      throw new Error(`Host 矢量来源 ${node.nodeName} 未提供经验证的文件组，却返回了可连接组件。`);
+    const sourceKey = stableJSON([owner.ownerKey, node, canonicalSourcePath, sourceRevision,
+      sourceFamily?.revision ?? null, gdbSource ? gdbSourceRevisionKey(gdbSource) : null,
+      gdbLayer ? gdbLayerIdentity(gdbLayer) : null]);
+    if (sourceFamily === null && gdbSource === null && item.components.length !== 0) {
+      throw new Error(`Host 矢量来源 ${node.nodeName} 未提供经验证的文件组或 GDB 目录清单，却返回了可连接组件。`);
     }
     const components = item.components.map((component, componentIndex) =>
-      parseComponent(component, sourceSHA256 ?? '', sourceKey, componentIndex));
+      parseComponent(component, sourceRevision ?? '', sourceKey, componentIndex));
     totalComponents += components.length;
     totalPoints += components.reduce((count, component) => count + component.points.length, 0);
     if (totalComponents > 100_000 || totalPoints > 1_000_000) {
@@ -701,17 +899,20 @@ export function parseTopologyVectorSourceInspection(
       throw new Error(`Host 矢量来源 ${node.nodeName} 返回了重复的组件身份。`);
     }
     const canDeepConnect = item.canDeepConnect;
-    const sourceKind = (item.sourceKind ?? null) as PersistedVectorDeepConnectSource['sourceKind'];
-    if (sourceFamily && sourceKind !== sourceFamily.family) {
-      throw new Error(`Host 矢量来源 ${node.nodeName} 的 sourceKind 与文件组不一致。`);
-    }
     if (!canDeepConnect && components.length > 0) {
       throw new Error(`Host 将不可连接的来源 ${node.nodeName} 返回了可选组件。`);
     }
-    if (canDeepConnect && (!item.checked || !item.effectiveVisible || !isSupportedFamily ||
-        (node.mapType !== 'PolylinesVector' && node.mapType !== 'PolygonsVector') ||
-        components.length === 0 || sourceFamily === null || sourceSHA256 === null || !canonicalSourcePath ||
-      sourceKind === 'gdb' || sourceKind === 'unsupported' || sourceKind === null)) {
+    const gdbSupported = sourceKind === 'gdb' && isGdbLocator(node) && gdbSource !== null && gdbLayer !== null &&
+      (gdbLayer.vectorType === 'Line' || gdbLayer.vectorType === 'LineCollection');
+    if (sourceKind === 'gdb' && components.some((component) => component.pathIndex !== 0 ||
+        component.componentIdentity !== `feature:${component.featureFID}:part:0` ||
+        component.sourcePolygonIndex !== null || component.sourceIsHole !== null)) {
+      throw new Error(`Host GDB 来源 ${node.nodeName} 的线组件身份或多边形元数据不符合约定。`);
+    }
+    if (canDeepConnect && (!item.checked || !item.effectiveVisible ||
+        !(isSupportedFamily && sourceFamily !== null && sourceSHA256 !== null &&
+          (node.mapType === 'PolylinesVector' || node.mapType === 'PolygonsVector') || gdbSupported) ||
+        components.length === 0 || !sourceRevision || !canonicalSourcePath)) {
       throw new Error(`Host 将不可见、不支持或不完整的来源 ${node.nodeName} 标记为可连接。`);
     }
     if (canDeepConnect && components.some((component) =>
@@ -726,8 +927,11 @@ export function parseTopologyVectorSourceInspection(
       canDeepConnect,
       sourceKind,
       canonicalSourcePath,
+      sourceRevision,
       sourceFamily,
       sourceSHA256,
+      gdbSource,
+      gdbLayer,
       components,
       unsupportedGeometryTypes: item.unsupportedGeometryTypes as string[],
       oversizedComponentCount: item.oversizedComponentCount as number,
@@ -787,14 +991,21 @@ function validateTopologyCapture(topology: GeometryTopologySnapshot, model: Geom
 function validateSourceCurrent(source: PersistedVectorDeepConnectSource,
   currentMapRequest: VectorDeepConnectMapRequest, currentProjectRevision: string): void {
   const ownerIsCurrent = source.owner.ownerKey === ownerKey(ownerIdentity(source.owner));
-  if (!source.canDeepConnect || !source.checked || !source.effectiveVisible || !source.sourceFamily ||
-      !source.sourceSHA256 || !source.canonicalSourcePath ||
-      !ownerIsCurrent ||
+  const revision = persistedVectorSourceRevision(source);
+  const familyCaptureIsCurrent = source.sourceFamily !== null && source.sourceSHA256 !== null &&
+    source.sourceKind === source.sourceFamily.family &&
+    sameSourcePath(source.canonicalSourcePath ?? '', source.sourceFamily.sourcePath) &&
+    sameRevision(source.sourceSHA256, source.sourceFamily.files.find((file) =>
+      file.role === 'source' && file.required)?.revision) && source.gdbSource === null;
+  const gdbCaptureIsCurrent = source.sourceKind === 'gdb' && isGdbLocator(source.node) &&
+    source.sourceFamily === null && source.sourceSHA256 === null && source.gdbSource !== null && source.gdbLayer !== null &&
+    (source.gdbLayer.vectorType === 'Line' || source.gdbLayer.vectorType === 'LineCollection') &&
+    sameSourcePath(source.canonicalSourcePath ?? '', source.gdbSource.sourcePath) &&
+    sameRevision(revision, source.gdbSource.revision);
+  if (!hasConnectableVectorCapture(source) || !revision || !source.canonicalSourcePath ||
+      !(familyCaptureIsCurrent || gdbCaptureIsCurrent) || !ownerIsCurrent ||
       !sameRevision(source.owner.projectRevision, currentProjectRevision) ||
-      stableJSON(source.mapRequest) !== stableJSON(currentMapRequest) ||
-      !sameSourcePath(source.canonicalSourcePath, source.sourceFamily.sourcePath) ||
-      !sameRevision(source.sourceSHA256, source.sourceFamily.files.find((file) =>
-        file.role === 'source' && file.required)?.revision)) {
+      stableJSON(source.mapRequest) !== stableJSON(currentMapRequest)) {
     throw new Error('所选矢量来源已过期、不可见、未勾选或与当前工程地图不匹配。');
   }
 }
@@ -859,10 +1070,12 @@ export function createPersistedVectorDeepConnectPreview({
   const draftIdentity = validateTopologyCapture(topology, model, mapRequestContext, currentMapRequest, currentProjectRevision);
   validateSourceCurrent(source, currentMapRequest, currentProjectRevision);
   const sourcePath = source.canonicalSourcePath;
-  const sourceRevision = source.sourceSHA256;
+  const sourceRevision = persistedVectorSourceRevision(source);
   const expectedFamily = source.sourceFamily;
-  if (!sourcePath || !sourceRevision || !expectedFamily) {
-    throw new Error('所选矢量来源没有完整的 Host 文件组捕获。');
+  const expectedGdbSource = source.gdbSource;
+  if (!sourcePath || !sourceRevision ||
+      !(expectedFamily !== null && expectedGdbSource === null || expectedFamily === null && expectedGdbSource !== null)) {
+    throw new Error('所选矢量来源没有完整的 Host 文件组或 GDB 目录捕获。');
   }
   if (!componentBelongsToSource(source, component)) throw new Error('矢量组件不属于当前已验证来源。');
   if (!Number.isFinite(mapCellSize) || mapCellSize <= 0) throw new Error('当前地图比例无效。');
@@ -904,6 +1117,7 @@ export function createPersistedVectorDeepConnectPreview({
       map: source.mapRequest,
       node: source.node,
       expectedFamily,
+      expectedGdbSource,
     },
   };
   const startNodeFID = uniqueTopologyNodeAt(topology, firstPoint);
@@ -965,11 +1179,11 @@ export function parseVectorDeepConnectPreview(
   const draftIdentity = requireRevision(response.draftIdentity, '预览草稿身份');
   const action = requireString(response.action, '预览操作');
   const pathSHA256 = requireRevision(response.pathSHA256, '预览路径 SHA-256');
-  const sourceRevision = requireRevision(response.sourceRevision, '预览矢量来源 SHA-256');
+  const sourceRevision = requireRevision(response.sourceRevision, '预览矢量来源修订');
   if (requestID !== requestContext.requestID || mapID !== requestContext.mapID || contextToken !== requestContext.contextToken ||
       !sameRevision(geometryRevision, expected.geometryRevision) || !sameRevision(revision, expected.geometryRevision) ||
       !sameRevision(draftIdentity, expected.draftIdentity) || action !== 'deepConnect' ||
-      !sameRevision(sourceRevision, expected.source.sourceSHA256)) {
+      !sameRevision(sourceRevision, persistedVectorSourceRevision(expected.source))) {
     throw new Error('Host DeepConnect 预览回执与当前地图、工程草稿、来源或操作不匹配。');
   }
   if (!Array.isArray(response.coordinates) || response.coordinates.length < 2) {

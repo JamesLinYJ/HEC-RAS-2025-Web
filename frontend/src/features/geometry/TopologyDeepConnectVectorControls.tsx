@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Language } from '../../shared/workbench';
 import {
+  hasConnectableVectorCapture,
   vectorDeepConnectComponentSelectionKey,
 } from './geometryVectorDeepConnect';
 import type {
@@ -12,7 +13,7 @@ import type {
 
 export interface TopologyDeepConnectVectorControlsProps {
   language: Language;
-  /** Current saved map's checked, visible Polyline/Polygon vector nodes. */
+  /** Current saved map's checked, visible persisted vector nodes, including GDB layers. */
   candidates: readonly VectorSourceInspectionCandidate[];
   inspection: TopologyVectorSourceInspection | null;
   selectedComponentKey: string | null;
@@ -35,7 +36,9 @@ interface ComponentOption {
 
 function sourceTitle(source: PersistedVectorDeepConnectSource, english: boolean): string {
   const type = source.node.mapType ?? source.node.nodeType;
-  const family = source.sourceKind ? ` · ${source.sourceKind}` : '';
+  const family = source.sourceKind === 'gdb'
+    ? (english ? ' · File Geodatabase' : ' · 文件地理数据库')
+    : source.sourceKind ? ` · ${source.sourceKind}` : '';
   const state = source.canDeepConnect
     ? english ? 'ready' : '可用'
     : source.diagnosticCode ?? (english ? 'unavailable' : '不可用');
@@ -62,8 +65,7 @@ export function TopologyDeepConnectVectorControls({
 }: TopologyDeepConnectVectorControlsProps) {
   const english = language === 'en';
   const connectableSources = useMemo(() => (inspection?.sources ?? [])
-    .filter((source) => source.checked && source.effectiveVisible && source.canDeepConnect && source.sourceFamily &&
-      source.sourceSHA256 && source.canonicalSourcePath), [inspection]);
+    .filter(hasConnectableVectorCapture), [inspection]);
   const [selectedSourceKey, setSelectedSourceKey] = useState<string | null>(null);
   const [componentFilter, setComponentFilter] = useState('');
   useEffect(() => {
@@ -121,7 +123,7 @@ export function TopologyDeepConnectVectorControls({
     : !canInspect
       ? (english ? 'The current saved map or Geometry draft capture is unavailable.' : '当前已保存地图或 Geometry 草稿捕获不可用。')
       : candidateCount === 0
-        ? (english ? 'No checked, visible polyline or polygon vector layers are available.' : '当前没有已勾选且可见的折线或多边形矢量图层。')
+            ? (english ? 'No checked, visible vector source layers are available.' : '当前没有已勾选且可见的矢量来源图层。')
         : inspection
           ? (english ? `${inspection.sources.length} layer(s) inspected for this exact map capture.` : `已针对当前地图捕获检查 ${inspection.sources.length} 个图层。`)
           : (english ? 'Inspect these persisted sources before placing anchors.' : '请先检查这些持久化来源，再放置连接锚点。');
@@ -138,6 +140,8 @@ export function TopologyDeepConnectVectorControls({
           ? <p>{english ? 'There are no checked and visible vector candidates in the current map tree.' : '当前地图目录中没有已勾选且可见的矢量候选图层。'}</p>
           : candidates.map((candidate) => <p key={JSON.stringify(candidate.node)} className="deep-connect-vector-candidate">
             {candidate.node.nodeName} · {candidate.node.mapType ?? candidate.node.nodeType}
+            {(candidate.node.nodeType === 'GdbVectorLayer' || candidate.node.mapType === 'GdbVectorLayer') &&
+              ` · ${english ? 'GDB directory source' : 'GDB 目录来源'}`}
             {candidate.expectedFamily && ` · ${candidate.expectedFamily.family}`}
           </p>)}
       </fieldset>
@@ -201,12 +205,26 @@ export function TopologyDeepConnectVectorControls({
         </>}
 
         {selectedOption && <dl className="deep-connect-vector-capture" data-testid="vector-deep-connect-capture">
-          <dt>{english ? 'Source family' : '来源文件组'}</dt>
-          <dd data-testid="vector-deep-connect-source-family">{selectedOption.source.sourceFamily?.family}</dd>
+          <dt>{selectedOption.source.sourceKind === 'gdb'
+            ? (english ? 'Source type' : '来源类型') : (english ? 'Source family' : '来源文件组')}</dt>
+          <dd data-testid="vector-deep-connect-source-family">{selectedOption.source.sourceKind === 'gdb'
+            ? (english ? 'File Geodatabase directory' : '文件地理数据库目录')
+            : selectedOption.source.sourceFamily?.family}</dd>
           <dt>{english ? 'Source path' : '来源路径'}</dt>
           <dd data-testid="vector-deep-connect-source-path"><code title={selectedOption.source.canonicalSourcePath ?? undefined}>{selectedOption.source.canonicalSourcePath}</code></dd>
-          <dt>{english ? 'Source SHA-256' : '来源 SHA-256'}</dt>
-          <dd data-testid="vector-deep-connect-source-sha256"><code title={selectedOption.source.sourceSHA256 ?? undefined}>{selectedOption.source.sourceSHA256}</code></dd>
+          {selectedOption.source.sourceKind === 'gdb' && selectedOption.source.gdbSource && selectedOption.source.gdbLayer
+            ? <>
+              <dt>{english ? 'GDB directory' : 'GDB 目录'}</dt>
+              <dd data-testid="vector-deep-connect-gdb-directory"><code>{selectedOption.source.gdbSource.sourcePath}</code></dd>
+              <dt>{english ? 'Directory manifest revision' : '目录清单修订'}</dt>
+              <dd data-testid="vector-deep-connect-gdb-revision"><code>{selectedOption.source.gdbSource.revision}</code></dd>
+              <dt>{english ? 'GDB layer' : 'GDB 图层'}</dt>
+              <dd data-testid="vector-deep-connect-gdb-layer">{selectedOption.source.gdbLayer.name} · {selectedOption.source.gdbLayer.vectorType} · {selectedOption.source.gdbLayer.geometryType}</dd>
+            </>
+            : <>
+              <dt>{english ? 'Source SHA-256' : '来源 SHA-256'}</dt>
+              <dd data-testid="vector-deep-connect-source-sha256"><code title={selectedOption.source.sourceSHA256 ?? undefined}>{selectedOption.source.sourceSHA256}</code></dd>
+            </>}
           <dt>featureFID</dt>
           <dd data-testid="vector-deep-connect-feature-fid">{selectedOption.component.featureFID}</dd>
           <dt>pathIndex</dt>
@@ -218,6 +236,10 @@ export function TopologyDeepConnectVectorControls({
             {selectedOption.component.sourcePolygonIndex !== null && ` · ${english ? 'polygon' : '多边形'} ${selectedOption.component.sourcePolygonIndex}`}
             {selectedOption.component.sourceIsHole === true && ` · ${english ? 'hole' : '内环'}`}
           </dd>
+          {selectedOption.source.sourceKind === 'gdb' && <>
+            <dt>{english ? 'SourceID' : '来源要素 ID'}</dt>
+            <dd data-testid="vector-deep-connect-component-source-id">{selectedOption.component.sourceID ?? '—'}</dd>
+          </>}
         </dl>}
 
         <div className="deep-connect-vector-diagnostics" aria-label={english ? 'Host source diagnostics' : 'Host 来源诊断'}>
@@ -225,6 +247,9 @@ export function TopologyDeepConnectVectorControls({
             <summary>{sourceTitle(source, english)}</summary>
             {source.canonicalSourcePath && <p><code>{source.canonicalSourcePath}</code></p>}
             {source.sourceSHA256 && <p><code>{english ? 'Source SHA-256' : '来源 SHA-256'}: {source.sourceSHA256}</code></p>}
+            {source.gdbSource && <p data-testid="vector-deep-connect-gdb-revision-diagnostic">
+              {english ? 'Directory manifest revision' : '目录清单修订'}: <code>{source.gdbSource.revision}</code>
+            </p>}
             {source.diagnosticCode && <p><code>{source.diagnosticCode}</code></p>}
             {source.diagnostic && <p>{source.diagnostic}</p>}
             {source.oversizedComponentCount > 0 && <p role="note">
@@ -241,8 +266,8 @@ export function TopologyDeepConnectVectorControls({
         </div>
         <p className="deep-connect-vector-boundary">
           {english
-            ? 'The selected component and all ordered anchors are revalidated by the Host against the saved map and exact source-file family. Completing a connection changes only the current Geometry draft; saving the parent Geometry persists the new arc, while the original vector source remains read-only.'
-            : 'Host 会按已保存地图和精确来源文件组重新验证组件及全部顺序锚点。完成连接只更新当前 Geometry 草稿；保存父级 Geometry 后，新弧段才写入几何模型，原矢量来源保持只读。'}
+            ? 'The Host revalidates the selected component and ordered anchors against the saved map and captured source identity (file-family manifest or full GDB directory manifest and layer). Completing a connection changes only the current Geometry draft; saving the parent Geometry persists the new arc while the original vector source remains read-only.'
+            : 'Host 会按已保存地图以及捕获的来源身份（文件组清单，或完整 GDB 目录清单与图层）重新验证组件和锚点顺序。完成连接只更新当前 Geometry 草稿；保存父级 Geometry 后，新弧段才写入几何模型，原矢量来源保持只读。'}
         </p>
       </>}
     </section>

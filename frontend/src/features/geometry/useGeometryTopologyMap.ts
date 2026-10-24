@@ -23,7 +23,7 @@ import { TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS } from './TopologySmartAddControls';
 import { createTopologyDeepConnectCommand } from './geometryDeepConnect';
 import { useGeometryVectorSources } from './useGeometryVectorSources';
 import { createPersistedVectorDeepConnectPreview, parseVectorDeepConnectPreview,
-  deepConnectSourceEchoIdentity, vectorDeepConnectComponentSelectionKey } from './geometryVectorDeepConnect';
+  deepConnectSourceEchoIdentity, persistedVectorSourceRevision, vectorDeepConnectComponentSelectionKey } from './geometryVectorDeepConnect';
 import type { PersistedVectorDeepConnectComponent, PersistedVectorDeepConnectPreview, PersistedVectorDeepConnectSource,
   VectorSourceInspectionCandidate } from './geometryVectorDeepConnect';
 
@@ -204,7 +204,7 @@ function checkedVisibleVectorCandidates(roots: CatalogTreeNode[] | null | undefi
     if (checked && node.checked === 'checked' && locator &&
         ((locator.nodeType === 'MapLayer' && (locator.mapType === 'PolylinesVector' || locator.mapType === 'PolygonsVector')) ||
           locator.nodeType === 'GdbVectorLayer' || locator.mapType === 'GdbVectorLayer')) {
-      candidates.push({ node: locator, expectedFamily: null });
+      candidates.push({ node: locator, expectedFamily: null, expectedGdbSource: null });
     }
     for (const child of node.children ?? []) visit(child, checked);
   };
@@ -660,7 +660,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
         });
         command = vectorPreview.command;
         body = vectorPreview.request;
-        sourceRevision = selected.source.sourceSHA256 ?? '';
+        sourceRevision = persistedVectorSourceRevision(selected.source) ?? '';
       }
     }
 
@@ -1245,7 +1245,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
         }
       } else if (source.sourceKind === 'vector') {
         if (!currentVector || !vectorMapRequest || !context.projectRevision || source.topologySource != null ||
-            source.sourceRevision !== currentVector.source.sourceSHA256 ||
+            source.sourceRevision !== persistedVectorSourceRevision(currentVector.source) ||
             source.featureFID !== currentVector.component.featureFID || source.pathIndex !== currentVector.component.pathIndex ||
             source.componentIdentity !== currentVector.component.componentIdentity ||
             stableJSON(source.points) !== stableJSON(currentVector.component.points)) {

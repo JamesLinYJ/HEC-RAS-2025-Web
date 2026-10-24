@@ -6,6 +6,7 @@ import { sameSourcePath } from '../tools/attributes/attributeTableTypes';
 import type { GeometryModelRequest } from './geometryTypes';
 import {
   createTopologyVectorSourceInspectRequest,
+  hasConnectableVectorCapture,
   parseTopologyVectorSourceInspection,
   vectorDeepConnectComponentSelectionKey,
 } from './geometryVectorDeepConnect';
@@ -18,7 +19,7 @@ import type {
 } from './geometryVectorDeepConnect';
 
 export interface GeometryVectorComponentOption {
-  /** Stable selection identity for the exact source file family and Host component. */
+  /** Stable selection identity for the exact file-family/GDB capture and Host component. */
   key: string;
   source: PersistedVectorDeepConnectSource;
   component: PersistedVectorDeepConnectComponent;
@@ -47,7 +48,7 @@ export interface UseGeometryVectorSourcesResult {
   /** Includes Host diagnostics for inspected GDB and otherwise unsupported layers. */
   inspection: TopologyVectorSourceInspection | null;
   sources: PersistedVectorDeepConnectSource[];
-  /** Only exact Host-confirmed, checked, visible sources with valid file-family captures. */
+  /** Only exact Host-confirmed, checked, visible SHP/GeoJSON or GDB-line captures. */
   connectableSources: PersistedVectorDeepConnectSource[];
   components: GeometryVectorComponentOption[];
   selectedComponentKey: string | null;
@@ -269,7 +270,7 @@ export function useGeometryVectorSources(options: UseGeometryVectorSourcesOption
         const request: TopologyVectorSourceInspectRequest = createTopologyVectorSourceInspectRequest({
           requestID: requestID(),
           map: mapRequest,
-          sources: nodes.map((node) => ({ node, expectedFamily: null })),
+          sources: nodes.map((node) => ({ node, expectedFamily: null, expectedGdbSource: null })),
         });
         const raw = await backend.request<unknown>('topology.vectorSource.inspect', request, { signal: controller.signal });
         if (!isCurrent()) return;
@@ -304,7 +305,7 @@ export function useGeometryVectorSources(options: UseGeometryVectorSourcesOption
   const inspection = scopeKey && inspectionEntry?.scopeKey === scopeKey ? inspectionEntry.inspection : null;
   const sources = inspection?.sources ?? [];
   const connectableSources = useMemo(() => sources.filter((source) => source.checked && source.effectiveVisible &&
-    source.canDeepConnect && source.sourceFamily !== null && source.sourceSHA256 !== null &&
+    hasConnectableVectorCapture(source) &&
     typeof source.canonicalSourcePath === 'string' && source.canonicalSourcePath.length > 0), [sources]);
   const components = useMemo<GeometryVectorComponentOption[]>(() => connectableSources.flatMap((source) =>
     source.components.map((component) => ({ key: vectorDeepConnectComponentSelectionKey(source, component), source, component }))),
