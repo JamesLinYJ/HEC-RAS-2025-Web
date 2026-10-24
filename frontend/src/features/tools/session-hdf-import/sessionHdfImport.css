@@ -1,0 +1,8 @@
+.session-hdf-panel { margin-top: 12px; }
+.session-hdf-map-picker,
+.session-hdf-registered { display: grid; gap: 10px; }
+.session-hdf-map-picker { background: #f8fafc; border: 1px solid #e1e9f0; border-radius: 9px; padding: 11px; }
+.session-hdf-registered .ci-import-heading { justify-content: flex-start; }
+.session-hdf-registered .ci-import-heading h3 { font-size: 12px; margin: 0; }
+.session-hdf-registered .ci-operation-list li { grid-template-columns: minmax(70px, auto) minmax(0, 1fr); }
+.session-hdf-registered .ci-operation-list code { color: #718096; display: block; font-size: 8px; margin-top: 3px; overflow-wrap: anywhere; }

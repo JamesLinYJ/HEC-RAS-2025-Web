@@ -967,11 +967,23 @@ public static partial class MapTreeService
                     return FocusPlan(context, request, map, reference.SourcePath, reference.SourceRevision);
                 if ((string?)map.Attribute("Type") is not ("Project" or "Geometry"))
                     throw new NotSupportedException("The selected map does not show imported Plan assets.");
+                bool inserted = false;
+                if ((string?)map.Attribute("Type") == "Geometry")
+                {
+                    XElement layers = EnsureRootNode(map, "Layers");
+                    XElement[] saved = TreeRows(layers).Where(node =>
+                        (string?)node.Attribute("Type") == "Plan" &&
+                        string.Equals((string?)node.Attribute("Name"), plan.Name, StringComparison.Ordinal)).ToArray();
+                    if (saved.Length > 1) throw new SourceFileChangedException();
+                    inserted = saved.Length == 0;
+                    if (inserted) layers.Add(new XElement("Node", new XAttribute("Type", "Plan"),
+                        new XAttribute("Name", plan.Name)));
+                }
                 if (!Descendants(BuildTree(request, map).Roots).Any(node =>
                         node.SourceClass == "ObservablePlan" && node.AssetID is { } asset &&
                         PathEquals(asset, plan.AssetPath) && node.Name == plan.Name))
                     throw new SourceFileChangedException();
-                return false;
+                return inserted;
             }
             case "result":
             {
@@ -1012,6 +1024,14 @@ public static partial class MapTreeService
                 }
                 if ((string?)map.Attribute("Type") is not ("Geometry" or "Plan"))
                     throw new NotSupportedException("The selected map does not show imported Terrain assets.");
+                XElement layers = EnsureRootNode(map, "Layers");
+                XElement[] saved = TreeRows(layers).Where(node =>
+                    (string?)node.Attribute("Type") == "Terrain" &&
+                    string.Equals((string?)node.Attribute("Name"), terrain.Name, StringComparison.Ordinal)).ToArray();
+                if (saved.Length > 1) throw new SourceFileChangedException();
+                bool inserted = saved.Length == 0;
+                if (inserted) layers.Add(new XElement("Node", new XAttribute("Type", "Terrain"),
+                    new XAttribute("Name", terrain.Name)));
                 CatalogTreeNode[] candidates = Descendants(BuildTree(request, map).Roots)
                     .Where(node => node.SourceClass == "ObservableTerrain" && node.AssetID is { } asset &&
                         PathEquals(asset, terrain.AssetPath) && node.Name == terrain.Name &&
@@ -1020,7 +1040,8 @@ public static partial class MapTreeService
                     .ToArray();
                 if (candidates.Length != 1 || candidates[0].Locator is not { } locator)
                     throw new SourceFileChangedException();
-                return SetVisibility(request, map, locator, checkedValue: true);
+                bool visibilityChanged = SetVisibility(request, map, locator, checkedValue: true);
+                return inserted || visibilityChanged;
             }
             default:
                 throw new SourceFileChangedException();
@@ -2608,6 +2629,34 @@ public static partial class MapTreeService
                 ExternalCoreLayerReferences: request.ExternalCoreLayerReferences,
             CoreLayerContext: request.CoreLayerContext), "Project",
                 request.ComputeReadLease?.ProtectedSourcePaths);
+        if (request.MapType is "Geometry" or "Plan")
+        {
+            // BuildableRasProjectTreeBase places standalone sources in Layers.
+            // Rehydrate only saved membership, never every project source.
+            XElement? layers = FindUniqueRoot(map, "Layers");
+            var standalone = new List<CatalogTreeNode>();
+            foreach ((string nodeType, string rootName, string sourceClass) in new[] {
+                ("Terrain", "Terrains", "ObservableTerrain"), ("Plan", "Plans", "ObservablePlan") })
+            {
+                if (nodeType == "Plan" && request.MapType != "Geometry") continue;
+                string[] names = layers is null ? [] : TreeRows(layers)
+                    .Where(node => (string?)node.Attribute("Type") == nodeType)
+                    .Select(node => (string?)node.Attribute("Name") ?? "").ToArray();
+                if (names.Any(string.IsNullOrWhiteSpace) || names.Distinct(StringComparer.Ordinal).Count() != names.Length)
+                    throw new SourceFileChangedException();
+                CatalogTreeNode[] sources = resultSourceRoots.Where(root => root.Name == rootName)
+                    .SelectMany(root => root.Children ?? []).ToArray();
+                foreach (string name in names)
+                {
+                    CatalogTreeNode[] matches = sources.Where(node => node.SourceClass == sourceClass &&
+                        string.Equals(node.Name, name, StringComparison.Ordinal)).ToArray();
+                    if (matches.Length != 1) throw new SourceFileChangedException();
+                    standalone.Add(matches[0]);
+                }
+            }
+            defaults = defaults.Select(root => root.Name == "Layers"
+                ? root with { Children = [..root.Children ?? [], ..standalone] } : root).ToArray();
+        }
         CatalogTreeNode[] projectResultNodes = Descendants(resultSourceRoots
             .Where(root => root.Name == "Results").SelectMany(root => root.Children ?? [])).ToArray();
         CatalogTreeNode[] resultCandidates = projectResultNodes

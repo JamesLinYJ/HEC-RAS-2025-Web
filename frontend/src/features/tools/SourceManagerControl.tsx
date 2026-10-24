@@ -11,15 +11,16 @@ import { AttributeTableEditorControl } from './attributes/AttributeTableEditorCo
 import { sameSourcePath } from './attributes/attributeTableTypes';
 import type { NewShapefileCreateReceipt } from './vector-import/vectorImportTypes';
 import { VectorImporter, type VectorImportOutcome } from './vector-import/VectorImporter';
+import { SessionHdfImportControl } from './session-hdf-import/SessionHdfImportControl';
 import './coreImportWorkflow.css';
 
 type Props = FeaturePageProps;
 
-export function SourceManagerControl({ language, context, backend, onContextChange, onContextCommit, onNavigate, hasUnsavedDrafts }: Props) {
+export function SourceManagerControl({ language, context, backend, onContextChange, onContextCommit, onNavigate, hasUnsavedDrafts, dirtyOwners, backendRevision, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation }: Props) {
   const zh = language === 'zh';
   const source = context.selectedAsset;
-  const methods = ['map.document.list', 'map.tree.load', 'workspace.file.inspect', 'workspace.import.coreLayer.inspect', 'workspace.import.coreLayer.perform', 'map.vector.captureShapefile', 'attributeTable.load', 'attributeTable.transform'];
-  const owner = JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml]);
+  const methods = ['workspace.import.sessionHdf.inspect', 'workspace.references.compose', 'map.tree.perform', 'map.document.list', 'map.tree.load', 'workspace.file.inspect', 'workspace.import.coreLayer.inspect', 'workspace.import.coreLayer.perform', 'map.vector.captureShapefile', 'attributeTable.load', 'attributeTable.transform'];
+  const owner = JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml, context.coreLayerContext?.identityToken]);
   const ownerRef = useRef(owner); ownerRef.current = owner;
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
@@ -132,7 +133,14 @@ export function SourceManagerControl({ language, context, backend, onContextChan
         onContextCommit={onContextCommit} onNavigate={onNavigate} hasUnsavedDrafts={hasUnsavedDrafts} />}
       {source?.kind === 'Surface Layers' && <ClassificationImporter language={language} context={context} backend={backend} onContextChange={onContextChange}
         onContextCommit={onContextCommit} onNavigate={onNavigate} hasUnsavedDrafts={hasUnsavedDrafts} />}
+      <SessionHdfImportControl language={language} context={context} backend={backend}
+        backendRevision={backendRevision} hasUnsavedDrafts={hasUnsavedDrafts} dirtyOwners={dirtyOwners}
+        onBeginSessionReferenceMutation={onBeginSessionReferenceMutation}
+        onCommitSessionReferences={onCommitSessionReferences} onEndSessionReferenceMutation={onEndSessionReferenceMutation} />
       <CoreLayerImportDialog open={coreDialogOpen} language={language} context={context} source={source} backend={backend} activeMapLabel={activeMapLabel}
+        hasUnsavedDrafts={hasUnsavedDrafts}
+        onBeginSessionReferenceMutation={onBeginSessionReferenceMutation}
+        onCommitSessionReferences={onCommitSessionReferences} onEndSessionReferenceMutation={onEndSessionReferenceMutation}
         onClose={() => setCoreDialogOpen(false)} />
       <VectorImporter open={vectorDialogOpen} language={language} context={context} backend={backend} catalog={catalog}
         catalogReadVersion={catalogReadVersion} hasUnsavedDrafts={hasUnsavedDrafts} createdReceipt={createdReceipt}

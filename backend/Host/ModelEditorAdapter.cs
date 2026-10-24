@@ -49,7 +49,7 @@ public static partial class ModelEditorAdapter
         using var context = new ModelContext(request);
         ModelSnapshot snapshot = await Snapshot(context, revision, request.ProjectPath != null, Boundary(context, request.AssetPath, revision, request.SourceState), Manning(context, request.AssetPath, revision, request.SourceState), Classifications(context, request.AssetPath, revision, request.SourceState), TerrainInputs(context, request.AssetPath, revision, request.SourceState));
         if (Revision(request.AssetPath) != revision) throw new SourceFileChangedException();
-        return snapshot;
+        return snapshot with { CoreLayerContext = request.CoreLayerContext };
     }
 
     public static Task<ModelSnapshot> SaveAsync(ModelSaveRequest request, SpatialGridSelection? gridImport = null,
@@ -226,13 +226,13 @@ public static partial class ModelEditorAdapter
                     var selectedModel = new ModelSaveRequest(request.AssetPath, request.Kind,
                         request.ProjectPath, result.Revision, [], [], SourceState: result.SourceState,
                         ProjectXml: initialConditions?.CommittedProjectXml ?? request.ProjectXml,
-                        CoreLayerContext: request.CoreLayerContext);
+                        CoreLayerContext: committedCoreLayerContext);
                     result = await TransformTerrainAsync(new(selectedModel, "selectInput", ItemId: id));
                 }
                 if (terrainCleanupWarning is not null && result.Terrain is { } cleanupData)
                     result = result with { Terrain = cleanupData with {
                         ImportCleanupWarning = terrainCleanupWarning, ImportCleanupToken = terrainCleanupToken } };
-                return result;
+                return result with { CoreLayerContext = committedCoreLayerContext };
             }
             catch (Exception error) when (gridImport?.DssSource is not null
                 && dssCommittedSnapshot is not null && dssGridCancellation is not null)

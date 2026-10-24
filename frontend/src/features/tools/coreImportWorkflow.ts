@@ -171,9 +171,8 @@ export function modelSourceState(asset: AssetReference | null): string | undefin
 
 export function exactCoreLayerContext(context: WorkbenchContext, asset: AssetReference | null): Record<string, unknown> | undefined {
   const locator = asset?.locator;
-  if (!locator || typeof locator !== 'object') return undefined;
-  const value = locator as Record<string, unknown>;
-  const candidate = value.coreLayerContext ?? value.CoreLayerContext;
+  const value = locator && typeof locator === 'object' ? locator as Record<string, unknown> : {};
+  const candidate = context.coreLayerContext !== undefined ? context.coreLayerContext : value.coreLayerContext ?? value.CoreLayerContext;
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
   const core = candidate as Record<string, unknown>;
   const projectPath = core.projectPath ?? core.ProjectPath;
@@ -246,6 +245,13 @@ export function updatedModelContext(context: WorkbenchContext, asset: AssetRefer
   delete locator.SourceState;
   if (snapshot.sourceState == null) delete locator.sourceState;
   else locator.sourceState = snapshot.sourceState;
+  if (Object.prototype.hasOwnProperty.call(snapshot, 'coreLayerContext')) {
+    delete locator.CoreLayerContext;
+    if (snapshot.coreLayerContext) locator.coreLayerContext = snapshot.coreLayerContext;
+    else delete locator.coreLayerContext;
+    return { ...context, coreLayerContext: snapshot.coreLayerContext ?? null,
+      selectedAsset: { ...asset, revision: snapshot.revision, locator } };
+  }
   return { ...context, selectedAsset: { ...asset, revision: snapshot.revision, locator } };
 }
 

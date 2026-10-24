@@ -32,7 +32,7 @@
     "uiMounts": [
       {
         "id": "project-home-and-create",
-        "mount": "ProjectExplorerControl → ProjectExplorerMainPageTiled → FirstLaunchScreen / ProjectOpenProjectDialog / NewProjectPage",
+        "mount": "ProjectExplorerControl → ProjectExplorerMainPageTiled → FirstLaunchScreen / ProjectOpenProjectDialog / NewProjectPage → ProjectOpenProjectDialog → QuickProjectImportControl (server-path ZIP / core-HDF adapter)",
         "source": [
           "frontend/src/features/project/ProjectExplorerControl.tsx",
           "frontend/src/features/project/FirstLaunchScreen.tsx",
@@ -46,6 +46,22 @@
           "workspace upload when BackendGateway.uploadWorkspace is available"
         ],
         "writeBoundary": "project.create receives the user-entered absolute parent directory on the C# Host, not a browser-local directory. Its returned projectPath/projectXml/revision become the active context only if the original session/path/XML/revision still match. Directory selection is not persisted as a default start directory."
+      },
+      {
+        "id": "quick-project-import",
+        "mount": "ProjectOpenProjectDialog → QuickProjectImportControl → existing project-open callback",
+        "source": [
+          "frontend/src/features/project/ProjectOpenProjectDialog.tsx",
+          "frontend/src/features/project/QuickProjectImportControl.tsx",
+          "frontend/src/features/project/QuickProjectImportWorkflow.ts",
+          "backend/Host/WorkspaceFileImportService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The existing project-open flow owns project switching. QuickProjectImportControl owns entered server paths, source capture, request generation and the prepared-project receipt; it opens only after receipt validation and while its original project context remains current.",
+        "readActions": [
+          "workspace.file.inspect"
+        ],
+        "writeBoundary": "The UI accepts user-entered absolute source and existing destination paths for ZIP or .h5. It captures source SHA/length with workspace.file.inspect, then calls workspace.import.archive or workspace.import.coreHdf and verifies source/destination/project/asset receipt identity before invoking the existing project-open callback. The Host safely extracts a ZIP containing exactly one .ras; core HDF accepts Result, Geometry or Boundary Condition, copies the source into a newly created project folder, and returns the imported asset identity. This adapts the original ProjectExplorerMainPageTiled quick/drop-open behavior plus RasMainWindow OpenZippedProject/TryOpenQuickProjectFromCoreFile responsibilities; QuickProjectImportControl is a Web workflow wrapper, not another original C# UI source item. Source wiring only; no runtime acceptance is claimed."
       },
       {
         "id": "saved-map-document-create",
@@ -276,7 +292,7 @@
       },
       {
         "id": "spatial-boundary-grid-and-draft",
-        "mount": "EditorWorkbench → SpatialDataSummaryPage → SpatialDataSummary / SpatialBoundaryConditionsPage → GriddedDataControl → GriddedDataImporter / GriddedDataImporterDialog / GriddedDataImporterSlider / GriddedDataImporterTimeline; SpatialBoundaryConditionRasterImporter uses the importer dialog",
+        "mount": "EditorWorkbench → SpatialDataSummaryPage → SpatialDataSummary / SpatialBoundaryConditionsPage → GriddedDataControl → GriddedDataImporter / GriddedDataImporterDialog / GriddedDataImporterSlider / GriddedDataImporterTimeline; CumulusImportSource uses CumulusLoginWindow; SpatialBoundaryConditionRasterImporter uses the importer dialog",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
           "frontend/src/features/editors/SpatialDataSummaryPage.tsx",
@@ -296,7 +312,30 @@
           "model.gridInspect",
           "model.gridFrame"
         ],
-        "writeBoundary": "model.gridInspect/model.gridFrame inspect sources and read Host frames. Frame selection remains the existing onGridFrame owner. The importer asks for explicit user confirmation and closes only after the workbench confirms. model.gridImport is an immediate saved-model operation against the captured snapshot: it refuses dirty/invalid drafts, requires a changed model revision and imported-grid read-back, then refreshes the parent baseline only after context receipt acceptance. Station/input structure uses model.spatialTransform and remains in the parent draft until model.save. DSS and authenticated Cumulus import are unavailable."
+        "writeBoundary": "model.gridInspect/model.gridFrame inspect sources and read Host frames. Frame selection remains the existing onGridFrame owner. The local raster importer asks for explicit user confirmation and closes only after the workbench confirms. model.gridImport is an immediate saved-model operation against the captured snapshot: it refuses dirty/invalid drafts, requires a changed model revision and imported-grid read-back, then refreshes the parent baseline only after context receipt acceptance. Station/input structure uses model.spatialTransform and remains in the parent draft until model.save. Cumulus has a separate wired route in the existing GriddedDataImporter; see cumulus-grid-import. DSS import remains unavailable."
+      },
+      {
+        "id": "cumulus-grid-import",
+        "mount": "EditorWorkbench → SpatialBoundaryConditionsPage → GriddedDataControl → GriddedDataImporter → CumulusImportSource → CumulusLoginWindow",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/GriddedDataImporter.tsx",
+          "frontend/src/features/editors/CumulusImportSource.tsx",
+          "frontend/src/features/editors/CumulusLoginWindow.tsx",
+          "frontend/src/features/editors/cumulusAuthentication.ts",
+          "frontend/src/features/editors/cumulusTypes.ts",
+          "frontend/src/features/editors/model.ts",
+          "backend/Host/CumulusImportService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "CumulusImportSource owns the selected environment, product, date range, UTC source/version selection and coverage inspection; CumulusLoginWindow owns its pending PKCE attempt and login display, while the returned token lives in component-local React state. EditorWorkbench owns the captured Boundary Conditions model/draft and immediate-import receipt; it refreshes the baseline only after the same owner accepts the returned new ModelSnapshot.",
+        "readActions": [
+          "cumulus.environments",
+          "cumulus.products",
+          "cumulus.grids.query",
+          "cumulus.grids.footprint"
+        ],
+        "writeBoundary": "The existing Cumulus provider route is now mounted in GriddedDataImporter. Real sign-in uses Authorization Code + PKCE; the WebView2 source auto-intercepts its registered redirect, while the Web UI opens a separate browser popup and requires the user to paste the complete callback URL because there is no automatic callback route or loopback listener. The UI validates exact registered origin/path, one matching state and one authorization code before cumulus.token.exchange; refresh uses cumulus.token.refresh. A configured mock environment/token is visibly labeled Mock/local and is not real authentication; tokens stay in component memory. Environment/product/source queries and footprint checks use cumulus.environments, cumulus.products, cumulus.grids.query and cumulus.grids.footprint. model.cumulusGridImport immediately commits selected UTC grids into supported Boundary Conditions layers, only when the model draft is clean and valid; the workbench requires a new revision and returned grid data, then accepts the receipt under the captured owner before refreshing its baseline. No real map crop extent means the whole grid extent is used; evapotranspiration is unsupported. This is source wiring only and does not establish real-account or runtime acceptance."
       },
       {
         "id": "plan-time-window-mode",
@@ -542,21 +581,76 @@
         "writeBoundary": "Add/update/remove use project.connection.inspect then project.connection.commit. Both bind projectPath, projectXml, projectXmlSHA, projectRevision and projectSessionID; commit additionally supplies expectedConnectionSHA256, expectedSourceSHA256 and required expectedSourceReferencesSHA256, plus expectedNormalizedName for add. Inspect returns canCommit/validationMessage, canonicalPath, source and source-reference capture/count, normalizedName, and before/after identities. A Result is written as a native File external connection to its actual Result HDF. Before returning a receipt, Host reopens the project and confirms the connection through CatalogTreeService.LoadCatalog(Mode=Catalog), corresponding to catalog.tree.load; project.tree.load does not contain external connection nodes. The commit receipt carries the new project snapshot and previous revision, before/after identity, sourceCapture, previousSourceReferencesSHA256 and sourceReferencesSHA256; the client validates it before onContextCommit. A remove may capture a disconnected source with nullable path/SHA. DSS preview is read-only. The views render only returned arrays and metadata: NoData breaks graph lines without interpolation, the source time-series table retains returned timestamps/values/quality array (up to 100 visible rows), paired graph/table appears only when paired data exists, and location fields do not infer a CRS or create a map feature. This UI states that its current read path supports DSS 7; DSS 6 is not connected. The three full-size views reuse the already-returned dss.read arrays without another Host call. The time-series table supports paging, jump-to-row and complete CSV copy/download; the paired table includes all returned curves and source array indexes with complete CSV copy/download; the graph dialog enlarges the existing time-series plot. Null values display as NoData and serialize as blank CSV cells; the returned quality array keeps its source order and is displayed separately without inferred sample pairing."
       },
       {
-        "id": "session-hdf-import-unmounted",
-        "mount": "No React Session HDF Add/import UI is mounted; CoreLayerImportDialog is the separate Geometry / Boundary Condition core-layer workflow",
+        "id": "core-layer-reference-add",
+        "mount": "Tools → SourceManagerControl → CoreLayerImportDialog → Add Reference / Copy File",
         "source": [
-          "frontend/src/features/tools/coreImportWorkflow.ts",
-          "frontend/src/features/tools/CoreLayerImportDialog.tsx",
           "frontend/src/features/tools/SourceManagerControl.tsx",
-          "frontend/src/features/project/CatalogTreeSnapshot.ts",
-          "backend/Host/BackendWorker.cs",
-          "backend/Host/CoreLayerImportContracts.cs",
+          "frontend/src/features/tools/CoreLayerImportDialog.tsx",
+          "frontend/src/features/tools/core-layer-import/coreLayerReferenceTypes.ts",
+          "frontend/src/features/tools/coreImportWorkflow.ts",
           "backend/Host/CoreLayerImportService.cs",
-          "backend/Host/MapTreeService.cs"
+          "backend/Host/CoreLayerImportContracts.cs",
+          "backend/Host/SessionReferenceContextService.cs",
+          "backend/Host/MapTreeService.cs",
+          "backend/Host/BackendWorker.cs"
         ],
-        "stateOwner": "There is no React SessionHdfReference registry or Add flow. The web client validates and forwards sessionHdfReferences only when a matching CoreLayerContext is already supplied in a Host asset locator; other catalog/map consumers can process such a supplied context, but the current UI cannot create the capture through Session HDF import.",
-        "readActions": [],
-        "writeBoundary": "The Host registers workspace.import.sessionHdf.inspect to classify Plan, Result or Terrain HDF and MapTreeService accepts map.tree.perform action addSessionHdf when the request carries its exact SessionHdfReferenceCapture in CoreLayerContext. The frontend has no caller for workspace.import.sessionHdf.inspect and no addSessionHdf map-tree action, so users cannot add these captures through the current React UI. SourceManagerControl mounts CoreLayerImportDialog for the distinct workspace.import.coreLayer.inspect/perform flow, whose supported kind contract is Geometry/Boundary Conditions; it is not Session HDF import. The detailed session-HDF reference context, grouping and lifecycle entries in referenceContractScope describe retained source/Host contracts, not a mounted Web workflow. This is a source audit statement, not runtime acceptance."
+        "stateOwner": "The dialog owns the inspected source, captured geometry/boundary-condition identity, target map, operation generation and receipt. RasMainWindow supplies the current project-session context and an explicit mutation lease; the context is adopted only after the map receipt is verified.",
+        "readActions": [
+          "workspace.file.inspect",
+          "workspace.import.coreLayer.inspect",
+          "map.document.list",
+          "map.tree.load"
+        ],
+        "writeBoundary": "This Web workflow adapts the original CoreLayerImportDialog Add/Copy/Cancel choice, limited to Geometry and Boundary Condition. In the original WinUI path, Add Reference adds the core layer to the in-memory Project and associated map, while Copy File makes a project-local copy. In the Web path, Add Reference calls workspace.import.coreLayer.perform, composes and validates the next CoreLayerContext with workspace.references.compose, re-reads the exact saved map/tree, then commits map.tree.perform(addGeometry|addBoundaryCondition). It validates the returned source node, path and .vis revision before adopting the in-memory session capture; Web Add does not copy the HDF or add .ras membership. Copy File remains a separate file-copy action. Static source wiring only; no runtime acceptance is claimed."
+      },
+      {
+        "id": "session-hdf-add-to-map",
+        "mount": "Tools → SourceManagerControl → SessionHdfImportControl",
+        "source": [
+          "frontend/src/features/tools/SourceManagerControl.tsx",
+          "frontend/src/features/tools/session-hdf-import/SessionHdfImportControl.tsx",
+          "frontend/src/features/tools/session-hdf-import/sessionHdfImportWorkflow.ts",
+          "frontend/src/features/tools/session-hdf-import/sessionHdfImportTypes.ts",
+          "frontend/src/shared/sessionReferences.ts",
+          "backend/Host/CoreLayerImportService.cs",
+          "backend/Host/CoreLayerImportContracts.cs",
+          "backend/Host/SessionReferenceContextService.cs",
+          "backend/Host/MapTreeService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "SessionHdfImportControl owns the typed source inspection, compatible-map selection and Add receipt. RasMainWindow owns the project-session CoreLayerContext registry and mutation lease. The panel lists registered Plan/Result/Terrain HDF references but currently exposes no remove action.",
+        "readActions": [
+          "workspace.file.inspect",
+          "workspace.import.sessionHdf.inspect",
+          "map.document.list"
+        ],
+        "writeBoundary": "For an entered server-visible HDF path, the UI captures file SHA/length, asks workspace.import.sessionHdf.inspect to identify Plan, Result or Terrain, reads the current saved map catalog, and only offers Host-supported map types. Add acquires the current project lease, refreshes map identity, calls workspace.references.compose with addSessionHdfReferences, then map.tree.perform(addSessionHdf) with the composed context. It accepts the new context only after validating the map receipt and .vis revision. Compose itself validates sources without registering or writing; the map mutation writes only saved map visualization state, while the HDF remains at its original path and project XML membership is unchanged. The React Session HDF workflow is a new web panel rather than an additional original C# UI source class; the C# CoreLayerImportDialog remains a distinct Geometry/Boundary Condition dialog. Source wiring only; no runtime acceptance is claimed."
+      },
+      {
+        "id": "project-session-reference-context",
+        "mount": "RasMainWindow → shared WorkbenchContext/sessionReferences → snapshot-scoped SessionBackend → C# Host",
+        "source": [
+          "frontend/src/interface/RasMainWindow.tsx",
+          "frontend/src/shared/workbench.ts",
+          "frontend/src/shared/sessionReferences.ts",
+          "frontend/src/platform/SessionBackend.ts",
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/geometry/useGeometryWorkbench.ts",
+          "backend/Host/BackendContracts.cs",
+          "backend/Host/BackendWorker.cs",
+          "backend/Host/SessionReferenceContextService.cs",
+          "backend/Host/CoreLayerImportService.cs",
+          "backend/Host/ModelEditorAdapter.cs",
+          "backend/Host/ProjectWorkspaceService.cs",
+          "backend/Host/MapTreeService.cs",
+          "backend/Host/CatalogTreeService.cs"
+        ],
+        "stateOwner": "RasMainWindow owns an in-memory context for the current project session; ordinary navigation carries it forward, while a new session/path replaces it from the accepted project context. SessionBackend captures a context snapshot and only injects it into matching projectPath/projectSessionID request DTO containers, excluding project.open/create and arbitrary arrays/payloads.",
+        "readActions": [
+          "workspace.references.compose",
+          "model.load"
+        ],
+        "writeBoundary": "workspace.references.compose merges add/remove capture IDs, checks project session/path/XML and exact revisions, validates every referenced source by reopening the project, and returns a proposed CoreLayerContext without changing files or registering global state. RasMainWindow only adopts it under the matching lease after the associated map transaction receipt is accepted. ModelEditorAdapter returns the request context in model.load ModelSnapshot and, after model.save commits, rebases only a captured reference whose exact source path matches the changed HDF using the new SHA/type/name, then returns the new CoreLayerContext and identity token. EditorWorkbench and useGeometryWorkbench accept that rebased snapshot/context only when the original project and asset owner remains current. ProjectWorkspaceService validates the current context before project.save and rebases its project SHA/token after serialization; ProjectExplorerControl adopts the acknowledged capture in both global state and selected locator. Standalone Terrain belongs to Layers in Geometry/Plan maps, and standalone Plan belongs to Layers in Geometry maps; map readback rehydrates only explicit saved membership. This is shared session infrastructure/glue, not an original UI source item; source wiring only."
       },
       {
         "id": "classification-and-manning-editors",
@@ -1112,7 +1206,7 @@
       "Geometry and Plan duplication adopts a receipt only after HDF publication and project association commit."
     ],
     "completionEvidence": "Verify each React interaction and its real data path independently; module presence is not acceptance.",
-    "sourceBoundary": "Current uiMounts describe source-level React component mounts, operation names, state owners and persistence boundaries. They are a relationship map, not evidence of a successful build, browser/Electron interaction, live Host execution, or real-file acceptance. This Web checkout includes resources/editor-schemas.json from sourceRepository JamesLinYJ/HEC-RAS-2025-Renamed: its 517 inventory entries have unique stable source paths and represent the retained resource-backed C# UI baseline; the same resource also contains 224 schemas and 9 tables. That baseline does not include every supplementary code-created UI class or backing/support object considered by the separate source-repository audit, and the original audit-ui-rewrite.py is not included here. The uiMounts rows group relationships rather than one row per source UI leaf and are not a migration denominator. A basename match between a retained C# source and a React TS/TSX filename is only a file-name candidate; it does not prove semantic correspondence, a mounted route, complete behavior, or acceptance. A strict status inventory must map each stable source ID to the actual React mount and separately classify full, partial, unimplemented, or unverified behavior; no migration percentage is inferred from filename/schema counts."
+    "sourceBoundary": "Current uiMounts describe source-level React component mounts, operation names, state owners and persistence boundaries. They are a relationship map, not evidence of a successful build, browser/Electron interaction, live Host execution, or real-file acceptance. This Web checkout includes resources/editor-schemas.json from sourceRepository JamesLinYJ/HEC-RAS-2025-Renamed: its 517 inventory entries have unique stable source paths and represent the retained resource-backed C# UI baseline; the same resource also contains 224 schemas and 9 tables. That baseline does not include every supplementary code-created UI class or backing/support object considered by the separate source-repository audit, and the original audit-ui-rewrite.py is not included here. The uiMounts rows group relationships rather than one row per source UI leaf and are not a migration denominator. A basename match between a retained C# source and a React TS/TSX filename is only a file-name candidate; it does not prove semantic correspondence, a mounted route, complete behavior, or acceptance. A strict status inventory must map each stable source ID to the actual React mount and separately classify full, partial, unimplemented, or unverified behavior; no migration percentage is inferred from filename/schema counts. QuickProjectImportControl and QuickProjectImportWorkflow, SessionHdfImportControl, shared sessionReferences.ts / SessionBackend.ts, and helpers such as cumulusAuthentication.ts are Web workflow glue or infrastructure, not additional original C# UI source items. The Session HDF panel has no matching C# import-control class in the retained application export. CumulusImportSource and CumulusLoginWindow correspond to retained C# control responsibilities, but their file-name correspondence alone does not establish full feature parity. Keep the 517 stable source IDs unchanged; do not count glue files as migrated controls."
   },
   "referenceContractScope": {
     "collections": [
@@ -1582,7 +1676,7 @@
       "source": "GlobalImportOrTagCommand/ExactExistingModel",
       "target": "PrimaryModelEditor/TypedImporterOrFeatureMetadata",
       "cardinality": "project-session-exact-asset-section-request-UUID-and-parent-draft",
-      "semantics": "Terrain, Classification and local Gridded import reuse the primary editor and staged source services. The global chooser never loads or replaces an existing draft. Save/Discard/Cancel remains in the editor; only an accepted importer or explicit cancellation consumes the matching request. Global Tags choose arc or region and reach the same actual-FID metadata surface. The separate Cumulus provider branch remains unavailable. Source wiring alone does not establish native acceptance."
+      "semantics": "Terrain, Classification and local Gridded import reuse the primary editor and staged source services. The global chooser never loads or replaces an existing draft. Save/Discard/Cancel remains in the editor; only an accepted importer or explicit cancellation consumes the matching request. Global Tags choose arc or region and reach the same actual-FID metadata surface. Cumulus stays on its separate GriddedDataImporter provider route; the generic chooser does not route that flow. Source wiring alone does not establish runtime acceptance."
     },
     {
       "id": "typed-global-raster-style",

@@ -1,6 +1,7 @@
 import type { AssetReference, BackendGateway, Language } from '../../shared/workbench';
 import { editorPageTitle } from './editorLocalization';
 import type { TerrainMapProjectOwner, TerrainTopologyCommand, TerrainTopologyResponse } from './terrainTopologyTypes';
+import type { CumulusImportWorkflow } from './cumulusTypes';
 
 export interface SchemaChoice {
   id: string;
@@ -86,6 +87,8 @@ export interface ModelSnapshot {
   fieldGroups: Record<string, string[]>;
   availableOperations: string[];
   sourceState?: string | null;
+  /** Rebased external-core identity returned with a committed Host snapshot. */
+  coreLayerContext?: Record<string, unknown> | null;
   readOnlyFields?: string[] | null;
   fieldChoices?: Record<string, SchemaChoice[]>;
   fieldTitles?: Record<string, string>;
@@ -398,6 +401,8 @@ export interface EditorPageProps {
   onGridInspect?: (layerID: string, files: string[], subdataset?: string, bands?: SpatialGridBand[], previewID?: string, signal?: AbortSignal) => Promise<SpatialGridInspection>;
   onGridFrame?: (layerID: string, timeID?: string, component?: string, signal?: AbortSignal) => Promise<SpatialGridData>;
   onGridImport?: (selection: SpatialGridSelection) => Promise<boolean>;
+  /** Real Host-backed Cumulus discovery, coverage and immediate-save workflow. */
+  cumulusImport?: CumulusImportWorkflow;
   onTerrainTransform?: (command: TerrainTransformCommand) => Promise<boolean>;
   onClassificationTransform?: (command: ClassificationTransformCommand) => Promise<boolean>;
   onClassificationMap?: (signal?: AbortSignal) => Promise<ClassificationMapData>;

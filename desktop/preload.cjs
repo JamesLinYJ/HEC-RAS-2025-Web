@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('hecDesktop', Object.freeze({
   isElectron: true,
   smokeMode,
   uiSmokeMode,
+  openExternalUrl: (url) => ipcRenderer.invoke('hec:open-external-url', url),
   reportSmokeResult: (result) => {
     if (smokeMode) ipcRenderer.send('hec:wasm-smoke-result', result);
   },

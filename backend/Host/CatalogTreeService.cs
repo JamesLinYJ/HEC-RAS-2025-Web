@@ -197,7 +197,13 @@ public static class CatalogTreeService
         }).ToArray();
         CatalogTreeNode[] matchingChildren = (matching.Children ?? []).Select(child =>
             PlanAssociation(child)).ToArray();
-        CatalogTreeNode layersWithBoundaries = WithDirectBoundaryConditions(layers, observables,
+        var included = (request.FocusedGeometryIds ?? []).Select(SourceFilePaths.Canonical)
+            .ToHashSet(PathComparer);
+        CatalogTreeNode[] geometries = observables.Geometries.Select(GeometryProjectNode)
+            .Where(node => node.AssetID is { } path && included.Contains(SourceFilePaths.Canonical(path)))
+            .ToArray();
+        CatalogTreeNode layersWithGeometries = layers with { Children = [..layers.Children ?? [], ..geometries] };
+        CatalogTreeNode layersWithBoundaries = WithDirectBoundaryConditions(layersWithGeometries, observables,
             request.FocusedBoundaryConditionIds ?? []);
         return [focused with { Children = focusedPlans.Length == 0 ? null : focusedPlans },
             matching with { Children = matchingChildren.Length == 0 ? null : matchingChildren }, layersWithBoundaries];

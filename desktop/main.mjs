@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
 import { connectBackend, getServerHealth, getServerRuntime } from './server-runtime.mjs';
 import { startStaticServer } from './static-server.mjs';
 import { runElectronMapUISmoke } from './map-ui-smoke.mjs';
@@ -27,6 +27,16 @@ let smokeFinished = false;
 let runtimeCloseRequested = false;
 let backendStartupPromise;
 const backendStartupAbort = new AbortController();
+
+ipcMain.handle('hec:open-external-url', async (event, value) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame ||
+      typeof value !== 'string' || value.length > 8192) throw new Error('External URL request is not from the active application.');
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.username || url.password || !url.hostname)
+    throw new Error('External authorization requires an HTTPS URL.');
+  await shell.openExternal(url.href);
+  return true;
+});
 
 Menu.setApplicationMenu(null);
 if (smokeMode) app.disableHardwareAcceleration();

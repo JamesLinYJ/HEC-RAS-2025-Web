@@ -19,12 +19,12 @@ interface ErrorState { parent?: string; topology?: string; mesh?: string; culver
 interface GeometryFeaturePageProps extends FeaturePageProps {}
 
 function exactCoreLayerContext(asset: AssetReference | null, context: WorkbenchContext): Record<string, unknown> | undefined {
-  const rawLocator = asset?.locator;
-  if (typeof rawLocator !== 'object' || rawLocator === null) return undefined;
-  const locator = rawLocator as Record<string, unknown>;
-  const raw = locator.coreLayerContext ?? locator.CoreLayerContext;
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
-  const candidate = raw as Record<string, unknown>;
+  const locator = asset?.locator as Record<string, unknown> | undefined;
+  const candidateValue = context.coreLayerContext !== undefined
+    ? context.coreLayerContext
+    : locator?.coreLayerContext ?? locator?.CoreLayerContext;
+  if (typeof candidateValue !== 'object' || candidateValue === null || Array.isArray(candidateValue)) return undefined;
+  const candidate = candidateValue as Record<string, unknown>;
   const session = candidate.projectSessionID ?? candidate.ProjectSessionID;
   const project = candidate.projectPath ?? candidate.ProjectPath;
   const identity = candidate.identityToken ?? candidate.IdentityToken;
@@ -41,7 +41,8 @@ function sourceStateFor(asset: AssetReference | null): string | undefined {
 }
 
 function ownerFor(context: WorkbenchContext, asset: AssetReference | null): string {
-  return JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml, asset?.path ?? null, asset?.revision ?? '', 'geometry-source']);
+  return JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml,
+    asset?.path ?? null, asset?.revision ?? '', sourceStateFor(asset) ?? null, exactCoreLayerContext(asset, context) ?? null, 'geometry-source']);
 }
 
 function requestID(): string {
@@ -92,7 +93,7 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     projectPath: context.projectPath,
     projectXml: context.projectXml,
     ...(exactCoreLayerContext(asset, context) ? { coreLayerContext: exactCoreLayerContext(asset, context) } : {}),
-  } : null, [asset, context.projectPath, context.projectXml, context.projectSessionID]);
+  } : null, [asset, context.projectPath, context.projectXml, context.projectSessionID, context.coreLayerContext]);
 
   const [parentEntry, setParentEntry] = useState<OwnerValue<GeometryParentSnapshot> | null>(null);
   const [topologyEntry, setTopologyEntry] = useState<OwnerValue<GeometryTopologySnapshot> | null>(null);
@@ -891,7 +892,10 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     const owner = sourceOwner;
     setBusyOperation('model.save'); setError('save'); setSavedNotice('');
     try {
-      const result = await send<GeometryParentSnapshot & { sourceState?: string | null }>('model.save', {
+      const result = await send<GeometryParentSnapshot & {
+        sourceState?: string | null;
+        coreLayerContext?: Record<string, unknown> | null;
+      }>('model.save', {
         assetPath: model.assetPath,
         kind: model.kind,
         projectPath: model.projectPath,
@@ -908,10 +912,27 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
         geometryCulvertState: culverts?.draftState ?? null,
         coreLayerContext: model.coreLayerContext,
       }, owner);
+      const locator: Record<string, unknown> = { ...(asset.locator as Record<string, unknown> | undefined) };
+      if (Object.prototype.hasOwnProperty.call(result, 'sourceState')) {
+        delete locator.SourceState;
+        if (result.sourceState == null) delete locator.sourceState;
+        else locator.sourceState = result.sourceState;
+      }
+      const hasCommittedCore = Object.prototype.hasOwnProperty.call(result, 'coreLayerContext');
+      const committedCore = hasCommittedCore ? result.coreLayerContext ?? undefined : exactCoreLayerContext(asset, context);
+      if (committedCore) {
+        locator.coreLayerContext = committedCore;
+        delete locator.CoreLayerContext;
+      } else if (hasCommittedCore) {
+        delete locator.coreLayerContext;
+        delete locator.CoreLayerContext;
+      }
       const nextContext: WorkbenchContext = {
         ...context,
-        selectedAsset: { ...asset, revision: result.revision, locator: { ...(asset.locator ?? {}), ...(result.sourceState ? { sourceState: result.sourceState } : {}) } },
+        selectedAsset: { ...asset, revision: result.revision, locator },
       };
+      if (committedCore) nextContext.coreLayerContext = committedCore;
+      else if (hasCommittedCore) delete nextContext.coreLayerContext;
       if (onContextCommit && !onContextCommit(context, nextContext))
         throw new Error('The geometry file was saved, but its receipt belongs to an earlier project context. Reopen the geometry before editing again.');
       onDirtyStateChange?.(dirtyOwner, false);

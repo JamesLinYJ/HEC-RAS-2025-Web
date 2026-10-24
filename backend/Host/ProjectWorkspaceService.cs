@@ -26,9 +26,12 @@ public sealed record ProjectWorkspaceSaveRequest(
     string ProjectPath,
     string? ProjectXml,
     string ProjectSessionID,
-    string Revision);
+    string Revision,
+    string? ProjectXmlRevision = null,
+    CoreLayerRequestContext? CoreLayerContext = null);
 
-public sealed record ProjectWorkspaceResponse(bool Success, string ProjectPath, string ProjectXml, string Revision);
+public sealed record ProjectWorkspaceResponse(bool Success, string ProjectPath, string ProjectXml, string Revision,
+    CoreLayerRequestContext? CoreLayerContext = null);
 
 /// <summary>Uses the retained Ras.Layers.Project implementation for project lifecycle operations.</summary>
 public static class ProjectWorkspaceService
@@ -201,6 +204,26 @@ public static class ProjectWorkspaceService
             if (!StringComparer.OrdinalIgnoreCase.Equals(afterLoad.Revision, request.Revision))
                 throw new IOException("The project file changed while it was being loaded. Reload it before saving.");
 
+            // An external-source session capability is part of the save owner.
+            // Validate its project/session identity, every captured source hash,
+            // and the XML snapshot before the retained Project writer touches
+            // the .ras file. OpenSessionProject is disposed immediately; its
+            // attached references must remain session-only and must not become
+            // project-owned assets during Project.Save().
+            if (request.CoreLayerContext is { } currentContext)
+            {
+                if (string.IsNullOrWhiteSpace(request.ProjectXml) ||
+                    !IsSHA256(request.ProjectXmlRevision) ||
+                    !string.Equals(currentContext.ProjectSessionID, request.ProjectSessionID, StringComparison.Ordinal) ||
+                    !string.Equals(currentContext.ProjectRevision, request.Revision, StringComparison.OrdinalIgnoreCase))
+                    throw new SourceFileChangedException();
+
+                Project validationProject = CoreLayerImportService.OpenSessionProject(projectFilePath,
+                    request.ProjectXml, request.ProjectSessionID, request.Revision,
+                    request.ProjectXmlRevision, currentContext);
+                DisposeProjectResources(validationProject);
+            }
+
             // ProjectXml is a frontend cache for other project-aware operations. It is deliberately
             // not written back here; retained Project.Load/Save owns project serialization.
             project.Save();
@@ -211,7 +234,12 @@ public static class ProjectWorkspaceService
         }
 
         ProjectFileSnapshot saved = ReadStableProjectFile(projectFilePath);
-        return new ProjectWorkspaceResponse(true, saved.Path, saved.Xml, saved.Revision);
+        CoreLayerRequestContext? rebasedContext = request.CoreLayerContext is { } sourceContext
+            ? CoreLayerImportService.RebaseContext(sourceContext, saved.Revision, saved.Path, saved.Revision)
+            : null;
+        if (rebasedContext is not null)
+            CoreLayerImportService.ValidateContext(rebasedContext, saved.Path);
+        return new ProjectWorkspaceResponse(true, saved.Path, saved.Xml, saved.Revision, rebasedContext);
     }
 
     private static ProjectionDefinition ResolveProjection(ProjectWorkspaceCreateRequest request)

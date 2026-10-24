@@ -263,6 +263,7 @@ public static class BackendWorker
         "workspace.import.coreLayer.inspect",
         "workspace.import.coreLayer.perform",
         "workspace.import.sessionHdf.inspect",
+        "workspace.references.compose",
         "workspace.update.catalog",
         "workspace.update.package.prepare",
     });
@@ -337,6 +338,7 @@ public static class BackendWorker
                 "workspace.import.coreHdf" => await WorkspaceFileImportService.PrepareCoreHdfAsync(request.Parameters.Deserialize<WorkspaceCoreHdfImportRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing core HDF import request."), report, duplexControls),
                 "workspace.file.inspect" => WorkspaceFileSelectionService.Inspect(request.Parameters.Deserialize<WorkspaceFileSelectionRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing selected source file.")),
                 "workspace.import.coreLayer.inspect" => CoreLayerImportService.Inspect(request.Parameters.Deserialize<CoreLayerImportRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing core layer import request.")),
+                "workspace.references.compose" => SessionReferenceContextService.Compose(request.Parameters.Deserialize<SessionReferenceComposeRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing session reference context request.")),
                 "workspace.import.sessionHdf.inspect" => CoreLayerImportService.InspectSessionHdf(request.Parameters.Deserialize<SessionHdfImportRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing session HDF import request.")),
                 "workspace.coreLayerReference.reload" => CoreLayerImportService.ReloadReference(request.Parameters.Deserialize<CoreLayerReferenceReloadRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing core layer reference reload request.")),
                 "workspace.import.coreLayer.perform" when duplexControls is not null => await CoreLayerImportService.PerformDuplexAsync(request.Parameters.Deserialize<CoreLayerImportRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing core layer import request."), report, duplexControls),

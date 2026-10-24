@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FeatureId, Language, ThemeMode, WorkbenchContext } from '../shared/workbench';
 import { assetKindLabel, message, text } from '../shared/workbench';
 import { ServerBackend } from '../platform/ServerBackend';
+import { sessionBackend } from '../platform/SessionBackend';
+import { mergeSessionReferenceContext, sessionReferenceIdentity, sessionReferenceSourceIdentity, validateSessionReferenceContext, withSessionReferenceContext } from '../shared/sessionReferences';
 import { RasContent } from './RasContent';
 import { RasMenuBar } from './RasMenuBar';
 import './RasMainWindow.css';
@@ -47,7 +49,11 @@ export function RasMainWindow() {
   const [activeFeature, setActiveFeature] = useState<FeatureId>(initialFeature);
   const [context, setContext] = useState<WorkbenchContext>(blankContext);
   const contextRef = useRef(context);
-  const [backend] = useState(() => new ServerBackend());
+  const [transport] = useState(() => new ServerBackend());
+  const backend = useMemo(() => sessionBackend(transport, context),
+    [transport, context.projectSessionID, context.projectPath, context.coreLayerContext]);
+  const referenceWriteLease = useRef<{ id: string; source: string } | null>(null);
+  const [referenceWriting, setReferenceWriting] = useState(false);
   const [backendRevision, setBackendRevision] = useState(0);
   const [dirtyOwners, setDirtyOwners] = useState<Set<string>>(() => new Set());
   const dirtyOwnersRef = useRef(dirtyOwners);
@@ -77,19 +83,21 @@ export function RasMainWindow() {
   }, [themeMode]);
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (dirtyOwnersRef.current.size > 0) { event.preventDefault(); event.returnValue = ''; }
+      if (dirtyOwnersRef.current.size > 0 || referenceWriteLease.current) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, []);
   useEffect(() => backend.subscribeCapabilities?.(setBackendRevision), [backend]);
-  useEffect(() => () => backend.dispose(), [backend]);
+  useEffect(() => () => transport.dispose(), [transport]);
 
   const onNavigate = useCallback((feature: FeatureId) => {
+    if (referenceWriteLease.current) return;
     setActiveFeature(feature);
     window.history.replaceState(null, '', `#/${feature}`);
   }, []);
   const onProjectCommand = useCallback((kind: 'open' | 'new') => {
+    if (referenceWriteLease.current) return;
     setPendingProjectCommand({ id: crypto.randomUUID(), kind });
     onNavigate('project');
   }, [onNavigate]);
@@ -113,7 +121,11 @@ export function RasMainWindow() {
     else if (kind.includes('result')) onNavigate('results');
     else onNavigate('editors');
   }, [onNavigate]);
-  const onContextChange = useCallback((next: WorkbenchContext) => {
+  const onContextChange = useCallback((incoming: WorkbenchContext) => {
+    if (referenceWriteLease.current) return;
+    let next: WorkbenchContext;
+    try { next = mergeSessionReferenceContext(incoming, contextRef.current); }
+    catch (error) { setRuntimeError(message(error)); return; }
     if (identity(next) !== identity(contextRef.current) && dirtyOwnersRef.current.size > 0) {
       setPendingContext({ target: next, source: identity(contextRef.current) });
       return;
@@ -122,14 +134,42 @@ export function RasMainWindow() {
   }, [commitContext]);
   const onContextCommit = useCallback((source: WorkbenchContext, committed: WorkbenchContext): boolean => {
     const current = contextRef.current;
-    if (identity(source) !== identity(current) || source.projectXml !== current.projectXml || source.projectRevision !== current.projectRevision
+    if (referenceWriteLease.current) return false;
+    if (sessionReferenceIdentity(source) !== sessionReferenceIdentity(current) || identity(source) !== identity(current) || source.projectXml !== current.projectXml || source.projectRevision !== current.projectRevision
       || source.selectedAsset?.kind !== current.selectedAsset?.kind
       || source.projectSessionID !== committed.projectSessionID || source.projectPath !== committed.projectPath
       || source.selectedAsset?.path !== committed.selectedAsset?.path
       || source.selectedAsset?.kind !== committed.selectedAsset?.kind) return false;
-    commitContext(committed);
+    try { commitContext(mergeSessionReferenceContext(committed, current, true)); }
+    catch (error) { setRuntimeError(message(error)); return false; }
     return true;
   }, [commitContext]);
+  const onBeginSessionReferenceMutation = useCallback((source: WorkbenchContext): string | null => {
+    if (referenceWriteLease.current || dirtyOwnersRef.current.size || !source.projectPath ||
+        sessionReferenceSourceIdentity(source) !== sessionReferenceSourceIdentity(contextRef.current)) return null;
+    const id = crypto.randomUUID();
+    referenceWriteLease.current = { id, source: sessionReferenceSourceIdentity(source) };
+    setReferenceWriting(true);
+    return id;
+  }, []);
+  const onCommitSessionReferences = useCallback((source: WorkbenchContext, core: Record<string, unknown>, leaseID: string): boolean => {
+    const lease = referenceWriteLease.current;
+    if (!lease || lease.id !== leaseID || lease.source !== sessionReferenceSourceIdentity(source) ||
+        lease.source !== sessionReferenceSourceIdentity(contextRef.current) || dirtyOwnersRef.current.size) return false;
+    try {
+      validateSessionReferenceContext(core, source);
+      const next = withSessionReferenceContext(contextRef.current, core);
+      // This acknowledged map transaction retains selection and active workspace.
+      contextRef.current = next;
+      setContext(next);
+      return true;
+    } catch (error) { setRuntimeError(message(error)); return false; }
+  }, []);
+  const onEndSessionReferenceMutation = useCallback((leaseID: string): void => {
+    if (referenceWriteLease.current?.id !== leaseID) return;
+    referenceWriteLease.current = null;
+    setReferenceWriting(false);
+  }, []);
   const closeProject = useCallback(() => onContextChange(blankContext()), [onContextChange]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -146,7 +186,7 @@ export function RasMainWindow() {
     catch (error) { setRuntimeState('failed'); setRuntimeError(message(error)); }
   }, [backend]);
   useEffect(() => { void connect(); }, [connect]);
-  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0, dirtyOwners, onContextChange, onContextCommit, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
+  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
   const title = context.selectedAsset?.name ?? context.projectPath?.split(/[\\/]/).at(-1) ?? t('尚未打开工程', 'No project open');
 
   return <main className="ras-main-window">
@@ -157,7 +197,7 @@ export function RasMainWindow() {
       <RasContent activeFeature={activeFeature} {...props} />
       {showInspector && <aside className="ras-inspector" aria-label={t('属性', 'Properties')}><h2>{t('属性', 'Properties')}</h2>{context.selectedAsset ? <><dl><dt>{t('名称', 'Name')}</dt><dd>{context.selectedAsset.name}</dd><dt>{t('类型', 'Type')}</dt><dd>{assetKindLabel(context.selectedAsset.kind, language)}</dd><dt>{t('文件', 'File')}</dt><dd>{context.selectedAsset.path}</dd></dl><button onClick={() => onNavigate(context.selectedAsset?.kind.toLowerCase().includes('geometry') ? 'geometry' : 'editors')}>{t('打开编辑器', 'Open editor')}</button></> : <p>{t('选择工程中的对象查看属性。', 'Select a project object to inspect its properties.')}</p>}{runtimeError && <details className="ras-runtime-error"><summary>{t('服务连接失败', 'Server connection failed')}</summary><p>{t('无法连接 C# 服务，请确认服务已启动且当前地址可访问。', 'Cannot connect to the C# server. Confirm that it is running and reachable.')}</p><pre>{runtimeError}</pre></details>}</aside>}
     </div>
-    <footer className="ras-statusbar"><span>{dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
+    <footer className="ras-statusbar"><span role="status">{referenceWriting ? t('正在提交外部来源…', 'Committing external source…') : dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
     <ConfirmActionControlDialog
       open={pendingContext !== null}
       title={t('保留未保存的修改？', 'Keep unsaved changes?')}

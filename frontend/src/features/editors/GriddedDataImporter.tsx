@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EditorPageProps, SpatialGridBand, SpatialGridInspection, SpatialGridSelection } from './model';
 import type { SpatialBoundaryLayerID } from './SpatialDataHeader';
 import { RasterPreviewCanvas } from './SpatialDataSummary';
 import { SpatialBoundaryConditionBandInput } from './SpatialBoundaryConditionBandInput';
 import { GriddedDataImporterTimeline } from './GriddedDataImporterTimeline';
+import { CumulusImportSource } from './CumulusImportSource';
 
 export function GriddedDataImporter(props: EditorPageProps & {
   layerId: SpatialBoundaryLayerID;
@@ -20,6 +21,8 @@ export function GriddedDataImporter(props: EditorPageProps & {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
+  const [sourceMode, setSourceMode] = useState<'raster' | 'cumulus'>('raster');
+  const [cumulusBusy, setCumulusBusy] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const importInProgress = useRef(false);
@@ -34,6 +37,11 @@ export function GriddedDataImporter(props: EditorPageProps & {
   const isDss = files.length === 1 && /\.dss$/i.test(files[0]);
   const canInspect = props.layerId !== 'evapotranspiration' && !!props.onGridInspect && files.length > 0 && props.snapshot.canEdit;
   const canImport = props.layerId !== 'evapotranspiration' && !!inspection && !isDss && included.length > 0 && props.snapshot.canEdit && !!props.canImportGrid && !!props.onGridImport && !busy;
+  const reportCumulusBusy = useCallback((value: boolean) => {
+    setCumulusBusy(value);
+    props.onBusyChange?.(value);
+  }, [props.onBusyChange]);
+  const sourceBusy = busy || cumulusBusy;
 
   useEffect(() => () => { generation.current++; controller.current?.abort(); }, []);
 
@@ -113,9 +121,18 @@ export function GriddedDataImporter(props: EditorPageProps & {
     <header className="editor-meteorology-layer-header">
       <div><p className="editor-eyebrow">{label('空间边界条件', 'Spatial boundary condition')}</p>
         <h3>{label('检查并导入栅格', 'Inspect and import raster')}</h3></div>
-      <button type="button" className="editor-button" disabled={busy} onClick={props.onClose}>{label('关闭', 'Close')}</button>
+      <button type="button" className="editor-button" disabled={sourceBusy} onClick={props.onClose}>{label('关闭', 'Close')}</button>
     </header>
-    <p className="editor-field-muted">{label('每行输入一个当前项目所在计算机可访问的栅格路径。浏览器中的本地路径不会自动上传。Cumulus 导入需要已连接的账户，目前不可用。', 'Enter one raster path per line that is accessible from the computer running the current project. A browser-local path is not uploaded automatically. Cumulus import requires a connected account and is currently unavailable.')}</p>
+    <div className="editor-page-tabs" role="tablist" aria-label={label('栅格来源', 'Grid source')}>
+      <button type="button" role="tab" aria-selected={sourceMode === 'raster'} className={sourceMode === 'raster' ? 'selected' : ''} disabled={sourceBusy}
+        onClick={() => setSourceMode('raster')}>{label('项目文件栅格', 'Project file')}</button>
+      <button type="button" role="tab" aria-selected={sourceMode === 'cumulus'} className={sourceMode === 'cumulus' ? 'selected' : ''} disabled={sourceBusy}
+        onClick={() => setSourceMode('cumulus')}>Cumulus</button>
+    </div>
+    {sourceMode === 'cumulus'
+      ? <CumulusImportSource {...props} layerId={props.layerId} onClose={props.onClose} onBusyChange={reportCumulusBusy} />
+      : <>
+    <p className="editor-field-muted">{label('每行输入一个当前项目所在计算机可访问的栅格路径。浏览器中的本地路径不会自动上传。', 'Enter one raster path per line that is accessible from the computer running the current project. A browser-local path is not uploaded automatically.')}</p>
     <label className="editor-field"><span>{label('源文件路径', 'Source file paths')}</span>
       <textarea rows={3} value={paths} disabled={busy} placeholder={label('/path/to/raster.tif', '/path/to/raster.tif')} onChange={(event) => { setPaths(event.currentTarget.value); setInspection(null); setPreviewId(''); setConfirming(false); }} />
     </label>
@@ -179,5 +196,6 @@ export function GriddedDataImporter(props: EditorPageProps & {
         {!props.canImportGrid && <p className="editor-field-muted">{label('导入会立即提交模型文件。请先保存或丢弃当前草稿，避免把未提交编辑一并写入。', 'Import commits the model file immediately. Save or discard the current draft first so pending edits are not committed with it.')}</p>}
       </>}
     </>}
+      </>}
   </section>;
 }

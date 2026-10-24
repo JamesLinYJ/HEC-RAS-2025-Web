@@ -20,7 +20,9 @@
     "smoke:electron": "npm run build:web && node desktop/launch.mjs --server-smoke",
     "smoke:electron-ui": "npm run build:web && node desktop/launch.mjs --ui-smoke",
     "smoke:electron:wasm": "npm run build:web && npm run build:wasm && electron desktop/main.mjs --wasm-smoke",
-    "test:recipes": "node scripts/verify-recipe-parameters.mjs"
+    "test:recipes": "node scripts/verify-recipe-parameters.mjs",
+    "test:context": "node scripts/verify-session-context.mjs",
+    "test:cumulus-auth": "node scripts/verify-cumulus-authentication.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

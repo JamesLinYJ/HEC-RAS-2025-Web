@@ -10,6 +10,17 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-session-references-http", string referenceBaseUrl, string referenceManifest, string referenceOutput])
+            {
+                TextWriter protocol = Console.Out;
+                SessionReferenceAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunSessionReferenceAcceptanceAsync(
+                    new Uri(EnsureTrailingSlash(referenceBaseUrl)), referenceManifest, referenceOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-terrain-polygon-map-http", string polygonBaseUrl, string polygonOutputDirectory])
             {
                 TextWriter protocol = Console.Out;
@@ -250,6 +261,7 @@ internal static class Program
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-gdb-tree-cache <actual-raster-gdb-directory> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --create-fixture <new-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --create-editor-fixture <new-directory>");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-session-references-http <loopback-base-url> <result-hover-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-http <loopback-base-url> <new-fixture-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --create-cancel-fixture <new-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --create-map-fixture <new-directory>");

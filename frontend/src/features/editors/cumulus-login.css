@@ -1,0 +1,126 @@
+.cumulus-login {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid var(--border-subtle, #d7dce2);
+  border-radius: 10px;
+  color: var(--text-primary, #202124);
+  background: var(--surface-primary, #fff);
+  box-shadow: 0 1px 2px #1523330d;
+}
+
+.cumulus-login__header,
+.cumulus-login__session,
+.cumulus-login__session-actions,
+.cumulus-login__actions,
+.cumulus-login__callback-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cumulus-login__header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.cumulus-login__heading { min-width: 0; }
+.cumulus-login__eyebrow { color: var(--text-secondary, #626b76); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.cumulus-login__heading h3 { margin: 4px 0 5px; font-size: 15px; line-height: 1.3; }
+.cumulus-login__heading p,
+.cumulus-login__callback-note,
+.cumulus-login__muted { margin: 0; color: var(--text-secondary, #626b76); font-size: 12px; line-height: 1.5; }
+.cumulus-login__callback-note code { overflow-wrap: anywhere; color: var(--text-primary, #202124); font-size: 11px; }
+
+.cumulus-login__environment {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  max-width: min(45%, 300px);
+  padding: 5px 8px;
+  border: 1px solid var(--border-subtle, #d7dce2);
+  border-radius: 999px;
+  color: var(--text-secondary, #626b76);
+  background: var(--surface-secondary, #f7f8fa);
+  font-size: 11px;
+}
+
+.cumulus-login__environment > span {
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: #754b00;
+  background: #f3e4bd;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.cumulus-login__actions { flex-wrap: wrap; }
+.cumulus-login__button {
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--border-control, #b9c0ca);
+  border-radius: 7px;
+  color: var(--text-primary, #202124);
+  background: var(--surface-primary, #fff);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cumulus-login__button:hover:not(:disabled) { background: var(--surface-hover, #eef2f6); }
+.cumulus-login__button:disabled { opacity: .5; cursor: not-allowed; }
+.cumulus-login__button:focus-visible,
+.cumulus-login__callback input:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent, #2864b4) 45%, transparent); outline-offset: 2px; }
+.cumulus-login__button--primary { border-color: var(--accent, #2864b4); color: #fff; background: var(--accent, #2864b4); }
+.cumulus-login__button--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent, #2864b4) 88%, #000); }
+.cumulus-login__button--quiet { background: transparent; }
+
+.cumulus-login__session {
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 11px 12px;
+  border: 1px solid #b8ddc6;
+  border-radius: 8px;
+  background: #f2fbf5;
+}
+.cumulus-login__session.is-mock { border-color: #e6d39d; background: #fffaf0; }
+.cumulus-login__session-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.cumulus-login__session-copy strong { font-size: 12px; }
+.cumulus-login__session-copy span { color: var(--text-secondary, #626b76); font-size: 11px; line-height: 1.45; }
+.cumulus-login__session-actions { flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+
+.cumulus-login__callback {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle, #d7dce2);
+  border-radius: 8px;
+  background: var(--surface-secondary, #f7f8fa);
+}
+.cumulus-login__callback > label { font-size: 12px; font-weight: 650; }
+.cumulus-login__callback-row input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 35px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-control, #b9c0ca);
+  border-radius: 6px;
+  color: var(--text-primary, #202124);
+  background: var(--surface-primary, #fff);
+  font: inherit;
+  font-size: 12px;
+}
+.cumulus-login__callback-row .cumulus-login__button { flex: 0 0 auto; }
+.cumulus-login__error { margin: 0; padding: 9px 11px; border: 1px solid #e8b9b9; border-radius: 7px; color: #8b2828; background: #fff5f4; font-size: 12px; line-height: 1.45; }
+
+@media (max-width: 600px) {
+  .cumulus-login__header,
+  .cumulus-login__session { flex-direction: column; align-items: stretch; }
+  .cumulus-login__environment { max-width: 100%; align-self: flex-start; }
+  .cumulus-login__session-actions { justify-content: flex-start; }
+  .cumulus-login__callback-row { align-items: stretch; flex-direction: column; }
+}

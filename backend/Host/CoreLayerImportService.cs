@@ -947,7 +947,7 @@ public static class CoreLayerImportService
         _ => throw new NotSupportedException("This importer only retains the CoreLayerImportDialog types.")
     };
 
-    private static void DisposeProject(Project project)
+    internal static void DisposeProject(Project project)
     {
         foreach (CoreLayerBase layer in project.Plans.Cast<CoreLayerBase>().Concat(project.Geometries)
                      .Concat(project.Terrains).Concat(project.BoundaryConditions).Concat(project.NValues)

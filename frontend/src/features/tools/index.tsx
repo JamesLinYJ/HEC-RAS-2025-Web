@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import type { FeaturePageProps } from '../../shared/workbench';
 import styles from './tools.module.css';
 import { GeoprocessingToolControl } from './GeoprocessingToolControl';
 import { ImportExportToolControl } from './ImportExportToolControl';
 import { RasterCalculatorEditor } from './RasterCalculatorEditor';
 import { SelectProjectionPage } from './SelectProjectionPage';
-import { SourceManagerControl } from './SourceManagerControl';
+const SourceManagerControl = lazy(() => import('./SourceManagerControl').then(module => ({ default: module.SourceManagerControl })));
 import { WilcockMainControl } from './hydraulics/WilcockMainControl';
 import { UnitCalculatorPage } from './hydraulics/UnitCalculatorPage';
 import { USGSTerrainImportControl } from './usgs/USGSTerrainImportControl';
@@ -26,7 +26,7 @@ const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
 /** Web and Electron entry point for the tools workspace. */
 export default function ToolsPageView(props: FeaturePageProps) {
   const [active, setActive] = useState<ToolsPage>('geoprocessing');
-  const [mountedPages, setMountedPages] = useState<Set<ToolsPage>>(() => new Set(['geoprocessing', 'import-export', 'raster-calculator', 'projection', 'sources']));
+  const [mountedPages, setMountedPages] = useState<Set<ToolsPage>>(() => new Set(['geoprocessing', 'import-export', 'raster-calculator', 'projection']));
   const zh = props.language === 'zh';
 
   return (
@@ -76,7 +76,9 @@ export default function ToolsPageView(props: FeaturePageProps) {
           <SelectProjectionPage {...props} />
         </section>
         <section id="tools-panel-sources" role="tabpanel" aria-labelledby="tools-tab-sources" hidden={active !== 'sources'}>
-          <SourceManagerControl {...props} />
+          {mountedPages.has('sources') && <Suspense fallback={<p role="status">{zh ? '正在加载数据源管理…' : 'Loading data sources…'}</p>}>
+            <SourceManagerControl {...props} />
+          </Suspense>}
         </section>
         <section id="tools-panel-wilcock" role="tabpanel" aria-labelledby="tools-tab-wilcock" hidden={active !== 'wilcock'}>
           {mountedPages.has('wilcock') && <WilcockMainControl {...props} />}

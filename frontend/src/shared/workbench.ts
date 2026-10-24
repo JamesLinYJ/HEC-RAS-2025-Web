@@ -16,6 +16,8 @@ export interface WorkbenchContext {
   /** Revision of the .ras file, independent of the selected model's revision. */
   projectRevision: string | null;
   selectedAsset: AssetReference | null;
+  /** Verified Host capability for external sources in this open project session. */
+  coreLayerContext?: Record<string, unknown> | null;
 }
 export interface BackendRequestOptions {
   signal?: AbortSignal;
@@ -73,6 +75,10 @@ export interface FeaturePageProps {
   /** Adopt an acknowledged save only while its source is still the active context. */
   onContextCommit?: (source: WorkbenchContext, committed: WorkbenchContext) => boolean;
   onNavigate: (feature: FeatureId) => void;
+  /** Reserve the current clean project while adding a source to a saved map. */
+  onBeginSessionReferenceMutation?: (source: WorkbenchContext) => string | null;
+  onCommitSessionReferences?: (source: WorkbenchContext, nextContext: Record<string, unknown>, leaseID: string) => boolean;
+  onEndSessionReferenceMutation?: (leaseID: string) => void;
   onDirtyStateChange?: (owner: string, dirty: boolean) => void;
   /** Changes when the server's advertised operation set is refreshed. */
   backendRevision?: number;

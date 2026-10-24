@@ -59,6 +59,7 @@ function mapTreeRequest(context: WorkbenchContext, tab: MapDocumentTab, projectX
     mapType: tab.mapType,
     expectedVisualizationRevision: tab.visualizationRevision,
     projectSessionID: context.projectSessionID,
+    ...(context.coreLayerContext ? { coreLayerContext: context.coreLayerContext } : {}),
   };
 }
 

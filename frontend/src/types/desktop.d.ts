@@ -6,6 +6,7 @@ declare global {
       isElectron: true;
       smokeMode: boolean;
       uiSmokeMode: boolean;
+      openExternalUrl?: (url: string) => Promise<boolean>;
       reportSmokeResult: (result: unknown) => void;
     };
   }

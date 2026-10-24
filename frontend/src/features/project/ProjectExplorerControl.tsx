@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FeatureId, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { errorDiagnostics, message, text } from '../../shared/workbench';
+import { validateSessionReferenceContext, withSessionReferenceContext } from '../../shared/sessionReferences';
 import type { WorkspaceUploadResult } from '../../shared/workbench';
 import type { CatalogTreeNode, CatalogTreeRequest, CatalogTreeSnapshot } from './CatalogTreeSnapshot';
 import { catalogAssetKind } from './CatalogTreeSnapshot';
@@ -55,7 +56,9 @@ interface ProjectOpenResponse {
   revision?: string;
 }
 
-interface ProjectSaveResponse extends ProjectOpenResponse {}
+interface ProjectSaveResponse extends ProjectOpenResponse {
+  coreLayerContext?: Record<string, unknown> | null;
+}
 
 interface UploadedWorkspaceState extends WorkspaceUploadResult {
   directoryUpload: boolean;
@@ -124,7 +127,8 @@ function sameProjectSource(left: WorkbenchContext, right: WorkbenchContext): boo
   return left.projectPath === right.projectPath &&
     left.projectSessionID === right.projectSessionID &&
     left.projectXml === right.projectXml &&
-    left.projectRevision === right.projectRevision;
+    left.projectRevision === right.projectRevision &&
+    left.coreLayerContext?.identityToken === right.coreLayerContext?.identityToken;
 }
 
 function sameServerPath(left: string, right: string): boolean {
@@ -543,6 +547,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
       projectPath: path,
       projectXml: context.projectXml,
       projectSessionID: context.projectSessionID,
+      ...(context.coreLayerContext ? { coreLayerContext: context.coreLayerContext } : {}),
     };
     void Promise.allSettled(methods.map(async ({ method, mode, target }) => ({
       target,
@@ -776,17 +781,30 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     projectSaveAbort.current?.abort();
     projectSaveAbort.current = controller;
     const generation = ++projectSaveGeneration.current;
+    const isCurrentSaveOwner = (): boolean => {
+      const current = contextRef.current;
+      return generation === projectSaveGeneration.current && !controller.signal.aborted &&
+        current.projectPath === projectPath && current.projectSessionID === projectSessionID &&
+        current.projectXml === source.projectXml && current.projectRevision === revision &&
+        current.coreLayerContext?.identityToken === source.coreLayerContext?.identityToken;
+    };
     setSavingProject(true);
     setFileError(undefined);
     setFileErrorDetails(undefined);
     try {
+      const projectXmlRevision = source.projectXml === null
+        ? null
+        : await projectTreeXmlSHA(source.projectXml);
+      if (!isCurrentSaveOwner()) return;
       const response = await backend.request<ProjectSaveResponse>('project.save', {
         projectPath,
         projectXml: source.projectXml,
+        projectXmlRevision,
         projectSessionID,
         revision,
+        ...(source.coreLayerContext ? { coreLayerContext: source.coreLayerContext } : {}),
       }, { signal: controller.signal });
-      if (generation !== projectSaveGeneration.current || controller.signal.aborted) return;
+      if (!isCurrentSaveOwner()) return;
       const currentContext = contextRef.current;
       if (currentContext.projectPath !== projectPath || currentContext.projectSessionID !== projectSessionID ||
           currentContext.projectXml !== source.projectXml || currentContext.projectRevision !== source.projectRevision) return;
@@ -796,7 +814,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
           typeof savedRevision !== 'string' || !/^[0-9a-f]{64}$/i.test(savedRevision)) {
         throw new Error(response?.error || text(language, '后端没有返回匹配工程路径、XML 和修订的保存回执。', 'The backend did not return a save receipt matching the project path, XML, and revision.'));
       }
-      const committed: WorkbenchContext = {
+      const committedBase: WorkbenchContext = {
         ...currentContext,
         projectXml: savedXml,
         projectRevision: savedRevision,
@@ -804,6 +822,24 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
           ? { ...currentContext.selectedAsset, revision: savedRevision }
           : currentContext.selectedAsset,
       };
+      const hasCoreReceipt = Object.prototype.hasOwnProperty.call(response, 'coreLayerContext');
+      if (currentContext.coreLayerContext && !hasCoreReceipt) {
+        throw new Error(text(language, '保存回执缺少当前外部来源会话的新修订身份。', 'The save receipt omitted the rebased identity for the current external-source session.'));
+      }
+      let committed = committedBase;
+      if (hasCoreReceipt) {
+        if (response.coreLayerContext === null) {
+          if (currentContext.coreLayerContext) {
+            throw new Error(text(language, '保存回执意外清除了当前外部来源会话。', 'The save receipt unexpectedly cleared the current external-source session.'));
+          }
+          committed = withSessionReferenceContext(committedBase, null);
+        } else if (response.coreLayerContext && currentContext.coreLayerContext) {
+          validateSessionReferenceContext(response.coreLayerContext, committedBase);
+          committed = withSessionReferenceContext(committedBase, response.coreLayerContext);
+        } else {
+          throw new Error(text(language, '保存回执返回了与当前工程会话无关的外部来源身份。', 'The save receipt returned an external-source identity unrelated to the current project session.'));
+        }
+      }
       const accepted = props.onContextCommit
         ? props.onContextCommit(currentContext, committed)
         : (onContextChange(committed), true);
@@ -826,9 +862,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
       setNotice(text(language, 'C# 后端已保存并返回新的工程修订。', 'The C# backend saved the project and returned a new revision.'));
       retryTrees();
     } catch (error) {
-      if (generation !== projectSaveGeneration.current || controller.signal.aborted ||
-          contextRef.current.projectPath !== projectPath || contextRef.current.projectSessionID !== projectSessionID ||
-          contextRef.current.projectXml !== source.projectXml || contextRef.current.projectRevision !== source.projectRevision) return;
+      if (!isCurrentSaveOwner()) return;
       setNotice(`${text(language, '保存失败', 'Save failed')}: ${message(error)}`);
     } finally {
       if (generation === projectSaveGeneration.current && !controller.signal.aborted) setSavingProject(false);
@@ -995,6 +1029,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
 
       <ProjectOpenProjectDialog
         language={language}
+        backend={backend}
+        context={context}
         open={openProjectDialog}
         busy={fileBusy}
         canOpenServerPath={backend.supports('project.open')}

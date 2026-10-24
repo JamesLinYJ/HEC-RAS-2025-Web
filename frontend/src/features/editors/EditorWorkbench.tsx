@@ -17,6 +17,7 @@ import { TerrainEditor } from './TerrainEditor';
 import { walkCatalogTree } from '../project/CatalogTreeSnapshot';
 import type { CatalogTreeSnapshot } from '../project/CatalogTreeSnapshot';
 import type { BoundaryInitialConditionsInspection, BoundaryInitialConditionsOperationState, BoundaryInitialConditionsReceipt, BoundaryInitialConditionsStatus, BoundaryInitialConditionsWorkflow, BoundaryResultCatalogItem } from './model';
+import type { CumulusEnvironmentOption, CumulusGridFootprintResult, CumulusGridImportCommand, CumulusGridSourceOption, CumulusImportWorkflow, CumulusProductOption } from './cumulusTypes';
 import { AttachInitialConditionsDialog } from './AttachInitialConditionsDialog';
 import { ModelAssociationsPanel } from './associations/ModelAssociationsPanel';
 import type { TerrainMapProjectOwner, TerrainMapViewport, TerrainTopologyResponse } from './terrainTopologyTypes';
@@ -1196,6 +1197,232 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     }
   };
 
+  const onCumulusLoadEnvironments = async (signal: AbortSignal): Promise<CumulusEnvironmentOption[]> => {
+    const currentSnapshot = snapshotRef.current;
+    const currentAsset = source.context.selectedAsset;
+    if (!currentSnapshot || !currentAsset || currentAsset.kind !== 'Boundary Conditions'
+      || !source.context.projectPath || !backend.supports('cumulus.environments'))
+      throw new Error('当前工程没有可用的 Cumulus 环境目录。');
+    const owner = source.owner;
+    const revision = currentSnapshot.revision;
+    const requestGeneration = generation.current;
+    const result = await backend.request<CumulusEnvironmentOption[]>('cumulus.environments', {}, { signal });
+    if (!isCurrentGridRead(owner, revision, requestGeneration, signal))
+      throw new DOMException('Cumulus 环境目录属于已切换的模型会话。', 'AbortError');
+    if (!Array.isArray(result) || result.some((item) => !item || typeof item.id !== 'string' || typeof item.name !== 'string'))
+      throw new Error('服务返回了不完整的 Cumulus 环境目录。');
+    return result;
+  };
+
+  const onCumulusLoadProducts = async (environmentId: string, accessToken: string, signal: AbortSignal): Promise<CumulusProductOption[]> => {
+    const currentSnapshot = snapshotRef.current;
+    const currentAsset = source.context.selectedAsset;
+    if (!currentSnapshot || !currentAsset || currentAsset.kind !== 'Boundary Conditions'
+      || !source.context.projectPath || !environmentId || !accessToken || !backend.supports('cumulus.products'))
+      throw new Error('当前工程没有可用的 Cumulus 产品目录。');
+    const owner = source.owner;
+    const revision = currentSnapshot.revision;
+    const requestGeneration = generation.current;
+    const result = await backend.request<CumulusProductOption[]>('cumulus.products', { environmentId, accessToken }, { signal });
+    if (!isCurrentGridRead(owner, revision, requestGeneration, signal))
+      throw new DOMException('Cumulus 产品目录属于已切换的模型会话。', 'AbortError');
+    if (!Array.isArray(result) || result.some((item) => !item || typeof item.id !== 'string' || typeof item.name !== 'string'))
+      throw new Error('服务返回了不完整的 Cumulus 产品目录。');
+    return result;
+  };
+
+  const onCumulusQueryGrids = async (
+    environmentId: string, accessToken: string, productId: string, afterUtc: string, beforeUtc: string, signal: AbortSignal,
+  ): Promise<CumulusGridSourceOption[]> => {
+    const currentSnapshot = snapshotRef.current;
+    const currentAsset = source.context.selectedAsset;
+    if (!currentSnapshot || !currentAsset || currentAsset.kind !== 'Boundary Conditions'
+      || !source.context.projectPath || !environmentId || !accessToken || !productId || !backend.supports('cumulus.grids.query'))
+      throw new Error('当前工程没有可用的 Cumulus 格网查询能力。');
+    const owner = source.owner;
+    const revision = currentSnapshot.revision;
+    const requestGeneration = generation.current;
+    const result = await backend.request<CumulusGridSourceOption[]>('cumulus.grids.query', {
+      environmentId, accessToken, productId, afterUtc, beforeUtc,
+    }, { signal });
+    if (!isCurrentGridRead(owner, revision, requestGeneration, signal))
+      throw new DOMException('Cumulus 格网查询属于已切换的模型会话。', 'AbortError');
+    if (!Array.isArray(result) || result.some((item) => !item || typeof item.id !== 'string'
+      || typeof item.datetimeUtc !== 'string' || typeof item.versionUtc !== 'string'))
+      throw new Error('服务返回的格网记录缺少稳定身份或 UTC 时间/版本。');
+    return result;
+  };
+
+  const onCumulusLoadProjectMapContext = async (signal: AbortSignal) => {
+    const currentSnapshot = snapshotRef.current;
+    const currentAsset = source.context.selectedAsset;
+    if (!currentSnapshot || !currentAsset || currentAsset.kind !== 'Boundary Conditions'
+      || !source.context.projectPath || !source.context.projectXml || !backend.supports('project.tree.load'))
+      throw new Error('当前工程没有可用的投影目录。');
+    const owner = source.owner;
+    const revision = currentSnapshot.revision;
+    const requestGeneration = generation.current;
+    const tree = await backend.request<CatalogTreeSnapshot>('project.tree.load', {
+      projectPath: source.context.projectPath,
+      projectXml: source.context.projectXml,
+      projectSessionID: source.context.projectSessionID,
+      mode: 'Project',
+      ...(coreLayerContext(source.context, currentAsset) ? { coreLayerContext: coreLayerContext(source.context, currentAsset) } : {}),
+    }, { signal });
+    if (!isCurrentGridRead(owner, revision, requestGeneration, signal))
+      throw new DOMException('工程投影目录属于已切换的模型会话。', 'AbortError');
+    if (!tree || !Array.isArray(tree.roots)) throw new Error('工程目录服务返回了不完整的投影信息。');
+    const properties = walkCatalogTree(tree.roots).flatMap((node) => node.properties ?? []);
+    const projectionValues = [...new Set(properties.filter((property) => property.id === 'Project/ProjectionWKT')
+      .map((property) => property.value.trim()).filter(Boolean))];
+    const unitValues = [...new Set(properties.filter((property) => property.id === 'Project/Units')
+      .map((property) => property.value.trim()).filter(Boolean))];
+    return {
+      projectionWkt: projectionValues.length === 1 ? projectionValues[0] : null,
+      units: unitValues.length === 1 ? unitValues[0] : null,
+    };
+  };
+
+  const onCumulusInspectFootprint = async (
+    environmentId: string, accessToken: string, productId: string, afterUtc: string, beforeUtc: string,
+    selectedSource: CumulusGridSourceOption, targetProjectionWkt: string, signal: AbortSignal,
+  ): Promise<CumulusGridFootprintResult> => {
+    const currentSnapshot = snapshotRef.current;
+    const currentAsset = source.context.selectedAsset;
+    if (!currentSnapshot || !currentAsset || currentAsset.kind !== 'Boundary Conditions' || !source.context.projectPath
+      || !environmentId || !accessToken || !productId || !selectedSource.id || !targetProjectionWkt.trim()
+      || !backend.supports('cumulus.grids.footprint'))
+      throw new Error('当前工程没有可用的 Cumulus 覆盖范围检查能力。');
+    const owner = source.owner;
+    const revision = currentSnapshot.revision;
+    const requestGeneration = generation.current;
+    const result = await backend.request<CumulusGridFootprintResult>('cumulus.grids.footprint', {
+      environmentId, accessToken, productId, afterUtc, beforeUtc,
+      sourceId: selectedSource.id, datetimeUtc: selectedSource.datetimeUtc,
+      versionUtc: selectedSource.versionUtc, targetProjectionWkt,
+    }, { signal });
+    if (!isCurrentGridRead(owner, revision, requestGeneration, signal))
+      throw new DOMException('Cumulus 覆盖范围属于已切换的模型会话。', 'AbortError');
+    if (!result || result.sourceId !== selectedSource.id || result.datetimeUtc !== selectedSource.datetimeUtc
+      || result.versionUtc !== selectedSource.versionUtc || result.targetProjectionWkt !== targetProjectionWkt
+      || !Array.isArray(result.points) || result.points.length < 4
+      || ![result.extent?.minX, result.extent?.maxX, result.extent?.minY, result.extent?.maxY].every(Number.isFinite))
+      throw new Error('服务返回了不匹配或不完整的 Cumulus 覆盖范围。');
+    return result;
+  };
+
+  const onCumulusGridImport = async (
+    command: CumulusGridImportCommand, onProgress?: (progress: unknown) => void,
+  ): Promise<boolean> => {
+    setSaveErrorDetails('');
+    if (activeSave.current || busy) return false;
+    const supportedLayers = ['precipitation', 'wind', 'airPressure', 'airDensity'];
+    if (!snapshot || !draft || !asset || asset.kind !== 'Boundary Conditions' || !source.context.projectPath || !snapshot.canEdit
+      || !supportedLayers.includes(command.layerId)) return false;
+    if (!onContextCommit) {
+      setSaveMessage(text(language, '工作台无法接纳 Cumulus 保存回执，因此已阻止导入。', 'The workbench cannot accept the Cumulus save receipt, so the import was blocked.'));
+      return false;
+    }
+    if (dirty) {
+      setSaveMessage(text(language, 'Cumulus 导入会立即提交模型。请先保存或丢弃当前草稿。', 'Cumulus import commits the model immediately. Save or discard the current draft first.'));
+      return false;
+    }
+    if (validations.length) {
+      setSaveErrors(validations);
+      setSaveMessage(text(language, '当前草稿有无效值；修正或丢弃后再导入 Cumulus 格网。', 'Correct or discard invalid draft values before importing Cumulus grids.'));
+      return false;
+    }
+    if (!backend.supports('model.cumulusGridImport') || !backend.supports('model.save')) {
+      setSaveMessage(text(language, '当前服务未发布可提交的 Cumulus 格网导入事务。', 'The connected service has not advertised the Cumulus grid import transaction.'));
+      return false;
+    }
+    if (!command.environmentId || !command.accessToken || !command.productId || !command.sources.length
+      || new Set(command.sources.map((sourceOption) => sourceOption.id)).size !== command.sources.length
+      || command.sources.some((sourceOption) => !sourceOption.id.trim() || !/Z$/i.test(sourceOption.datetimeUtc)
+        || !/Z$/i.test(sourceOption.versionUtc) || !Number.isFinite(Date.parse(sourceOption.datetimeUtc))
+        || !Number.isFinite(Date.parse(sourceOption.versionUtc)))
+      || new Set(command.sources.map((sourceOption) => Date.parse(sourceOption.datetimeUtc))).size !== command.sources.length) {
+      setSaveMessage(text(language, 'Cumulus 源必须保留唯一 ID、UTC 时间和版本，并且每个时刻只能选择一个版本。', 'Cumulus sources require unique IDs, UTC timestamps, and versions, with one version per valid time.'));
+      return false;
+    }
+    if (!!command.clipExtent !== !!command.clipProjectionWkt?.trim()) {
+      setSaveMessage(text(language, '裁剪范围必须同时具有真实范围和对应工程坐标系。', 'A clip request must include both the captured extent and its project coordinate system.'));
+      return false;
+    }
+    if (command.clipExtent && (![command.clipExtent.minX, command.clipExtent.maxX, command.clipExtent.minY, command.clipExtent.maxY].every(Number.isFinite)
+      || command.clipExtent.maxX <= command.clipExtent.minX || command.clipExtent.maxY <= command.clipExtent.minY)) {
+      setSaveMessage(text(language, '裁剪范围无效；请重新采集有效的工程坐标范围。', 'The captured clip extent is invalid. Capture a valid project-coordinate extent again.'));
+      return false;
+    }
+    const requestModel = readGridModelRequest();
+    const requestState = { owner: source.owner, controller: new AbortController() };
+    const requestGeneration = generation.current;
+    const requestRevision = snapshot.revision;
+    activeSave.current = requestState;
+    const isCurrentRequest = () => activeSave.current === requestState && activeOwner.current === requestState.owner
+      && generation.current === requestGeneration && snapshotRef.current?.revision === requestRevision
+      && !requestState.controller.signal.aborted;
+    setBusy(true);
+    setSaveMessage('');
+    setSaveErrors([]);
+    try {
+      const response = await backend.request<{ state: string; snapshot?: ModelSnapshot | null; errorMessage?: string | null }>('model.cumulusGridImport', {
+        model: requestModel,
+        environmentId: command.environmentId,
+        accessToken: command.accessToken,
+        productId: command.productId,
+        afterUtc: command.afterUtc,
+        beforeUtc: command.beforeUtc,
+        sources: command.sources,
+        layerId: command.layerId,
+        clipExtent: command.clipExtent ?? null,
+        clipProjectionWkt: command.clipProjectionWkt ?? null,
+        precipitationDataType: command.precipitationDataType,
+        precipitationUnits: command.precipitationUnits,
+      }, { signal: requestState.controller.signal, onProgress });
+      if (!isCurrentRequest()) return false;
+      if (response?.state === 'cancelled') {
+        setSaveMessage(text(language, 'Cumulus 导入已取消，模型基线未更新。', 'Cumulus import was cancelled; the model baseline was not updated.'));
+        return false;
+      }
+      if (response?.state !== 'completed' || !response.snapshot) {
+        throw new Error(response?.errorMessage || '服务没有确认 Cumulus 导入回执。');
+      }
+      const result = response.snapshot;
+      assertModelSnapshot(result);
+      if (result.revision === snapshot.revision) throw new Error('Cumulus import returned no new committed model revision.');
+      const imported = result.grids?.[command.layerId];
+      if (!imported || imported.layerId !== command.layerId || !Array.isArray(imported.times))
+        throw new Error('The Cumulus receipt did not include the imported grid layer.');
+      const nextContext = updatedContext(source.context, asset, result);
+      const nextSource = sourceFor(nextContext);
+      acceptedReceipt.current = { owner: nextSource.owner, snapshot: result };
+      if (!onContextCommit(source.context, nextContext)) {
+        acceptedReceipt.current = null;
+        setSaveMessage(text(language, '当前工程会话未接纳 Cumulus 导入回执；工作台基线未更新。', 'The active project session did not accept the Cumulus receipt; the workbench baseline was not updated.'));
+        return false;
+      }
+      onDirtyStateChange?.(source.owner, false);
+      activeOwner.current = nextSource.owner;
+      setSnapshot(result);
+      setDraft(createModelDraft(result));
+      setSource(nextSource);
+      setSaveMessage(text(language, 'Cumulus 格网已导入；工作台已按 C# 新修订和保存回执刷新基线。', 'Cumulus grids were imported. The workbench baseline was refreshed from the new C# revision and save receipt.'));
+      return true;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setSaveMessage(text(language, 'Cumulus 格网导入失败。', 'Cumulus grid import failed.'));
+        setSaveErrorDetails(message(error, language));
+      }
+      return false;
+    } finally {
+      if (activeSave.current === requestState) {
+        activeSave.current = null;
+        setBusy(false);
+      }
+    }
+  };
+
   const onTerrainTransform: PageProps['onTerrainTransform'] = async (command: TerrainTransformCommand) => {
     setSaveErrorDetails('');
     if (activeSave.current || busy) return false;
@@ -1992,6 +2219,29 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       }
       : undefined;
 
+  const cumulusImportWorkflow: CumulusImportWorkflow | undefined = snapshot && draft && asset
+    && asset.kind === 'Boundary Conditions'
+    && source.context.projectPath
+    && source.context.projectXml
+    && source.context.projectRevision
+    && backend.supports('cumulus.environments')
+    && backend.supports('cumulus.products')
+    && backend.supports('cumulus.grids.query')
+    && backend.supports('cumulus.grids.footprint')
+    && backend.supports('project.tree.load')
+    ? {
+      canImport: snapshot.canEdit && !dirty && validations.length === 0 && !busy
+        && !!source.context.projectPath && !!source.context.projectXml && !!source.context.projectRevision
+        && !!onContextCommit && backend.supports('model.cumulusGridImport') && backend.supports('model.save'),
+      loadEnvironments: onCumulusLoadEnvironments,
+      loadProducts: onCumulusLoadProducts,
+      queryGrids: onCumulusQueryGrids,
+      loadProjectMapContext: onCumulusLoadProjectMapContext,
+      inspectFootprint: onCumulusInspectFootprint,
+      importGrids: onCumulusGridImport,
+    }
+    : undefined;
+
   const pageProps: EditorPageProps | null = snapshot && draft && asset ? {
     backend, language, asset, snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
     pageId: activePageID, onPageChange: (next) => requestTransition({ kind: 'page', pageID: next }),
@@ -2008,6 +2258,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     ...(source.context.projectPath && backend.supports('model.gridInspect') ? { onGridInspect } : {}),
     ...(source.context.projectPath && backend.supports('model.gridFrame') ? { onGridFrame } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.gridImport') && backend.supports('model.save') ? { onGridImport } : {}),
+    ...(cumulusImportWorkflow ? { cumulusImport: cumulusImportWorkflow } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.terrainTransform') && backend.supports('model.save') ? { onTerrainTransform } : {}),
     ...(snapshot.canEdit && source.context.projectPath && source.context.projectXml && source.context.projectRevision
       ? { terrainMapOwner: terrainMapProjectOwner(source.context, asset) } : {}),
@@ -2136,7 +2387,9 @@ function statusText(load: LoadState, language: 'zh' | 'en'): string {
 }
 
 function sourceFor(context: WorkbenchContext): SourceContext {
-  const owner = JSON.stringify([context.projectSessionID, context.projectPath, context.projectXml, context.projectRevision, context.selectedAsset?.path ?? null, context.selectedAsset?.kind ?? null, context.selectedAsset?.revision ?? null, sourceStateFor(context.selectedAsset)]);
+  const asset = context.selectedAsset;
+  const coreContext = asset ? coreLayerContext(context, asset) : undefined;
+  const owner = JSON.stringify([context.projectSessionID, context.projectPath, context.projectXml, context.projectRevision, asset?.path ?? null, asset?.kind ?? null, asset?.revision ?? null, sourceStateFor(asset), coreContextIdentity(coreContext)]);
   return { context, owner };
 }
 
@@ -2227,7 +2480,9 @@ function sourceStateFor(asset: WorkbenchContext['selectedAsset']): string | unde
 
 function coreLayerContext(context: WorkbenchContext, asset: NonNullable<WorkbenchContext['selectedAsset']>): Record<string, unknown> | undefined {
   const raw = asset.locator as Record<string, unknown> | undefined;
-  const candidate = raw?.coreLayerContext ?? raw?.CoreLayerContext;
+  const candidate = context.coreLayerContext !== undefined
+    ? context.coreLayerContext
+    : raw?.coreLayerContext ?? raw?.CoreLayerContext;
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
   const value = candidate as Record<string, unknown>;
   const session = value.projectSessionID ?? value.ProjectSessionID;
@@ -2291,7 +2546,19 @@ function updatedContext(context: WorkbenchContext, asset: NonNullable<WorkbenchC
   delete locator.SourceState;
   if (snapshot.sourceState == null) delete locator.sourceState;
   else locator.sourceState = snapshot.sourceState;
-  return { ...context, selectedAsset: { ...asset, revision: snapshot.revision, locator } };
+  const hasCommittedCore = Object.prototype.hasOwnProperty.call(snapshot, 'coreLayerContext');
+  const committedCore = hasCommittedCore ? snapshot.coreLayerContext ?? undefined : coreLayerContext(context, asset);
+  if (committedCore) {
+    locator.coreLayerContext = committedCore;
+    delete locator.CoreLayerContext;
+  } else if (hasCommittedCore) {
+    delete locator.coreLayerContext;
+    delete locator.CoreLayerContext;
+  }
+  const nextContext: WorkbenchContext = { ...context, selectedAsset: { ...asset, revision: snapshot.revision, locator } };
+  if (committedCore) nextContext.coreLayerContext = committedCore;
+  else if (hasCommittedCore) delete nextContext.coreLayerContext;
+  return nextContext;
 }
 
 function updatedContextAfterInitialConditions(
@@ -2299,15 +2566,11 @@ function updatedContextAfterInitialConditions(
   asset: NonNullable<WorkbenchContext['selectedAsset']>,
   receipt: BoundaryInitialConditionsReceipt,
 ): WorkbenchContext {
-  const locator: Record<string, unknown> = { ...(asset.locator as Record<string, unknown> | undefined) };
-  delete locator.SourceState;
-  if (receipt.model.sourceState == null) delete locator.sourceState;
-  else locator.sourceState = receipt.model.sourceState;
+  const updated = updatedContext(context, asset, receipt.model);
   return {
-    ...context,
+    ...updated,
     projectXml: receipt.projectXml,
     projectRevision: receipt.projectRevision,
-    selectedAsset: { ...asset, revision: receipt.model.revision, locator },
   };
 }
 

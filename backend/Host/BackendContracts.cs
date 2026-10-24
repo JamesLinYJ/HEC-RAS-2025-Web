@@ -44,5 +44,6 @@ public sealed record ModelSnapshot(string Revision, Dictionary<string, string> F
     string? SourceState = null, string[]? ReadOnlyFields = null, Dictionary<string, SpatialGridData>? Grids = null, ManningEditorData? Manning = null, ClassificationEditorData? Classification = null, TerrainEditorData? Terrain = null,
     PlanTimeWindowFieldIDs? PlanTimeWindowFieldIDs = null,
     Dictionary<string, SourceEditorChoice[]>? FieldChoices = null,
-    Dictionary<string, string>? FieldTitles = null);
+    Dictionary<string, string>? FieldTitles = null,
+    CoreLayerRequestContext? CoreLayerContext = null);
 public sealed class SourceFileChangedException() : IOException("The model file changed outside this editor. Reload it before saving.");
