@@ -1,5 +1,5 @@
+import { useState } from 'react';
 import type { EditorPageProps, ModelSnapshot } from './model';
-import { editorValueLabel } from './editorLocalization';
 
 type TerrainInput = NonNullable<ModelSnapshot['terrain']>['inputs'][number];
 
@@ -13,7 +13,17 @@ export function DetailedTerrainInputHeader({ language, input, canEdit, value, on
   onRemove?: EditorPageProps['onTerrainTransform'];
 }) {
   const fieldID = `${input.scope}/Name`;
-  const extent = input.validExtent;
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const remove = async () => {
+    if (!onRemove || removing) return;
+    setRemoving(true);
+    try {
+      if (await onRemove({ operation: 'remove', itemId: input.id })) setConfirmingRemove(false);
+    } finally {
+      setRemoving(false);
+    }
+  };
   return (
     <header className="editor-terrain-input-header">
       <div className="editor-terrain-table-heading">
@@ -21,26 +31,23 @@ export function DetailedTerrainInputHeader({ language, input, canEdit, value, on
           <p className="editor-eyebrow">{language === 'zh' ? '当前输入' : 'Selected input'}</p>
           <h3>{value || input.name}</h3>
         </div>
-        {onRemove && <button type="button" className="editor-button" disabled={!canEdit} onClick={() => void onRemove({ operation: 'remove', itemId: input.id })}>
-          {language === 'zh' ? '从草稿移除' : 'Remove from draft'}
+        {onRemove && !confirmingRemove && <button type="button" className="editor-button" disabled={!canEdit || removing} onClick={() => setConfirmingRemove(true)}>
+          {language === 'zh' ? '从草稿移除…' : 'Remove from draft…'}
         </button>}
       </div>
+      {onRemove && confirmingRemove && <div className="editor-field-error" role="group" aria-label={language === 'zh' ? '确认移除地形输入' : 'Confirm terrain input removal'}>
+        <span>{language === 'zh' ? `从地形草稿移除“${value || input.name}”？保存后才会写入源文件。` : `Remove “${value || input.name}” from the terrain draft? The source file changes only when the model is saved.`}</span>
+        <div className="editor-button-row">
+          <button type="button" className="editor-button" disabled={!canEdit || removing} onClick={() => void remove()}>{removing ? (language === 'zh' ? '正在移除…' : 'Removing…') : (language === 'zh' ? '确认移除' : 'Confirm removal')}</button>
+          <button type="button" className="editor-button" disabled={removing} onClick={() => setConfirmingRemove(false)}>{language === 'zh' ? '取消' : 'Cancel'}</button>
+        </div>
+      </div>}
       <div className="editor-field-grid">
         <label className="editor-field" htmlFor="terrain-input-name">
           <span>{language === 'zh' ? '输入名称' : 'Input name'}</span>
           <input id="terrain-input-name" type="text" value={value} disabled={!canEdit} onChange={(event) => onNameChange(fieldID, event.currentTarget.value)} />
         </label>
       </div>
-      <dl className="editor-readonly-list">
-        <dt>{language === 'zh' ? '输入类型' : 'Input type'}</dt><dd>{editorValueLabel(language, input.type)}</dd>
-        <dt>{language === 'zh' ? '源文件' : 'Source file'}</dt><dd>{input.filename ?? '—'}</dd>
-        <dt>{language === 'zh' ? '有效范围' : 'Valid extent'}</dt><dd>{extent ? `${extent.minX}, ${extent.minY} – ${extent.maxX}, ${extent.maxY}` : '—'}</dd>
-        {input.error && <><dt>{language === 'zh' ? '状态' : 'Status'}</dt><dd className="editor-field-error"><details><summary>{language === 'zh' ? '错误详情' : 'Error details'}</summary><pre>{input.error}</pre></details></dd></>}
-      </dl>
-      {input.overviews?.length ? <details className="editor-source-details">
-        <summary>{language === 'zh' ? `金字塔层级 (${input.overviewCount ?? input.overviews.length})` : `Raster overviews (${input.overviewCount ?? input.overviews.length})`}</summary>
-        <ul>{input.overviews.map((overview) => <li key={overview}>{overview}</li>)}</ul>
-      </details> : null}
     </header>
   );
 }

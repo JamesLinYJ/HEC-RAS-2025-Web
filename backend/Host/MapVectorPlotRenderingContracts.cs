@@ -15,7 +15,7 @@ public sealed record MapVectorPlotStyleValues(string PenColor, double PenWidth, 
     int PointSize, string HaloColor, double HaloThickness, int TextEmphasis);
 public sealed record MapVectorPlotStyleOverride(int SourceFeatureIndex, MapVectorPlotStyleValues Values);
 public sealed record MapVectorPlotStyle(string DefinitionID, MapVectorPlotStyleValues Base,
-    MapVectorPlotStyleOverride[] SourceOverrides);
+    MapVectorPlotStyleOverride[] SourceOverrides, bool? IsProjectOverride = null);
 public sealed record MapVectorPlotCoordinate(double X, double Y);
 public sealed record MapVectorPlotLabel(string Text, MapVectorPlotCoordinate Point,
     MapVectorPlotCoordinate[] Polyline);

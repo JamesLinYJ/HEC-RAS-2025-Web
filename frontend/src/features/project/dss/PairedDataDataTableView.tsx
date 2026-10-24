@@ -1,8 +1,11 @@
 import type { Language } from '../../../shared/workbench';
 import type { DssPairedData } from './types';
+import { PairedDataDataTableWindow } from './PairedDataDataTableWindow';
 
 interface PairedDataDataTableViewProps {
   data: DssPairedData;
+  pathname: string;
+  sourceRevision: string;
   language: Language;
 }
 
@@ -12,7 +15,7 @@ function sourceValue(value: number | null | undefined): string {
   return value === null || value === undefined || !Number.isFinite(value) ? 'NoData' : String(value);
 }
 
-export function PairedDataDataTableView({ data, language }: PairedDataDataTableViewProps) {
+export function PairedDataDataTableView({ data, pathname, sourceRevision, language }: PairedDataDataTableViewProps) {
   const zh = language === 'zh';
   const rows = Math.min(data.ordinates.length, ...data.curves.map((curve) => curve.values.length), rowLimit);
   const actualRows = Math.min(data.ordinates.length, ...data.curves.map((curve) => curve.values.length));
@@ -32,5 +35,6 @@ export function PairedDataDataTableView({ data, language }: PairedDataDataTableV
       </table>
     </div>
     {actualRows > rowLimit && <small className="project-dss-table-limit">{zh ? `仅显示前 ${rowLimit} 行；来源可对齐 ${actualRows} 行。` : `Showing the first ${rowLimit} of ${actualRows} aligned source rows.`}</small>}
+    <PairedDataDataTableWindow data={data} pathname={pathname} sourceRevision={sourceRevision} language={language} />
   </section>;
 }

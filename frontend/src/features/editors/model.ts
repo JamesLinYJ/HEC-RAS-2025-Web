@@ -1,5 +1,6 @@
-import type { AssetReference, Language } from '../../shared/workbench';
+import type { AssetReference, BackendGateway, Language } from '../../shared/workbench';
 import { editorPageTitle } from './editorLocalization';
+import type { TerrainTopologyCommand, TerrainTopologyResponse } from './terrainTopologyTypes';
 
 export interface SchemaChoice {
   id: string;
@@ -371,6 +372,9 @@ export interface TerrainTransformCommand {
 }
 
 export interface EditorPageProps {
+  backend?: BackendGateway;
+  canEditTerrainTopology?: boolean;
+  onTerrainTopology?: (command: TerrainTopologyCommand) => Promise<TerrainTopologyResponse | null>;
   language: Language;
   asset: AssetReference;
   snapshot: ModelSnapshot;

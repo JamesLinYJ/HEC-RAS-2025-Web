@@ -1775,6 +1775,12 @@ public static partial class ModelEditorAdapter
         {
             List<string> fields = OrderedIDs().Where(id => Schema(inputs[id]) != null)
                 .SelectMany(id => new[] { Field(id, Schema(inputs[id])!, "Name"), Field(id, Schema(inputs[id])!, "TypeName") }).ToList();
+            // Only functional surfaces expose editable bounds. Vector/raster
+            // extents are derived metadata and may be undefined for a newly
+            // created empty layer; they must never become editable draft values.
+            foreach (string id in OrderedIDs().Where(id => inputs[id] is not FunctionalTerrainInput && Schema(inputs[id]) != null))
+                foreach (string bound in new[] { "MinX", "MaxX", "MinY", "MaxY" })
+                    fields.Add(Field(id, Schema(inputs[id])!, bound));
             if (selected != null && selectedRows.TryGetValue(ChannelFeatureTable, out string[]? channelIDs) && channelIDs.Length == 1)
                 fields.Add(Scoped(SelectionScope(channelIDs), ChannelLineLengthField));
             if (selected != null && selectedRows.TryGetValue(LeveeFeatureTable, out string[]? leveeIDs) && leveeIDs.Length == 1)

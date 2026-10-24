@@ -386,6 +386,7 @@ public static class VectorMapPlotRenderingService
     {
         if (renderer is not VectorRenderLayer vector)
             throw new InvalidOperationException("The retained vector renderer does not expose source symbology.");
+        styles = ResolveGlobalFallbacks(styles);
         string primaryID = gdbVectorType switch
         {
             "Point" or "PointCollection" when renderer is PointRenderLayer => "Gdb_Point_Symbology",
@@ -427,6 +428,33 @@ public static class VectorMapPlotRenderingService
         if (renderer is PolygonRenderLayer polygon &&
             styles.SingleOrDefault(style => style.DefinitionID == "Polygon_Map_Layer_Vertex_Symbology") is { } polygonVertex)
             polygon.VertexSymbology = MakeSymbology(polygonVertex, sourceFeatureIndices);
+    }
+
+    private static MapVectorPlotStyle[] ResolveGlobalFallbacks(MapVectorPlotStyle[] styles)
+    {
+        if (styles.Any(style => style is null))
+            throw new ArgumentException("The vector plot request contains an empty style entry.");
+        // Missing provenance from older clients is deliberately treated as a project style.
+        MapVectorPlotStyle[] fallbackStyles = styles.Where(style => style.IsProjectOverride == false).ToArray();
+        if (fallbackStyles.Length == 0) return styles;
+        if (fallbackStyles.Any(style => style.SourceOverrides is { Length: > 0 }))
+            throw new ArgumentException("A global default fallback cannot carry project-specific source overrides.");
+
+        IReadOnlyDictionary<string, GlobalSymbologyValues> defaults =
+            GlobalSymbologyService.LoadRenderDefaults(fallbackStyles.Select(style => style.DefinitionID));
+        return styles.Select(style =>
+        {
+            if (style.IsProjectOverride != false) return style;
+            if (style.Base is null || style.SourceOverrides is null)
+                throw new ArgumentException("The vector plot request contains an incomplete style entry.");
+            GlobalSymbologyValues values = defaults[style.DefinitionID];
+            return style with
+            {
+                Base = new MapVectorPlotStyleValues(values.PenColor, values.PenWidth, values.FillColor,
+                    values.PointSize, values.HaloColor, values.HaloThickness, values.TextEmphasis),
+                SourceOverrides = []
+            };
+        }).ToArray();
     }
 
     private static VectorSymbology MakeSymbology(MapVectorPlotStyle style, int[]? sourceFeatureIndices)

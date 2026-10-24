@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetReference, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { BackendOperationUnavailableError } from '../../shared/workbench';
-import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFactorSelection, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
+import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshPatchEditContext, type GeometryMeshPatchMutation, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFactorSelection, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
 import { geometryDiagnosticMessage } from './geometryErrors';
 
 interface OwnerValue<T> { owner: string; value: T }
@@ -49,6 +49,10 @@ function mapOwner(context: WorkbenchContext, asset: AssetReference | null, revis
   return JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, asset?.path ?? null, revision ?? asset?.revision ?? '', 'geometry']);
 }
 
+function sameNumericIDs(left: number[], right: number[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
 function localKey(kind: string, rowID: string, fieldID: string): string {
   return `${kind}\u0000${rowID}\u0000${fieldID}`;
 }
@@ -74,7 +78,7 @@ function parseMutations(encoded: string): unknown[] {
   } catch { return []; }
 }
 
-export function useGeometryWorkbench({ language, context, backend, backendRevision, onContextChange, onDirtyStateChange }: GeometryFeaturePageProps) {
+export function useGeometryWorkbench({ language, context, backend, backendRevision, onContextChange, onContextCommit, onDirtyStateChange }: GeometryFeaturePageProps) {
   const asset = context.selectedAsset?.kind === 'Geometry' ? context.selectedAsset : null;
   const sourceOwner = ownerFor(context, asset);
   const sourceOwnerRef = useRef(sourceOwner);
@@ -105,6 +109,7 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
   const [meshRedoStack, setMeshRedoStack] = useState<Array<{ owner: string; draftState: string; selectedRegionIDs: number[] }>>([]);
   const topologyQueue = useRef<Promise<void>>(Promise.resolve());
   const meshQueue = useRef<Promise<void>>(Promise.resolve());
+  const meshSelectionGenerationRef = useRef(0);
   const culvertQueue = useRef<Promise<void>>(Promise.resolve());
   const culvertSelectionRef = useRef<{ owner: string; ids: string[] }>({ owner: sourceOwner, ids: [] });
   if (culvertSelectionRef.current.owner !== sourceOwner) {
@@ -135,8 +140,16 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
   const setLocal = (mutate: (current: GeometryLocalDraft) => GeometryLocalDraft): void => {
     setLocalDraft((current) => mutate(current.owner === sourceOwner ? current : { owner: sourceOwner, rows: {}, overrides: {}, deleted: {} }));
   };
-  const setTopology = (value: GeometryTopologySnapshot): void => setTopologyEntry({ owner: sourceOwner, value });
-  const setMesh = (value: GeometryMeshSnapshot): void => setMeshEntry({ owner: sourceOwner, value });
+  const setTopology = (value: GeometryTopologySnapshot): void => {
+    const entry = { owner: sourceOwner, value };
+    topologyRef.current = entry;
+    setTopologyEntry(entry);
+  };
+  const setMesh = (value: GeometryMeshSnapshot): void => {
+    const entry = { owner: sourceOwner, value };
+    meshRef.current = entry;
+    setMeshEntry(entry);
+  };
   const setCulverts = (value: GeometryCulvertSnapshot): void => setCulvertEntry({ owner: sourceOwner, value });
   const setError = (key: keyof ErrorState, value?: string): void => setErrors((current) => ({ ...current, [key]: value }));
   const supports = (method: string): boolean => backend.supports(method);
@@ -504,6 +517,71 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     return result;
   });
 
+  const applyPatchMutation = (expected: GeometryMeshPatchEditContext, mutation: GeometryMeshPatchMutation): Promise<void> => enqueue(meshQueue, async () => {
+    const current = meshRef.current;
+    if (!model || !current || current.owner !== sourceOwner) throw new Error('Mesh draft is not loaded for this asset.');
+    const snapshot = current.value;
+    if (!snapshot.canEdit || !supports('geometry.mesh.edit')) throw new BackendOperationUnavailableError('geometry.mesh.edit');
+    if (snapshot.revision !== expected.revision || snapshot.draftState !== expected.draftState
+      || snapshot.topologyFingerprint !== expected.topologyFingerprint
+      || !sameNumericIDs(snapshot.selectedRegionIDs, expected.selectedRegionIDs)
+      || !snapshot.patchSizing || !sameNumericIDs(snapshot.patchSizing.selectedRegionIDs, expected.selectedRegionIDs))
+      throw new DOMException('The patch edit belongs to an earlier mesh, topology, or region selection.', 'AbortError');
+
+    const selectedIDs = snapshot.selectedRegionIDs;
+    const mutationIDs = mutation.featureIDs;
+    if (!selectedIDs.length || mutationIDs.some((fid) => !Number.isInteger(fid) || fid < 0)
+      || new Set(mutationIDs).size !== mutationIDs.length)
+      throw new Error('Patch edits require valid source region FIDs.');
+    const selectedKind = snapshot.patchSizing.kind ?? '';
+    const selectedRows = selectedIDs.flatMap((fid) => {
+      const row = snapshot.regions.rows.find((item) => item.fid === fid);
+      return row ? [row] : [];
+    });
+    if (selectedRows.length !== selectedIDs.length) throw new Error('A selected source region is no longer present in the mesh snapshot.');
+
+    if (mutation.operation === 'setCartesianCombinedCellSize') {
+      if (selectedKind !== 'Cartesian' || !sameNumericIDs(mutationIDs, [selectedIDs[0]]))
+        throw new Error('A combined cell size edit requires the first selected Cartesian source region.');
+    } else if (mutation.operation === 'resizePatch' && mutation.axis === undefined) {
+      if (!['TrianglePaver', 'Cartesian'].includes(selectedKind) || !sameNumericIDs(mutationIDs, [selectedIDs[0]]))
+        throw new Error('Triangle and Cartesian quick sizing requires the first selected source region.');
+    } else if (mutation.operation === 'resizePatch' || mutation.operation === 'setPatchDimensionMode' || mutation.operation === 'applyPatchDimension') {
+      if (selectedKind !== 'Quad' || !sameNumericIDs(mutationIDs, selectedIDs))
+        throw new Error('Quad sizing requires the current selected Quad source regions.');
+      const axis = mutation.axis;
+      if (axis !== 'NorthSouth' && axis !== 'EastWest') throw new Error('Quad sizing requires a supported side axis.');
+      const dimension = snapshot.patchSizing.dimensions.find((item) => item.id === axis);
+      const side = dimension?.sideArcSelection;
+      if (!dimension || !side || side.axis !== axis || side.sourceRevision !== snapshot.revision
+        || side.topologyFingerprint !== snapshot.topologyFingerprint || !sameNumericIDs(side.selectedRegionIDs, selectedIDs)
+        || (dimension.sideArcIssues?.length ?? 0) > 0 || !side.arcFeatureIDs.length
+        || new Set(side.arcFeatureIDs).size !== side.arcFeatureIDs.length
+        || (mutation.operation === 'resizePatch' && !dimension.canResize)
+        || (mutation.operation === 'setPatchDimensionMode' && !dimension.canChangeMode)
+        || (mutation.operation === 'applyPatchDimension' && !dimension.canApply))
+        throw new DOMException('The Quad side arcs do not match the current source snapshot.', 'AbortError');
+    } else if (mutation.operation === 'setPatchField') {
+      if (!['TrianglePaver', 'Cartesian'].includes(selectedKind)
+        || !sameNumericIDs(mutationIDs, [selectedIDs[0]])
+        || !['ConstantSize', 'SecondaryConstantSize'].includes(mutation.fieldID))
+        throw new Error('This source size field can only be edited on the first selected Triangle or Cartesian region.');
+    }
+
+    const result = await send<GeometryMeshSnapshot>('geometry.mesh.edit', {
+      model, revision: snapshot.revision, draftState: snapshot.draftState,
+      topologyDraftState: topologyRef.current?.owner === sourceOwner ? topologyRef.current.value.draftState : null,
+      selectedRegionIDs: selectedIDs, mutation,
+    }, sourceOwner);
+    if (result.revision !== snapshot.revision || !sameNumericIDs(result.selectedRegionIDs, selectedIDs))
+      throw new Error('The patch edit response does not match the captured revision and selected source regions.');
+    if (result.draftState !== snapshot.draftState) {
+      setMeshUndoStack((stack) => [...stack, { owner: sourceOwner, draftState: snapshot.draftState, selectedRegionIDs: snapshot.selectedRegionIDs }]);
+      setMeshRedoStack([]);
+    }
+    setMesh(result); setError('mesh');
+  });
+
   const onFlowAreaChange = (row: GeometryRow, field: GeometryField, value: string, isLocal: boolean): void => {
     if (isLocal) { updateLocalRow('flowArea', row, field, value); return; }
     const flowArea = mesh?.flowAreas.find((area) => area.id === row.id);
@@ -514,10 +592,24 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
   const onRegionSelection = (ids: number[]): void => {
     if (!mesh || !supports('geometry.mesh.load')) return;
     const owner = sourceOwner;
-    void send<GeometryMeshSnapshot>('geometry.mesh.load', {
-      model, revision: mesh.revision, draftState: mesh.draftState,
-      topologyDraftState: topology?.draftState ?? null, selectedRegionIDs: ids,
-    }, owner).then(setMesh).catch((error: unknown) => setError('mesh', geometryDiagnosticMessage(error)));
+    const generation = ++meshSelectionGenerationRef.current;
+    const requestedIDs = [...new Set(ids)];
+    if (requestedIDs.some((fid) => !Number.isInteger(fid) || fid < 0)) return;
+    void enqueue(meshQueue, async () => {
+      const current = meshRef.current;
+      if (!current || current.owner !== owner) return;
+      const snapshot = current.value;
+      const capturedTopology = topologyRef.current?.owner === owner ? topologyRef.current.value.draftState : null;
+      const result = await send<GeometryMeshSnapshot>('geometry.mesh.load', {
+        model, revision: snapshot.revision, draftState: snapshot.draftState,
+        topologyDraftState: capturedTopology, selectedRegionIDs: requestedIDs,
+      }, owner);
+      const latestTopology = topologyRef.current;
+      if (generation !== meshSelectionGenerationRef.current || latestTopology?.owner !== owner
+        || latestTopology.value.draftState !== capturedTopology) return;
+      if (result.revision !== snapshot.revision) throw new Error('The selected-region response does not match the captured source revision.');
+      setMesh(result);
+    }).catch((error: unknown) => setError('mesh', geometryDiagnosticMessage(error)));
   };
 
   const prepareMesh = (): void => {
@@ -726,7 +818,10 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
         projectXml: model.projectXml,
         sourceState: parent.sourceState ?? sourceStateFor(asset),
         revision,
-        fields: parent.fields ?? {},
+        // The geometry catalog fields are a read-only summary. All edits on
+        // this page belong to the captured child drafts below; echoing summary
+        // values as ordinary field edits would reject an otherwise valid save.
+        fields: {},
         images: parent.images ?? {},
         geometryTopologyState: topology?.draftState ?? null,
         geometryMeshState: mesh?.draftState ?? null,
@@ -737,7 +832,10 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
         ...context,
         selectedAsset: { ...asset, revision: result.revision, locator: { ...(asset.locator ?? {}), ...(result.sourceState ? { sourceState: result.sourceState } : {}) } },
       };
-      onContextChange(nextContext);
+      if (onContextCommit && !onContextCommit(context, nextContext))
+        throw new Error('The geometry file was saved, but its receipt belongs to an earlier project context. Reopen the geometry before editing again.');
+      onDirtyStateChange?.(dirtyOwner, false);
+      if (!onContextCommit) onContextChange(nextContext);
       setSavedNotice('saved');
     } catch (error) {
       const reason = geometryDiagnosticMessage(error);
@@ -768,7 +866,7 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     topologyDirty, meshDirty, culvertDirty, localOnly, dirty, revision, dirtyOwner,
     supports, localRows, addLocalRow, onTopologyChange, onTopologyCommand, onTopologyDelete, undoTopology, redoTopology,
     loadArcPoints, loadRecipe, resizeTopology, applyTopologyFactor, editTopologyTag, createTopologyTag, filterTopology, editArcPointCoordinate, applyTopologyRecipe,
-    onFlowAreaChange, onRegionSelection, prepareMesh, generateMesh, degreeScan, propertyTables, undoMesh, redoMesh,
+    onFlowAreaChange, onRegionSelection, applyPatchMutation, prepareMesh, generateMesh, degreeScan, propertyTables, undoMesh, redoMesh,
     onCulvertChange, onCulvertCommand, onCulvertSelection, onCulvertSelectionChange, onCulvertSelectionCommand, onCulvertDelete, addCulvertBarrel, addCulvertPropertySet, undoCulverts,
     resetDrafts, save, wrappedTopologyTable, wrappedCulvertTable, wrappedMeshRegions,
     reload: () => setRefreshToken((value) => value + 1), setError,

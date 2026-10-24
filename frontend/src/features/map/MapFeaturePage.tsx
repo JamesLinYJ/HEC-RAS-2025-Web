@@ -12,6 +12,7 @@ import { RasMapElementsOverlay } from './RasMapElementsOverlay';
 import { ScaleBar, projectScaleUnitSystem } from './ScaleBar';
 import { MapViewsPanel } from './views/MapViewsPanel';
 import { VectorSymbologyEditor } from './vector-symbology/VectorSymbologyEditor';
+import { GlobalSymbologyEditorPage } from './global-symbology/GlobalSymbologyEditorPage';
 import { DEFAULT_MAP_DISPLAY_SETTINGS } from './MapSettings';
 import type { MapDisplaySettings } from './MapSettings';
 import { MapTimeAxis } from './MapTimeAxis';
@@ -1152,6 +1153,11 @@ function MapPage(props: MapFeaturePageProps) {
             }}
           />}
           <MapSettingsPanel settings={settings} onChange={setSettings} language={language} />
+          <details className="map-global-symbology-settings">
+            <summary>{text(language, '全局矢量符号默认值', 'Global vector style defaults')}</summary>
+            <GlobalSymbologyEditorPage backend={backend} backendRevision={props.backendRevision}
+              language={language} onDirtyStateChange={onDirtyStateChange} />
+          </details>
           {selectedVectorFile?.revision && selectedBackend && activeDocument && <VectorSymbologyEditor
             backend={backend} context={context} language={language}
             vectorPath={selectedVectorFile.path} revision={selectedVectorFile.revision}

@@ -331,7 +331,8 @@ async function verifyEditorSeries() {
     await waitFor("Array.from(document.querySelectorAll('.project-tree-node')).some(n=>n.textContent.includes('Solver Boundary'))", 'source boundary tree node');
     await evaluate("Array.from(document.querySelectorAll('.project-tree-node')).find(n=>n.textContent.includes('Solver Boundary')).dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await waitFor("Boolean(document.querySelector('.source-editor-boundary .editor-page-tabs'))", 'real boundary editor loaded', 30_000);
-    assert.equal(await evaluate("document.querySelectorAll('[data-feature=editors] nav.editor-page-tabs').length"), 1, 'The source editor must own a single page navigation');
+    assert.equal(await evaluate("document.querySelectorAll('[data-feature=editors] .source-editor-boundary > nav.editor-page-tabs').length"), 1, 'The source boundary editor must own a single primary page navigation');
+    assert.equal(await evaluate("document.querySelectorAll('[data-feature=editors] nav.editor-workbench-tabs').length"), 0, 'The workbench must not duplicate the source boundary navigation');
     await evaluate("Array.from(document.querySelectorAll('.source-editor-boundary .editor-page-tabs button')).find(n=>n.textContent.trim()==='降水').click()");
     await waitFor("Boolean(document.querySelector('[data-operation=appendRow]')) && !document.querySelector('[data-operation=appendRow]').disabled", 'actual editable irregular gauge', 30_000);
     const tableID = await evaluate("document.querySelector('[data-feature=editors] tr[data-table-id]').dataset.tableId");

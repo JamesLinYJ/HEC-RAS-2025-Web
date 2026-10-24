@@ -140,6 +140,7 @@ export default function GeometryPage(props: FeaturePageProps) {
         canPropertyTables={workspace.canPropertyTables}
         onFlowAreaChange={workspace.onFlowAreaChange}
         onRegionSelection={workspace.onRegionSelection}
+        onPatchMutation={workspace.applyPatchMutation}
         onPrepare={workspace.prepareMesh}
         onGenerate={workspace.generateMesh}
         onDegreeScan={workspace.degreeScan}

@@ -10,6 +10,20 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-geometry-mesh-patch-http", string patchBaseUrl, string patchOutputDirectory])
+            {
+                TextWriter protocol = Console.Out;
+                GeometryMeshPatchAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try
+                {
+                    report = await ServerAcceptance.RunGeometryMeshPatchAsync(
+                        new Uri(EnsureTrailingSlash(patchBaseUrl)), patchOutputDirectory);
+                }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-result-raster-budget"])
             {
                 Console.WriteLine(JsonSerializer.Serialize(ResultRasterBudgetAcceptance.Run(), JsonOptions));

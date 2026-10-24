@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { EditorPageProps, SpatialPointData } from './model';
 import { isEditorFieldReadOnly } from './model';
-import { SpatialInputs } from './MeteorologyLayerControl';
+import { SpatialGaugeConstantField, SpatialInputs } from './PointControl';
 import type { SpatialBoundaryLayerID } from './SpatialDataHeader';
 
 export function SpatialBoundaryConditions(props: EditorPageProps & { layerId: SpatialBoundaryLayerID }) {
@@ -102,8 +102,8 @@ export function SpatialBoundaryConditions(props: EditorPageProps & { layerId: Sp
                 </select>
               </label>}
               {field(localDataTypeKey) && <span className="editor-field-muted">{label('本地数据类型', 'Local data type')}: {field(localDataTypeKey)}</span>}
-              {(field(localDataTypeKey) === 'Constant' || field(localDataTypeKey) === '') && <GaugeConstantField {...props} scope={input.scope} property="Constant" />}
-              {layerId === 'wind' && field(localDataTypeKey) === 'Constant' && <GaugeConstantField {...props} scope={input.scope} property="Constant2" />}
+              {(field(localDataTypeKey) === 'Constant' || field(localDataTypeKey) === '') && <SpatialGaugeConstantField {...props} scope={input.scope} property="Constant" unit={spatial?.unit} />}
+              {layerId === 'wind' && field(localDataTypeKey) === 'Constant' && <SpatialGaugeConstantField {...props} scope={input.scope} property="Constant2" unit={spatial?.unit} />}
             </div>
           </article>;
         })}
@@ -114,12 +114,4 @@ export function SpatialBoundaryConditions(props: EditorPageProps & { layerId: Sp
     {!props.onSpatialTransform && <p className="editor-field-muted">{label('当前数据源不支持添加或移除测站与输入。', 'The current data source does not support adding or removing stations and inputs.')}</p>}
     {props.onSpatialTransform && !props.canTransformSpatial && <p className="editor-field-muted">{label('请先修正当前草稿的无效值，再修改空间输入结构。', 'Correct invalid draft values before changing spatial input structure.')}</p>}
   </section>;
-}
-
-function GaugeConstantField(props: EditorPageProps & { scope: string; property: string }) {
-  const key = `${props.scope}/${props.property}`;
-  const value = props.draft.fields[key] ?? props.snapshot.fields[key] ?? '';
-  return <label className="editor-field"><span>{props.language === 'zh' ? (props.property === 'Constant2' ? '常数 Y' : '常数值') : props.property}</span>
-    <input inputMode="decimal" value={value} readOnly={!props.snapshot.canEdit || isEditorFieldReadOnly(props, key)} onChange={(event) => props.onFieldChange(key, event.currentTarget.value)} />
-  </label>;
 }

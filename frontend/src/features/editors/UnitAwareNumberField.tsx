@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { UnitComboBox } from '../../controls/UnitComboBox';
+import { UnitCalculatorButton } from '../../controls/UnitCalculatorButton';
+import type { BackendGateway } from '../../shared/workbench';
 import type { DisplayUnitData, EditorFieldSchema } from './model';
 import { validateFieldValue } from './SchemaFieldRenderer';
-import { editorText } from './editorLocalization';
 
 /** NumericPropertyItem-style field: unit changes affect display only, while edited values are converted back to the source unit. */
-export function UnitAwareNumberField({ id, title, value, baseline, field, unitData, unitLabel, disabled, language, onChange }: {
+export function UnitAwareNumberField({ id, title, value, baseline, field, unitData, unitLabel, disabled, language, backend, onChange }: {
   id: string;
   title: string;
   value: string;
@@ -15,6 +16,7 @@ export function UnitAwareNumberField({ id, title, value, baseline, field, unitDa
   unitLabel?: string;
   disabled: boolean;
   language: 'zh' | 'en';
+  backend?: BackendGateway;
   onChange: (sourceValue: string) => void;
 }) {
   const choices = unitData?.choices ?? [];
@@ -32,23 +34,24 @@ export function UnitAwareNumberField({ id, title, value, baseline, field, unitDa
     ? formatDisplayValue(numericSource * selected.scale + selected.offset)
     : value;
   const shown = rawEdit?.id === id ? rawEdit.value : displayValue;
+  const rawEditSourceValue = rawEdit?.id === id ? sourceValueFromDisplay(rawEdit.value, selected, selectedUnitIsFinite) : null;
   const error = rawEdit?.id === id
-    ? validateFieldValue(field, rawEdit.value, language)
+    ? rawEditSourceValue === null
+      ? validateFieldValue(field, rawEdit.value, language)
+      : validateFieldValue(field, String(rawEditSourceValue), language)
     : value !== baseline ? validateFieldValue(field, value, language) : null;
 
   const update = (raw: string): void => {
     setRawEdit({ id, value: raw });
-    const validation = validateFieldValue(field, raw, language);
-    if (validation) {
+    const sourceValue = sourceValueFromDisplay(raw, selected, selectedUnitIsFinite);
+    if (sourceValue === null) {
       onChange(raw);
       return;
     }
-    if (!selected || !selectedUnitIsFinite) {
-      onChange(raw);
-      return;
-    }
-    const sourceValue = (Number(raw) - selected.offset) / selected.scale;
-    onChange(Number.isFinite(sourceValue) ? formatDisplayValue(sourceValue) : raw);
+    // Schema limits belong to the stored source units. Commit the converted
+    // source value even when it violates a limit so the draft remains visible
+    // and the ordinary source-unit validation can report the actual issue.
+    onChange(formatDisplayValue(sourceValue));
   };
 
   return <div className="editor-field">
@@ -60,14 +63,28 @@ export function UnitAwareNumberField({ id, title, value, baseline, field, unitDa
         selectedUnitId={selected ? unitID : unitData?.sourceId ?? ''}
         onSelectedUnitChange={(unitId) => {
           setUnitID(unitId);
-          const invalidRaw = rawEdit?.id === id && Boolean(validateFieldValue(field, rawEdit.value, language));
-          if (!invalidRaw) setRawEdit(null);
+          const currentRawIsConvertible = rawEdit?.id === id &&
+            sourceValueFromDisplay(rawEdit.value, selected, selectedUnitIsFinite) !== null;
+          if (!rawEdit || rawEdit.id !== id || currentRawIsConvertible) setRawEdit(null);
         }}
         ariaLabel={language === 'zh' ? title + '显示单位' : title + ' display units'}
-        getLabel={(choice) => editorText(language, choice.name ?? choice.id)}
+        getLabel={(choice) => choice.name ?? choice.id}
         disabled={disabled}
       />}
-      {choices.length <= 1 && (selected?.name || unitLabel) && <span className="editor-meteorology-unit">{editorText(language, selected?.name ?? unitLabel ?? '')}</span>}
+      {choices.length <= 1 && (selected?.name || unitLabel) && <span className="editor-meteorology-unit">{selected?.name ?? unitLabel}</span>}
+      {backend && unitData?.sourceUnitTypeId && selected?.unitTypeId && selectedUnitIsFinite && <UnitCalculatorButton
+        backend={backend}
+        language={language}
+        fieldID={id}
+        fieldTitle={title}
+        sourceUnitId={unitData.sourceUnitTypeId}
+        sourceUnitName={unitLabel ?? unitData.sourceId}
+        displayUnitId={selected.unitTypeId}
+        displayUnitName={selected.name ?? selected.id}
+        initialSourceValue={value}
+        disabled={disabled}
+        onApply={update}
+      />}
     </div>
     {error && <small className="editor-field-error">{error}</small>}
   </div>;
@@ -76,4 +93,12 @@ export function UnitAwareNumberField({ id, title, value, baseline, field, unitDa
 function formatDisplayValue(value: number): string {
   if (!Number.isFinite(value)) return '';
   return String(Number(value.toPrecision(12)));
+}
+
+function sourceValueFromDisplay(raw: string, selected: DisplayUnitData['choices'][number] | undefined, selectedIsFinite: boolean): number | null {
+  if (!selected || !selectedIsFinite || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(raw)) return null;
+  const displayValue = Number(raw);
+  if (!Number.isFinite(displayValue)) return null;
+  const sourceValue = (displayValue - selected.offset) / selected.scale;
+  return Number.isFinite(sourceValue) ? sourceValue : null;
 }

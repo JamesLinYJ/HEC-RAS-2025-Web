@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import type { Language } from '../../shared/workbench';
-import { GeometryFeatureTable } from './GeometryFeatureTable';
-import { gdiagnostic, gfield, gmode, gt } from './geometryText';
+import { gt } from './geometryText';
 import { GeometryError } from './GeometryError';
 import { FlowAreaLayerActiveFeatures } from './FlowAreaLayerActiveFeatures';
 import { GeometryPrepareSummaryControl } from './GeometryPrepareSummaryControl';
 import { MeshDiagnostics } from './MeshDiagnostics';
+import { PatchEditor } from './PatchEditor';
 import { geometryDiagnosticMessage } from './geometryErrors';
-import type { GeometryField, GeometryRow, GeometryTable, GeometryMeshDegreeScan, GeometryMeshSnapshot } from './geometryTypes';
+import type { GeometryField, GeometryMeshDegreeScan, GeometryMeshPatchEditContext, GeometryMeshPatchMutation, GeometryMeshSnapshot, GeometryRow, GeometryTable } from './geometryTypes';
 
 export interface GeometryMeshPageProps {
   language: Language;
@@ -21,6 +21,7 @@ export interface GeometryMeshPageProps {
   canPropertyTables: boolean;
   onFlowAreaChange: (row: GeometryRow, field: GeometryField, value: string, isLocal: boolean) => void;
   onRegionSelection: (ids: number[]) => void;
+  onPatchMutation: (context: GeometryMeshPatchEditContext, mutation: GeometryMeshPatchMutation) => Promise<void>;
   onPrepare: () => void;
   onGenerate: (progress: (progress: unknown) => void) => Promise<void>;
   onDegreeScan: (maxFacesPerNode: number) => Promise<GeometryMeshDegreeScan>;
@@ -69,7 +70,7 @@ function pretty(value: unknown): string {
 
 export function GeometryMeshPage({
   language, snapshot, localRegionRows, busy, canEdit, canGenerate, canPrepare, canDegreeScan, canPropertyTables,
-  onFlowAreaChange, onRegionSelection, onPrepare, onGenerate, onDegreeScan, onPropertyTables,
+  onFlowAreaChange, onRegionSelection, onPatchMutation, onPrepare, onGenerate, onDegreeScan, onPropertyTables,
 }: GeometryMeshPageProps) {
   const [maximumFaces, setMaximumFaces] = useState('8');
   const [progress, setProgress] = useState('');
@@ -78,11 +79,6 @@ export function GeometryMeshPage({
   const [degreeScanResult, setDegreeScanResult] = useState<GeometryMeshDegreeScan>();
   const [propertyOutput, setPropertyOutput] = useState('');
   const flowAreas = useMemo(() => flowAreaTable(snapshot, language), [language, snapshot]);
-  const selectedRegionIDSet = new Set(snapshot?.selectedRegionIDs ?? []);
-  const regions = useMemo(() => snapshot ? {
-    ...snapshot.regions,
-    rows: snapshot.regions.rows.map((row) => ({ ...row, values: { ...row.values, __selected: String(selectedRegionIDSet.has(row.fid ?? -1)) } })),
-  } : undefined, [snapshot, selectedRegionIDSet]);
 
   const generate = async (): Promise<void> => {
     setTaskError(''); setProgress('');
@@ -113,11 +109,6 @@ export function GeometryMeshPage({
     setTaskError('');
     onFlowAreaChange(row, field, value, isLocal);
   };
-  const handleRegionSelect = (ids: string[]): void => {
-    const selected = new Set(ids);
-    onRegionSelection((snapshot?.regions.rows ?? []).filter((row) => selected.has(row.id) && row.fid != null).map((row) => row.fid!));
-  };
-
   return (
     <div className="geometry-grid">
       <FlowAreaLayerActiveFeatures language={language} table={flowAreas} canEdit={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleAreaEdit} headerActions={<>
@@ -130,12 +121,8 @@ export function GeometryMeshPage({
         {taskError && <GeometryError language={language} error={taskError} style={{ margin: 13 }} />}
       </FlowAreaLayerActiveFeatures>
       <GeometryPrepareSummaryControl language={language} summary={snapshot?.prepareSummary} pending={!!snapshot?.preparePending} />
-      <section className="geometry-panel">
-        <header className="geometry-panel-heading"><div><h2>{gt(language, 'selectedRegions')}</h2><p>{snapshot?.selectedRegionIDs.length ?? 0} {gt(language, 'selected')}</p></div><span className="geometry-count-pill">{gt(language, 'sizingStatus')}</span></header>
-        {snapshot?.patchSizing && <details className="geometry-inline-help"><summary>{gt(language, 'diagnosticDetails')}</summary><p>{gdiagnostic(language, snapshot.patchSizing.message)}</p></details>}
-        {snapshot?.patchSizing?.dimensions?.length ? <div className="geometry-panel-body geometry-grid two">{snapshot.patchSizing.dimensions.map((dimension) => <div className="geometry-kv" key={dimension.id}><span>{gfield(language, dimension.id, dimension.title)}</span><strong>{gmode(language, dimension.sizeFunction)} {dimension.liveValue ?? ''} · {dimension.arcCount} {gt(language, 'arcCountUnit')}</strong></div>)}</div> : null}
-        <GeometryFeatureTable language={language} kind="region" table={regions} localRows={localRegionRows} editable={false} allowLocalAdd={false} busy={busy} onSelect={handleRegionSelect} />
-      </section>
+      <PatchEditor language={language} snapshot={snapshot} localRows={localRegionRows} canEdit={canEdit} busy={busy}
+        onRegionSelection={onRegionSelection} onMutation={onPatchMutation} />
       <section className="geometry-panel">
         <header className="geometry-panel-heading"><div><h2>{gt(language, 'degreeScan')} / {gt(language, 'propertyTables')}</h2><p>{gt(language, 'validationNote')}</p></div></header>
         <div className="geometry-panel-body geometry-mesh-controls">

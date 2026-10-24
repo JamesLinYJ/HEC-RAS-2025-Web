@@ -604,6 +604,32 @@ public static partial class ModelEditorAdapter
                 }
                 return before != sourceTopology.Topology.GetDataHash();
             }
+            case "setCartesianCombinedCellSize":
+            {
+                ObservableConceptualMeshTopology sourceTopology = RequireGeometryMeshTopology(topology);
+                int[] ids = RequireRegionIDs(mutation.FeatureIDs);
+                if (ids.Length != 1)
+                    throw new ArgumentException("A Cartesian combined cell size edit requires exactly one selected region.");
+                if (mutation.Axis is not null || mutation.FieldID is not null)
+                    throw new ArgumentException("A Cartesian combined cell size edit does not accept an axis or field ID.");
+
+                ObservableConceptualMeshControlPoint point = FindRegion(sourceTopology, ids[0]);
+                if (point.PatchType != PatchType.Cartesian)
+                    throw new ArgumentException("A combined cell size can only be set for a Cartesian patch.");
+                float value = ParseFloat(mutation.Value ?? throw new ArgumentException("A Cartesian combined cell size is required."));
+                if (value <= 0)
+                    throw new ArgumentException("A Cartesian combined cell size must be greater than zero.");
+
+                int before = sourceTopology.Topology.GetDataHash();
+                // The source CartesianPatchQuickEditor binds one combined-size
+                // input to both properties. Keep both assignments in this one
+                // mesh-draft mutation; mirror the source ConstantSize listener
+                // by populating eligible outer arcs when that behavior is enabled.
+                SetValidatedProperty(point, "ConstantSize", value);
+                PushRegionSizingToOuterArcs(sourceTopology, point);
+                SetValidatedProperty(point, "SecondaryConstantSize", value);
+                return before != sourceTopology.Topology.GetDataHash();
+            }
             case "resizePatch":
             {
                 ObservableConceptualMeshTopology sourceTopology = RequireGeometryMeshTopology(topology);

@@ -7,6 +7,7 @@ import { PairedDataDataTableView } from './dss/PairedDataDataTableView';
 import { PairedDataGraphView } from './dss/PairedDataGraphView';
 import { TimeSeriesDataTableView } from './dss/TimeSeriesDataTableView';
 import { TimeSeriesGraph } from './dss/TimeSeriesGraph';
+import { TimeSeriesGraphWindow } from './dss/TimeSeriesGraphWindow';
 import type { DssCatalogResponse, DssReadResponse, DssRecordResult } from './dss/types';
 import './dss/dss.css';
 
@@ -35,7 +36,7 @@ function rawError(error: unknown): string {
   catch { return String(details); }
 }
 
-function DssRecordPreview({ language, record }: { language: Language; record: DssRecordResult }) {
+function DssRecordPreview({ language, record, sourceRevision }: { language: Language; record: DssRecordResult; sourceRevision: string }) {
   const zh = language === 'zh';
   const hasPreview = !!record.timeSeries || !!record.pairedData || !!record.location;
 
@@ -44,11 +45,12 @@ function DssRecordPreview({ language, record }: { language: Language; record: Ds
     {record.error && <div className="project-form-error" role="status"><span>!</span>{record.error}</div>}
     {record.timeSeries && <>
       <TimeSeriesGraph data={record.timeSeries} pathname={record.path} language={language} />
-      <TimeSeriesDataTableView data={record.timeSeries} language={language} />
+      <TimeSeriesGraphWindow data={record.timeSeries} pathname={record.path} sourceRevision={sourceRevision} language={language} />
+      <TimeSeriesDataTableView data={record.timeSeries} pathname={record.path} sourceRevision={sourceRevision} language={language} />
     </>}
     {record.pairedData && <>
       <PairedDataGraphView data={record.pairedData} pathname={record.path} language={language} />
-      <PairedDataDataTableView data={record.pairedData} language={language} />
+      <PairedDataDataTableView data={record.pairedData} pathname={record.path} sourceRevision={sourceRevision} language={language} />
     </>}
     {record.location && <LocationInformationView location={record.location} language={language} />}
     {!record.error && !hasPreview && <p role="status">{record.kind === 'unsupported'
@@ -169,7 +171,7 @@ export function DssExternalConnectionPreview({ language, backend, path }: Props)
       onSelectedPathChange={selectRecord}
       onRead={() => void readSelected()}
     />}
-    {record && <DssRecordPreview language={language} record={record} />}
+    {catalog && record && <DssRecordPreview key={`${catalog.path}:${catalog.revision}:${record.path}`} language={language} record={record} sourceRevision={catalog.revision} />}
     {error && <div className="project-form-error" role="alert"><span>!</span><div>{error}{details && <details><summary>{text(language, '原始诊断', 'Raw diagnostics')}</summary><pre>{details}</pre></details>}</div></div>}
   </section>;
 }

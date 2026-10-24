@@ -178,20 +178,34 @@
       },
       {
         "id": "terrain-transform-draft",
-        "mount": "EditorWorkbench → TerrainLayersEditor and selected terrain-input detail/table editors",
+        "mount": "EditorWorkbench → TerrainLayersEditor → selected terrain-input detail/table editors; for a loaded ChannelMod input: ChannelModTerrainInputProperties → ChannelModTopologyEditor",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
           "frontend/src/features/editors/model.ts",
           "frontend/src/features/editors/TerrainLayersEditor.tsx",
           "frontend/src/features/editors/ChannelModEditor.tsx",
-          "frontend/src/features/editors/LeveeModDetailEditor.tsx"
+          "frontend/src/features/editors/LeveeModDetailEditor.tsx",
+          "frontend/src/features/editors/ChannelModTerrainInputProperties.tsx",
+          "frontend/src/features/editors/ChannelModTopologyEditor.tsx",
+          "frontend/src/features/editors/terrainTopologyTypes.ts",
+          "frontend/src/features/editors/TerrainInputLayerPicker.tsx",
+          "frontend/src/features/editors/TerrainAddControl.tsx",
+          "frontend/src/features/editors/TerrainInputLayerCreator.tsx",
+          "frontend/src/features/editors/TerrainInputStats.tsx",
+          "frontend/src/features/editors/TerrainFeatureTable.tsx",
+          "frontend/src/features/editors/PolygonRasterModificationLayerProperties.tsx",
+          "backend/Host/TerrainTopologyService.cs",
+          "backend/Host/TerrainTopologyContracts.cs",
+          "backend/Host/TerrainEditorService.cs",
+          "backend/Host/BackendWorker.cs"
         ],
-        "stateOwner": "The current model owner and ModelDraft hold terrainView, rows, selections, validation state and sourceState. Transform requests carry the captured model revision and current field/row/sample edits; selected input is an explicit part of the transform request.",
+        "stateOwner": "The current model owner and ModelDraft hold terrainView, rows, selections, validation state and sourceState. Generic TerrainInputLayerPicker/TerrainAddControl (TerrainInputLayerCreator), TerrainInputStats and TerrainFeatureTable operate on the actual selected input/table data. For a ChannelMod input, ChannelModTopologyEditor mounts only after that input is the loaded Host selection; the standalone SVG holds its topology response, source coordinate view, feature selection, tool mode and manual X/Y points locally. Its reference extent comes from a Host-returned terrain input validExtent or returned geometry bounds; if neither supplies coordinates, the editor requires explicit X/Y entries and does not invent a project-map extent. The polygon feature table remains a source-backed table view; a polygon TerrainMod topology editor is not mounted.",
         "readActions": [
           "model.load",
-          "model.terrainTransform"
+          "model.terrainTransform",
+          "model.terrainTopology"
         ],
-        "writeBoundary": "model.terrainTransform returns a terrain draft projection at the captured model revision with a new non-empty sourceState; the workbench retains it as draft state. The transformation is not a file save. The parent model.save is the persistence boundary."
+        "writeBoundary": "model.terrainTransform returns a terrain draft projection at the captured model revision with a new non-empty sourceState; the workbench retains it as draft state. The transformation is not a file save. For a loaded ChannelMod input, EditorWorkbench onTerrainTopology captures the complete current model request (including sourceState, rows and changedCells), selected input ID, model/source revision, owner and request generation before model.terrainTopology. It accepts only the current owner/generation and a response whose model revision/sourceState, selected input, topology sourceRevision/draftIdentity and unique/selected feature IDs and input IDs still match; the returned snapshot is projected into the parent ModelDraft. The ChannelMod editor wires load/select/draw/remove/undo/redo/split/moveNodes/moveVertex/insertVertex/deleteVertex/maskRegion/setMetadata to this callback. These edits remain in the parent terrain draft until model.save. The current polygon modification UI only exposes its returned feature table; TerrainMod polygon drawing, placement, selection and history controls are not mounted. Generic terrain picker/creator/stats/table files do not imply those polygon controls are implemented."
       },
       {
         "id": "usgs-terrain-import",
@@ -324,7 +338,9 @@
           "frontend/src/features/geometry/TagPreviewControl.tsx",
           "frontend/src/features/geometry/TopologyBuildResultViewer.tsx",
           "frontend/src/features/geometry/TopologyProperties.tsx",
-          "frontend/src/features/geometry/TopologyStatus.tsx"
+          "frontend/src/features/geometry/TopologyStatus.tsx",
+          "backend/Host/ModelEditorAdapter.cs",
+          "backend/Host/BackendWorker.cs"
         ],
         "stateOwner": "The Geometry workbench owns the captured model/topology revision, server draftState, undo history and stable row/FID identities. The selected arc/region/node rows are shared with their mounted detail, quick-edit, error and recipe controls.",
         "readActions": [
@@ -335,7 +351,7 @@
           "topology.recipe",
           "topology.filter"
         ],
-        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations; Recipe application is tied to the inspected revision and draft identity. Tag create/set/remove uses selected source FIDs and the existing topology undo/save lifecycle. topology.filter validates owner, revision, draftState, feature kind and returned FIDs, then maps matches back to source rows for selection without changing the draft; only arcs and regions are filterable. The overview apply-factor control edits global arc/control-point size-related fields through the same draft; its arc-point count factor is inverse and keeps at least one point. Cross-page selection scope is unavailable. Node coordinates remain read-only; parent model.save commits the Geometry HDF."
+        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations; Recipe application is tied to the inspected revision and draft identity. Tag create/set/remove uses selected source FIDs and the existing topology undo/save lifecycle. topology.filter validates owner, revision, draftState, feature kind and returned FIDs, then maps matches back to source rows for selection without changing the draft; only arcs and regions are filterable. The overview apply-factor control edits global arc/control-point size-related fields through the same draft; its arc-point count factor is inverse and keeps at least one point. Cross-page selection scope is unavailable. Node coordinates remain read-only; parent model.save commits the Geometry HDF. The Geometry workbench save sends fields: {} rather than replaying read-only catalog-summary fields; the Host stages from the original HDF and applies only the captured child draft states, retaining parent metadata without turning summary echoes into field writes. A successful save receipt is adopted through onContextCommit(source, committed), so its own dirty state does not intercept the confirmed revision as a navigation request; the new owner reloads clean snapshots and retires old undo/redo history."
       },
       {
         "id": "terrain-levee-composition",
@@ -437,7 +453,7 @@
       },
       {
         "id": "project-external-connections",
-        "mount": "ProjectExplorerControl toolbar → ExternalConnectionManager; RasCatalogInfoPane → ExternalConnectionDetails / DssExternalConnectionPreview; project tree → ExternalConnectionCatalogNode",
+        "mount": "ProjectExplorerControl toolbar → ExternalConnectionManager; RasCatalogInfoPane → ExternalConnectionDetails / DssExternalConnectionPreview → DssCatalogViewer / time-series and paired-data controls → TimeSeriesGraphWindow / TimeSeriesDataTableWindow / PairedDataDataTableWindow → DssDataDialog; project tree → ExternalConnectionCatalogNode",
         "source": [
           "frontend/src/features/project/ProjectExplorerControl.tsx",
           "frontend/src/features/project/CatalogTreeSnapshot.ts",
@@ -463,16 +479,21 @@
           "frontend/src/features/project/dss/PairedDataGraphView.tsx",
           "frontend/src/features/project/dss/PairedDataDataTableView.tsx",
           "frontend/src/features/project/dss/LocationInformationView.tsx",
-          "frontend/src/features/project/dss/types.ts"
+          "frontend/src/features/project/dss/types.ts",
+          "frontend/src/features/project/dss/TimeSeriesGraphWindow.tsx",
+          "frontend/src/features/project/dss/TimeSeriesDataTableWindow.tsx",
+          "frontend/src/features/project/dss/PairedDataDataTableWindow.tsx",
+          "frontend/src/features/project/dss/DssDataDialog.tsx",
+          "frontend/src/features/project/dss/csv.ts"
         ],
-        "stateOwner": "The active project context owns the XML/session/revision identity; external-connection rows and details come from catalog.tree.load in Catalog mode, not the separate project.tree.load project tree. Add/update/remove forms capture the target connection identity and source fields; Result choices come from actual ObservableResult nodes. File paths resolve on the Host machine. Nodes without assetID retain a local tree selection when the active asset is cleared; snapshot reconciliation checks node ID/class/name/path/type, and each project session owns an isolated tree state. The mounted DSS preview subtree comprises DssCatalogViewer/DssFilterControl/PartFilterItemControl, time-series graph and table, paired-data graph and table, and location metadata. The selected catalog record stays keyed by its complete DSS pathname while filtering; each read is bound to the captured file path and catalog SHA/revision.",
+        "stateOwner": "The active project context owns the XML/session/revision identity; external-connection rows and details come from catalog.tree.load in Catalog mode, not the separate project.tree.load project tree. Add/update/remove forms capture the target connection identity and source fields; Result choices come from actual ObservableResult nodes. File paths resolve on the Host machine. Nodes without assetID retain a local tree selection when the active asset is cleared; snapshot reconciliation checks node ID/class/name/path/type, and each project session owns an isolated tree state. The mounted DSS preview subtree comprises DssCatalogViewer/DssFilterControl/PartFilterItemControl, time-series graph and table, paired-data graph and table, and location metadata. The selected catalog record stays keyed by its complete DSS pathname while filtering; each read is bound to the captured file path and catalog SHA/revision. Three full-size DSS dialogs (larger time-series graph, complete time-series table and complete paired-data table) reuse the selected record response and preserve its exact pathname and SHA; opening them does not create a second DSS read/session.",
         "readActions": [
           "catalog.tree.load",
           "project.connection.inspect",
           "dss.catalog",
           "dss.read"
         ],
-        "writeBoundary": "Add/update/remove use project.connection.inspect then project.connection.commit. Both bind projectPath, projectXml, projectXmlSHA, projectRevision and projectSessionID; commit additionally supplies expectedConnectionSHA256, expectedSourceSHA256 and required expectedSourceReferencesSHA256, plus expectedNormalizedName for add. Inspect returns canCommit/validationMessage, canonicalPath, source and source-reference capture/count, normalizedName, and before/after identities. A Result is written as a native File external connection to its actual Result HDF. Before returning a receipt, Host reopens the project and confirms the connection through CatalogTreeService.LoadCatalog(Mode=Catalog), corresponding to catalog.tree.load; project.tree.load does not contain external connection nodes. The commit receipt carries the new project snapshot and previous revision, before/after identity, sourceCapture, previousSourceReferencesSHA256 and sourceReferencesSHA256; the client validates it before onContextCommit. A remove may capture a disconnected source with nullable path/SHA. DSS preview is read-only. The views render only returned arrays and metadata: NoData breaks graph lines without interpolation, the source time-series table retains returned timestamps/values/quality array (up to 100 visible rows), paired graph/table appears only when paired data exists, and location fields do not infer a CRS or create a map feature. This UI states that its current read path supports DSS 7; DSS 6 is not connected."
+        "writeBoundary": "Add/update/remove use project.connection.inspect then project.connection.commit. Both bind projectPath, projectXml, projectXmlSHA, projectRevision and projectSessionID; commit additionally supplies expectedConnectionSHA256, expectedSourceSHA256 and required expectedSourceReferencesSHA256, plus expectedNormalizedName for add. Inspect returns canCommit/validationMessage, canonicalPath, source and source-reference capture/count, normalizedName, and before/after identities. A Result is written as a native File external connection to its actual Result HDF. Before returning a receipt, Host reopens the project and confirms the connection through CatalogTreeService.LoadCatalog(Mode=Catalog), corresponding to catalog.tree.load; project.tree.load does not contain external connection nodes. The commit receipt carries the new project snapshot and previous revision, before/after identity, sourceCapture, previousSourceReferencesSHA256 and sourceReferencesSHA256; the client validates it before onContextCommit. A remove may capture a disconnected source with nullable path/SHA. DSS preview is read-only. The views render only returned arrays and metadata: NoData breaks graph lines without interpolation, the source time-series table retains returned timestamps/values/quality array (up to 100 visible rows), paired graph/table appears only when paired data exists, and location fields do not infer a CRS or create a map feature. This UI states that its current read path supports DSS 7; DSS 6 is not connected. The three full-size views reuse the already-returned dss.read arrays without another Host call. The time-series table supports paging, jump-to-row and complete CSV copy/download; the paired table includes all returned curves and source array indexes with complete CSV copy/download; the graph dialog enlarges the existing time-series plot. Null values display as NoData and serialize as blank CSV cells; the returned quality array keeps its source order and is displayed separately without inferred sample pairing."
       },
       {
         "id": "classification-and-manning-editors",
@@ -751,8 +772,30 @@
         "writeBoundary": "Selected arc/control-point factor edits and region quick-size commands use topology.edit with source FIDs; quad quick sizing passes a supported axis, and non-source rows cannot be mutated. Flow-area Name and TargetedCellSpacing edits use geometry.mesh.edit when available; mesh metadata and culvert header summaries are read-only. Unsupported local-only flow-area overrides are not persistence receipts. Supported edits stay in the Geometry workbench draft/undo history; parent model.save is the HDF persistence boundary. These controls do not create a separate model save path."
       },
       {
+        "id": "geometry-mesh-patch-editors",
+        "mount": "GeometryEditor (page=mesh) → GeometryMeshPage → PatchEditor → CartesianPatchQuickEditor / TrianglePatchQuickEditor / QuadPatchQuickEditor",
+        "source": [
+          "frontend/src/features/geometry/GeometryEditor.tsx",
+          "frontend/src/features/geometry/GeometryMeshPage.tsx",
+          "frontend/src/features/geometry/PatchEditor.tsx",
+          "frontend/src/features/geometry/CartesianPatchQuickEditor.tsx",
+          "frontend/src/features/geometry/TrianglePatchQuickEditor.tsx",
+          "frontend/src/features/geometry/QuadPatchQuickEditor.tsx",
+          "frontend/src/features/geometry/QuadPatchQuickEditorDimensionEditor.tsx",
+          "frontend/src/features/geometry/geometryTypes.ts",
+          "frontend/src/features/geometry/useGeometryWorkbench.ts",
+          "backend/Host/GeometryMeshService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The mesh snapshot owns selectedRegionIDs, mapped from current source-region FIDs. PatchEditor dispatches the quick editor from the selected snapshot rows’ patchSizing kind. All edits are scoped to the current model/revision/draftState/topologyDraftState/selection; Quad side-arc choices also retain sourceRevision, topologyFingerprint and source arc FIDs.",
+        "readActions": [
+          "geometry.mesh.load"
+        ],
+        "writeBoundary": "Quick sizing uses geometry.mesh.edit and only current source FIDs. Cartesian combined size is one atomic setCartesianCombinedCellSize mutation on the first selected Cartesian FID; Triangle uses the first selected Triangle FID, while Quad passes the selected Quad region FIDs and source arc identity. Host receipts must preserve revision and selectedRegionIDs. A changed draft enters mesh undo and clears redo; no-op does not add history. Undo/redo reload the existing draftState, and parent model.save is the HDF persistence boundary. PatchType force-setting remains a separate Regions-page topology.edit command, not part of this PatchEditor. This is source wiring only; static inspection is not a build or runtime acceptance."
+      },
+      {
         "id": "geoprocessing-parameter-validation",
-        "mount": "ToolsPageView → GeoprocessingToolControl → ToolGroupButton / ToolRichFlyoutControl → ToolOptionsFlyout / ToolParameterForm / ToolParameterField; persisted-map polyline input → GeoprocessingPolylineSourcePicker → GeoprocessingPolylineExecutionDetails",
+        "mount": "ToolsPageView → GeoprocessingToolControl → ToolGroupButton / ToolRichFlyoutControl → ToolOptionsFlyout / ToolParameterForm / ToolParameterField; saved-map vector input → GeoprocessingVectorSourcePicker → GeoprocessingPolylineExecutionDetails",
         "source": [
           "frontend/src/features/tools/GeoprocessingToolControl.tsx",
           "frontend/src/features/tools/GeoprocessingToolBase.ts",
@@ -761,22 +804,28 @@
           "frontend/src/features/tools/tool-controls/ToolRichFlyoutControl.tsx",
           "frontend/src/features/tools/tool-controls/ToolParameterForm.tsx",
           "frontend/src/features/tools/tool-controls/ToolParameterField.tsx",
-          "frontend/src/features/tools/geoprocessing/GeoprocessingPolylineSourcePicker.tsx",
           "frontend/src/features/tools/geoprocessing/GeoprocessingPolylineExecutionDetails.tsx",
           "frontend/src/features/tools/geoprocessing/geoprocessingSourcePicker.css",
           "backend/Host/MapVectorSourceService.cs",
           "backend/Host/GeoprocessingToolService.cs",
           "backend/Host/GeoprocessingSourceOperations.cs",
-          "backend/Host/BackendWorker.cs"
+          "backend/Host/BackendWorker.cs",
+          "frontend/src/features/tools/geoprocessing/GeoprocessingVectorSourcePicker.tsx",
+          "frontend/src/features/tools/vector-import/vectorImportTypes.ts",
+          "frontend/src/features/tools/attributes/attributeTableTypes.ts",
+          "backend/Host/MapVectorSourceContracts.cs",
+          "backend/Host/MapPolylineGeoprocessService.cs"
         ],
-        "stateOwner": "The tool definition, parameters, input mode, output target and search live in the geoprocessing page. For persisted-polyline tools, the picker reads the current saved-map catalog/tree and captures project path/revision/XML SHA, map identity/.vis revision, exact CatalogTreeNodeLocator, GeoJSON family/source-role revision and stable SourceOrdinal/PartOrdinal path identities. Changing the tool or source invalidates its prior validation/execution owner.",
+        "stateOwner": "Tool definitions, parameters and search remain in the geoprocessing page. Vector input comes from an explicitly selected saved-map CatalogTreeNodeLocator; map identity, project path/revision/XML SHA, .vis revision, canonical source path/SHA, file-family revision, feature identities and stable path identities are captured before execution. The source picker accepts GeoJSON polylines/polygons, Shapefile polylines and refuses Shapefile polygons because the service does not report the required polygon ring grouping. Shapefile lines also require a complete file-family capture and service-confirmed target project WKT. Changing tool/source invalidates prior requests and receipts.",
         "readActions": [
           "map.document.list",
           "map.tree.load",
           "map.vector.source.load",
-          "geoprocessing.validate"
+          "geoprocessing.validate",
+          "workspace.file.inspect",
+          "map.vector.captureShapefile"
         ],
-        "writeBoundary": "map.vector.source.load reads the selected persisted GeoJSON/JSON PolylinesVector node after matching the current project/map owner and locator; captured source vertices retain server-side project X/Y plus Z/M and stable source/part identity. For the seven wired polyline tools, geoprocessing.execute receives the captured source path/revision and identities, project context, target WKT and Clipboard output choice; the UI validates returned captured identities/count/kind before showing text preview and copy/download controls or a JSON receipt download. File, Shapefile and Map Layer outputs remain disabled. The operation is wired in source but has not received real browser/tool execution acceptance; parameter validation alone is not execution evidence."
+        "writeBoundary": "The currently wired vector operation set includes the existing Filter, Smooth, Reverse, CullByLength, DensifyPolylines, MergePolylines and LineOffset operations, plus BufferPolyline, PolylineToPolygon, BufferPolygon, DensifyPolygons and PolygonToPolyline. geoprocessing.execute uses only the captured source path/revision and returned feature/path identities with the current project context; the client checks the response identities, counts and output geometry kind before presenting a result. Clipboard returns a service text preview that can be copied or downloaded. Shapefile output is confined to a direct child of the active project Exports folder and is accepted only after workspace.file.inspect and map.vector.captureShapefile verify the primary file and complete output family. Map Layer output remains disabled. This describes mounted source wiring and operation boundaries; validation alone is not execution, and unrelated catalog definitions do not become executable merely because they have parameter forms."
       },
       {
         "id": "geometry-active-features",
@@ -847,7 +896,7 @@
       },
       {
         "id": "unit-calculator-and-unit-selection",
-        "mount": "ToolsPageView → Unit calculator tab → UnitCalculatorPage / UnitCalculator → shared UnitComboBox; EditorWorkbench → SchemaFieldRenderer → UnitAwareNumberField → UnitComboBox",
+        "mount": "ToolsPageView → Unit calculator tab → UnitCalculatorPage / UnitCalculator → shared UnitComboBox; EditorWorkbench → SchemaFieldRenderer → UnitAwareNumberField → UnitComboBox / UnitCalculatorButton",
         "source": [
           "frontend/src/features/tools/index.tsx",
           "frontend/src/features/tools/hydraulics/UnitCalculatorPage.tsx",
@@ -860,14 +909,15 @@
           "frontend/src/features/editors/model.ts",
           "backend/Host/UnitCalculatorService.cs",
           "backend/Host/DisplayUnits.cs",
-          "backend/Host/BackendWorker.cs"
+          "backend/Host/BackendWorker.cs",
+          "frontend/src/controls/UnitCalculatorButton.tsx"
         ],
-        "stateOwner": "UnitCalculatorPage owns the selected unit family/pair, entered values, direction, request generation and displayed conversion receipt. The shared UnitComboBox is a controlled selector. In a schema numeric field, UnitAwareNumberField keeps its display-unit selection locally while the field schema’s source unit/value remains owned by ModelDraft.",
+        "stateOwner": "UnitCalculatorPage owns the selected unit family/pair, entered values, direction, request generation and displayed conversion receipt. The shared UnitComboBox is a controlled selector. In a schema numeric field, UnitAwareNumberField keeps its display-unit selection locally while the source unit/value remains owned by ModelDraft; its UnitCalculatorButton opens a field-scoped dialog tied to field ID, source/display unit IDs and initial source value.",
         "readActions": [
           "model.load display-unit metadata",
           "unitCalculator.load"
         ],
-        "writeBoundary": "unitCalculator.load supplies source/target choices and unitCalculator.convert performs the selected conversion in C#; the calculator result and values remain local and do not write a model. Changing a schema field’s selected display unit alone does not change the field value; editing a displayed value converts it back to the source unit and updates the ordinary parent onFieldChange draft, with model.save remaining the model HDF persistence boundary."
+        "writeBoundary": "unitCalculator.load supplies source/target choices and unitCalculator.convert performs the selected conversion in C#; the calculator result and values remain local. Applying a current conversion calls the existing UnitAwareNumberField update path, which converts back to the schema source unit and validates before changing the ModelDraft; cancel leaves the draft unchanged. Changing a schema field display unit alone does not change its value, and model.save remains the HDF persistence boundary."
       },
       {
         "id": "saved-map-views",
@@ -887,7 +937,27 @@
         "readActions": [
           "map.views.inspect"
         ],
-        "writeBoundary": "map.views.commit creates, renames, deletes, resets extent or updates a shortcut in the saved .vis Views collection using its captured view SHA and visualization revision. The parent accepts a receipt only for the same project and active map and previous visualizationRevision, then advances map revisions, invalidates old raster symbology/legend/tree selection captures and reloads map data. Navigating to a saved extent fits the same canvas viewport; it does not open another map/window. This is source-level wiring only; it does not claim runtime acceptance."
+        "writeBoundary": "map.views.commit creates, renames, deletes, resets extent or updates a shortcut in the saved .vis Views collection using its captured view SHA and visualization revision. MapViewsPanel reports its pending commit state to MapFeaturePage. While a view commit is in flight, the parent disables map-tab switching, new-map creation, refresh/import and guarded entry handlers, preventing a same-project map switch from invalidating the panel generation and dropping a completed receipt. Project-session changes still invalidate the old owner/state. After commit, the parent accepts a receipt only for the same project and active map and previous visualizationRevision, then advances map revisions, invalidates old raster symbology/legend/tree selection captures and reloads map data. Navigating to a saved extent fits the same canvas viewport; it does not open another map/window. This is source-level wiring only; it does not claim runtime acceptance."
+      },
+      {
+        "id": "map-global-vector-symbology-settings",
+        "mount": "MapFeaturePage → map inspector → GlobalSymbologyEditorPage (collapsed Global vector style defaults section)",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/global-symbology/GlobalSymbologyEditorPage.tsx",
+          "frontend/src/features/map/global-symbology/globalSymbologyWorkflow.ts",
+          "frontend/src/features/map/global-symbology/globalSymbology.css",
+          "backend/Host/GlobalSymbologyService.cs",
+          "backend/Host/GlobalSymbologyContracts.cs",
+          "backend/Host/BackendWorker.cs",
+          "backend/Host/MapVectorPlotRenderingService.cs",
+          "backend/Host/MapVectorPlotRenderingContracts.cs"
+        ],
+        "stateOwner": "GlobalSymbologyEditorPage owns a local editable snapshot grouped by layer, save revision and dirty state. Definitions/defaults are supplied by the Host. The user settings file path is chosen by the service (HECRAS_SETTINGS_DIRECTORY may set an isolated root), not by the request; this state is separate from project .ras/.vis styles.",
+        "readActions": [
+          "global.symbology.inspect"
+        ],
+        "writeBoundary": "global.symbology.save submits the complete current style-definition set with expectedRevision; Host validates IDs/values and atomically persists sparse custom vector defaults to the user settings XML, rejecting stale revisions. A renderer uses these defaults only when its request explicitly opts into global fallback (isProjectOverride=false); legacy requests preserve project-style behavior. The current React SVG map canvas does not consume these settings, so saving them does not change its visible symbols. Source wiring only; no build or runtime acceptance is claimed."
       }
     ],
     "stateInvariants": [
@@ -907,7 +977,7 @@
       "Geometry and Plan duplication adopts a receipt only after HDF publication and project association commit."
     ],
     "completionEvidence": "Verify each React interaction and its real data path independently; module presence is not acceptance.",
-    "sourceBoundary": "Current uiMounts describe source-level React component mounts, operation names, state owners and persistence boundaries. They are a relationship map, not evidence of a successful build, browser/Electron interaction, live Host execution, or real-file acceptance. Legacy domainRelations and retained C#/SwiftUI descriptions remain migration-source references and do not establish current React coverage."
+    "sourceBoundary": "Current uiMounts describe source-level React component mounts, operation names, state owners and persistence boundaries. They are a relationship map, not evidence of a successful build, browser/Electron interaction, live Host execution, or real-file acceptance. This Web checkout includes resources/editor-schemas.json from sourceRepository JamesLinYJ/HEC-RAS-2025-Renamed: its 517 inventory entries have unique stable source paths and represent the retained resource-backed C# UI baseline; the same resource also contains 224 schemas and 9 tables. That baseline does not include every supplementary code-created UI class or backing/support object considered by the separate source-repository audit, and the original audit-ui-rewrite.py is not included here. The uiMounts rows group relationships rather than one row per source UI leaf and are not a migration denominator. A basename match between a retained C# source and a React TS/TSX filename is only a file-name candidate; it does not prove semantic correspondence, a mounted route, complete behavior, or acceptance. A strict status inventory must map each stable source ID to the actual React mount and separately classify full, partial, unimplemented, or unverified behavior; no migration percentage is inferred from filename/schema counts."
   },
   "referenceContractScope": {
     "collections": [
@@ -1895,7 +1965,7 @@
       "source": "RetainedCSharpUIInventory",
       "target": "SwiftUIDeclarations",
       "cardinality": "reviewed-source-and-swift-hashes",
-      "semantics": "Separate per-source structure review from backend execution and native acceptance. An unreviewed control is not assumed absent. Supplementary code-created controls and backing objects remain outside the 517-class resource baseline. Run audit-ui-rewrite.py after edits; schema extraction alone does not establish a translated screen."
+      "semantics": "Keep per-source UI structure review separate from backend execution and native/browser acceptance; an unreviewed control is not assumed absent. The retained-source resources/editor-schemas.json resource available in this Web checkout records a historical 517-entry resource-backed C# UI baseline with stable source paths, plus 224 schemas and 9 tables. It excludes supplementary code-created controls and backing/support objects; the original audit-ui-rewrite.py belongs to the retained-source repository and is not present here. The 517 baseline is therefore a valid source reference, but not by itself a total-UI denominator or a measure of current React implementation. A comparable status count requires a deduplicated stable source-ID inventory mapped to actual mounted React paths and manually classified behavior; basename matches and schema extraction alone do not establish a translated screen or feature."
     },
     {
       "id": "map-chrome-state",

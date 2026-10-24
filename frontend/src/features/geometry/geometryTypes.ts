@@ -163,28 +163,56 @@ export interface GeometryMeshSnapshot {
   flowAreas: GeometryMeshFlowArea[];
   regions: GeometryTable;
   selectedRegionIDs: number[];
-  patchSizing?: {
-    state: string;
-    kind?: string | null;
-    message: string;
-    selectedRegionIDs: number[];
-    dimensions: Array<{
-      id: string;
-      title: string;
-      arcCount: number;
-      sizeFunction?: string | null;
-      sizeFunctionHasMismatch: boolean;
-      liveValue?: number | null;
-      liveValueHasMismatch: boolean;
-      canResize: boolean;
-      canApply: boolean;
-      canChangeMode: boolean;
-    }>;
-  } | null;
+  patchSizing?: GeometryMeshPatchSizing | null;
   generationReport?: { succeeded: boolean; partial: boolean; meshWasReplaced: boolean; cellCount?: number | null; messages: string[] } | null;
   prepareSummary?: { succeeded?: boolean | null; failureReason?: string | null; softwareVersion?: string | null; startTime?: string | null; totalDurationSeconds?: number | null; prepareLog?: string | null } | null;
   preparePending: boolean;
 }
+
+export interface GeometryMeshPatchSizing {
+  state: string;
+  kind?: string | null;
+  message: string;
+  selectedRegionIDs: number[];
+  dimensions: GeometryMeshPatchDimension[];
+}
+
+export interface GeometryMeshPatchDimension {
+  id: string;
+  title: string;
+  arcCount: number;
+  sizeFunction?: string | null;
+  sizeFunctionHasMismatch: boolean;
+  liveValue?: number | null;
+  liveValueHasMismatch: boolean;
+  canResize: boolean;
+  canApply: boolean;
+  canChangeMode: boolean;
+  sideArcSelection?: GeometryMeshPatchArcSelection | null;
+  sideArcIssues?: Array<{ regionFID: number; axis: string; code: string; message: string }> | null;
+}
+
+export interface GeometryMeshPatchArcSelection {
+  sourceRevision: string;
+  topologyFingerprint: string;
+  selectedRegionIDs: number[];
+  axis: string;
+  arcFeatureIDs: number[];
+}
+
+export interface GeometryMeshPatchEditContext {
+  revision: string;
+  draftState: string;
+  topologyFingerprint: string;
+  selectedRegionIDs: number[];
+}
+
+export type GeometryMeshPatchMutation =
+  | { operation: 'setPatchField'; featureIDs: number[]; fieldID: string; value: string }
+  | { operation: 'resizePatch'; featureIDs: number[]; value: '0.5' | '2'; axis?: 'NorthSouth' | 'EastWest' }
+  | { operation: 'setPatchDimensionMode'; featureIDs: number[]; axis: 'NorthSouth' | 'EastWest'; value: 'Constant' | 'CountWithBias' }
+  | { operation: 'applyPatchDimension'; featureIDs: number[]; axis: 'NorthSouth' | 'EastWest'; value: string }
+  | { operation: 'setCartesianCombinedCellSize'; featureIDs: number[]; value: string };
 
 export interface GeometryMeshDegreeScan {
   maxFacesPerNode: number;

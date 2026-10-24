@@ -12,6 +12,7 @@ export function ConstantPayloadEditor({ line, payload, ...props }: EditorPagePro
     ?? { id: 'ConstantPayload_Value', title: 'Value', kind: 'number', sourceType: 'double' };
   const unit = line.newPayload?.constantUnits[payload.variable];
   return <UnitAwareNumberField
+    backend={props.backend}
     id={`payload-${payload.id}-constant-value`}
     title={props.language === 'zh' ? '恒定值' : 'Constant value'}
     value={value}

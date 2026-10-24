@@ -1576,15 +1576,39 @@ internal static class GeoprocessingSourceOperations
 
     private static GeoprocessingPolygonOutput CreatePolygonOutput(ComplexPolygon polygon, int index)
     {
-        Polygon outer = polygon.Rings[0];
-        Polygon[] holes = polygon.Rings.Skip(1).ToArray();
+        var outer = PolygonOutputRing(polygon.Rings[0]);
+        var holes = polygon.Rings.Skip(1).Select(PolygonOutputRing).ToArray();
         return new("geoprocessing-polygon-feature:" + index.ToString(CultureInfo.InvariantCulture),
             "geoprocessing-polygon-path:" + index.ToString(CultureInfo.InvariantCulture), index, 0,
-            PolygonCoordinates(outer), GeoprocessingToolService.ToOrdinates(outer.HasZ ? outer.Z : null),
-            GeoprocessingToolService.ToOrdinates(outer.HasM ? outer.M : null),
-            holes.Select(PolygonCoordinates).ToArray(),
-            holes.Select(ring => GeoprocessingToolService.ToOrdinates(ring.HasZ ? ring.Z : null)).ToArray(),
-            holes.Select(ring => GeoprocessingToolService.ToOrdinates(ring.HasM ? ring.M : null)).ToArray());
+            outer.Coordinates, outer.ZValues, outer.MValues,
+            holes.Select(ring => ring.Coordinates).ToArray(),
+            holes.Select(ring => ring.ZValues).ToArray(),
+            holes.Select(ring => ring.MValues).ToArray());
+    }
+
+    private static (double[][] Coordinates, string[]? ZValues, string[]? MValues) PolygonOutputRing(Polygon polygon)
+    {
+        // The retained geometry library closes rings implicitly. Public polygon
+        // results also feed GeoJSON and Shapefile output, whose rings must carry
+        // the closing vertex explicitly, including its corresponding Z/M.
+        double[][] coordinates = PolygonCoordinates(polygon);
+        string[]? zValues = GeoprocessingToolService.ToOrdinates(polygon.HasZ ? polygon.Z : null);
+        string[]? mValues = GeoprocessingToolService.ToOrdinates(polygon.HasM ? polygon.M : null);
+        if (coordinates.Length < 3 || coordinates.Any(point => !double.IsFinite(point[0]) || !double.IsFinite(point[1]))
+            || (zValues is not null && zValues.Length != coordinates.Length)
+            || (mValues is not null && mValues.Length != coordinates.Length))
+            throw new InvalidDataException("The polygon result contains an invalid ring or mismatched ordinates.");
+        if (coordinates[0][0] != coordinates[^1][0] || coordinates[0][1] != coordinates[^1][1]
+            || (zValues is not null && zValues[0] != zValues[^1])
+            || (mValues is not null && mValues[0] != mValues[^1]))
+        {
+            coordinates = [.. coordinates, coordinates[0].ToArray()];
+            if (zValues is not null) zValues = [.. zValues, zValues[0]];
+            if (mValues is not null) mValues = [.. mValues, mValues[0]];
+        }
+        if (coordinates.Length < 4)
+            throw new InvalidDataException("The polygon result contains a degenerate ring.");
+        return (coordinates, zValues, mValues);
     }
 
     private static double[][] PolygonCoordinates(Polygon polygon)

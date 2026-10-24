@@ -5,11 +5,13 @@ import { editorTableTitle } from './editorLocalization';
 import { RasterTerrainInputProperties } from './RasterTerrainInputProperties';
 import { FunctionalTerrainInputProperties } from './FunctionalTerrainInputProperties';
 import { ChannelModTerrainInputProperties } from './ChannelModTerrainInputProperties';
+import { TerrainInputLayerPicker } from './TerrainInputLayerPicker';
+import { TerrainInputStats } from './TerrainInputStats';
+import { PolygonRasterModificationLayerProperties } from './PolygonRasterModificationLayerProperties';
 import { DetailedTerrainHeader } from './DetailedTerrainHeader';
 import { DetailedTerrainInputHeader } from './DetailedTerrainInputHeader';
 import { TerrainAddControl } from './TerrainAddControl';
 import { LeveeModTerrainInputEditor } from './LeveeModTerrainInputEditor';
-import { LeveeModsTable } from './LeveeModsTable';
 
 const selectedInputField = 'TerrainLayersEditor/SelectedInputWithMap';
 const channelFeatureTableID = 'ChannelModEditor/Features';
@@ -58,24 +60,20 @@ export function TerrainLayersEditor(props: EditorPageProps) {
   const tableByID = terrain?.tables ?? {};
   const channelSchemaSelected = selected.schema === 'ChannelModTerrainInputProperties';
   const hasLeveeTables = selectedInputIsLoaded && (tableByID[leveeFeatureTableID] !== undefined || tableByID[leveePropertyTableID] !== undefined);
-  const selectedIndex = inputs.findIndex((input) => input.id === selected.id);
   const transform = props.onTerrainTransform;
-
-  const runTransform = (command: Parameters<NonNullable<EditorPageProps['onTerrainTransform']>>[0]) => { void transform?.(command); };
 
   return (
     <section className="editor-schema-page editor-terrain-inputs">
       <DetailedTerrainHeader language={language} snapshot={projectedSnapshot} draft={draft} />
       <div className="editor-terrain-layout">
-        <nav className="editor-line-list" aria-label={language === 'zh' ? '地形输入' : 'Terrain inputs'}>
-          {inputs.map((input) => <button type="button" key={input.id} className={input.id === selected.id ? 'selected' : ''} disabled={!transform} onClick={() => runTransform({ operation: 'selectInput', itemId: input.id })}>
-            {draft.fields[`${input.scope}/Name`] ?? input.name}<small>{input.error ? (language === 'zh' ? '有错误' : 'Error') : (language === 'zh' ? '地形输入' : 'Terrain input')}</small>
-          </button>)}
+        <div className="editor-terrain-picker-column">
+          <TerrainInputLayerPicker language={language} inputs={inputs} selectedId={selected.id} names={draft.fields} canEdit={snapshot.canEdit} onTerrainTransform={transform} />
           <TerrainAddControl language={language} canEdit={snapshot.canEdit} onTerrainTransform={transform} />
-        </nav>
+        </div>
         <div className="editor-terrain-content">
           <article className="editor-terrain-card">
             <DetailedTerrainInputHeader language={language} input={selected} canEdit={snapshot.canEdit} value={draft.fields[selectedInputNameField] ?? selected.name} onNameChange={props.onFieldChange} onRemove={transform} />
+            <TerrainInputStats language={language} inputs={inputs} input={selected} />
             {inputSchema && selected.schema === 'RasterTerrainInputProperties' && <RasterTerrainInputProperties {...projectedProps} selected={selected} schema={inputSchema} fieldKeyPrefix={fieldKeyPrefix} />}
             {inputSchema && selected.schema === 'FunctionalTerrainInputProperties' && <FunctionalTerrainInputProperties {...projectedProps} selected={selected} schema={inputSchema} fieldKeyPrefix={fieldKeyPrefix} />}
             {inputSchema && selected.schema === 'ChannelModTerrainInputProperties' && <ChannelModTerrainInputProperties {...projectedProps} selected={selected} schema={inputSchema} fieldKeyPrefix={fieldKeyPrefix} selectedInputIsLoaded={selectedInputIsLoaded} />}
@@ -90,10 +88,6 @@ export function TerrainLayersEditor(props: EditorPageProps) {
               onImagesChange={props.onImagesChange}
               language={language}
             />}
-            {transform && <div className="editor-button-row">
-              <button type="button" className="editor-button" disabled={!snapshot.canEdit || selectedIndex <= 0} onClick={() => runTransform({ operation: 'reorder', from: selectedIndex, to: selectedIndex - 1 })}>{language === 'zh' ? '上移图层' : 'Move layer up'}</button>
-              <button type="button" className="editor-button" disabled={!snapshot.canEdit || selectedIndex < 0 || selectedIndex >= inputs.length - 1} onClick={() => runTransform({ operation: 'reorder', from: selectedIndex, to: selectedIndex + 1 })}>{language === 'zh' ? '下移图层' : 'Move layer down'}</button>
-            </div>}
           </article>
 
           {hasLeveeTables && <LeveeModTerrainInputEditor {...projectedProps} selected={selected} />}
@@ -103,7 +97,7 @@ export function TerrainLayersEditor(props: EditorPageProps) {
             if (hasLeveeTables && [leveeFeatureTableID, leveePropertyTableID, leveeProfileTableID].includes(tableID)) return null;
             const modelTable = table as ModelTable;
             const rows = draft.rows[tableID] ?? terrain?.rows?.[tableID] ?? [];
-            if (tableID === polygonFeatureTableID) return <LeveeModsTable key={tableID} tableID={tableID} title={tableTitle(tableID, language)} table={modelTable} rows={rows} language={language} canEdit={snapshot.canEdit} onCellChange={props.onRowCellChange} onTransform={transform} selectionMode="multiple" />;
+            if (tableID === polygonFeatureTableID) return <PolygonRasterModificationLayerProperties key={tableID} language={language} tableID={tableID} table={modelTable} rows={rows} canEdit={snapshot.canEdit} onCellChange={props.onRowCellChange} onTransform={transform} />;
             return <article className="editor-terrain-card" key={tableID}>
               <div className="editor-terrain-table-heading"><h3>{tableTitle(tableID, language)}</h3><span>{rows.length} {language === 'zh' ? '行' : 'rows'}</span></div>
               <ModelDataTable tableID={tableID} rows={rows} columns={modelTable.columns} canEdit={snapshot.canEdit} onCellChange={props.onRowCellChange} language={language} />

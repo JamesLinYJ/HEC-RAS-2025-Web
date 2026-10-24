@@ -18,6 +18,7 @@ import type { CatalogTreeSnapshot } from '../project/CatalogTreeSnapshot';
 import type { BoundaryInitialConditionsInspection, BoundaryInitialConditionsOperationState, BoundaryInitialConditionsReceipt, BoundaryInitialConditionsStatus, BoundaryInitialConditionsWorkflow, BoundaryResultCatalogItem } from './model';
 import { AttachInitialConditionsDialog } from './AttachInitialConditionsDialog';
 import { ModelAssociationsPanel } from './associations/ModelAssociationsPanel';
+import type { TerrainTopologyResponse } from './terrainTopologyTypes';
 
 type DisplayMode = 'model' | 'catalog';
 interface SourceContext { context: WorkbenchContext; owner: string }
@@ -1378,6 +1379,86 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     }
   };
 
+  const onTerrainTopology: NonNullable<PageProps['onTerrainTopology']> = async (command) => {
+    const baseline = snapshotRef.current;
+    const currentDraft = draftRef.current;
+    const terrain = currentDraft?.terrainView ?? baseline?.terrain;
+    if (activeSave.current || busy || !baseline || !currentDraft || !asset || !terrain
+      || !baseline.canEdit || !source.context.projectPath
+      || !backend.supports('model.terrainTopology') || !backend.supports('model.save')) return null;
+    if (validations.length || command.inputId !== terrain.selectedId) {
+      setSaveErrors(validations);
+      setSaveMessage(text(language, '请先修正草稿中的无效值，并重新选择渠道输入。', 'Correct invalid draft values and reselect the channel input.'));
+      return null;
+    }
+    const requestState = { owner: source.owner, controller: new AbortController() };
+    const requestGeneration = generation.current;
+    const isCurrentRequest = () => activeSave.current === requestState
+      && activeOwner.current === requestState.owner && generation.current === requestGeneration
+      && !requestState.controller.signal.aborted;
+    const readOnly = new Set([...(baseline.readOnlyFields ?? []), ...(currentDraft.terrainReadOnlyFields ?? [])]);
+    const fields = Object.fromEntries(Object.entries(currentDraft.fields).filter(([id, value]) => {
+      if (Object.prototype.hasOwnProperty.call(currentDraft.terrainSelectionBaselineFields ?? {}, id)
+        && value === currentDraft.terrainSelectionBaselineFields?.[id]) return false;
+      return value !== baseline.fields[id] && !readOnly.has(id);
+    }));
+    fields['TerrainLayersEditor/SelectedInputWithMap'] = terrain.selectedId ?? '';
+    const model = {
+      ...modelRequest(source.context, asset), revision: baseline.revision, fields, images: {},
+      sourceState: currentDraft.sourceState ?? baseline.sourceState ?? sourceStateFor(asset) ?? null,
+      rows: currentDraft.rows, samples: samplesForBoundaryDraft(baseline, currentDraft),
+      tableSelections: Object.fromEntries(Object.entries(terrain.tables ?? {}).flatMap(([id, table]) => {
+        const selection = table.selectedRowIDs ?? table.requestedSelectionRowIDs;
+        return selection ? [[id, selection]] : [];
+      })),
+      changedCells: changedModelCells(currentDraft, snapshotRows(baseline)),
+    };
+    activeSave.current = requestState;
+    setBusy(true);
+    setSaveMessage('');
+    setSaveErrorDetails('');
+    setSaveErrors([]);
+    try {
+      const result = await backend.request<TerrainTopologyResponse>('model.terrainTopology',
+        { ...command, model }, { signal: requestState.controller.signal });
+      if (!isCurrentRequest()) return null;
+      assertModelSnapshot(result.snapshot);
+      if (result.snapshot.revision !== baseline.revision || !result.snapshot.terrain
+        || typeof result.snapshot.sourceState !== 'string' || !result.snapshot.sourceState
+        || result.topology?.inputId !== command.inputId || result.topology.sourceRevision !== baseline.revision
+        || !isSha256(result.topology.draftIdentity) || !Array.isArray(result.topology.features)
+        || !Array.isArray(result.topology.selectedFeatureIDs)
+        || result.snapshot.terrain.selectedId !== command.inputId)
+        throw new Error('The channel topology response does not match the captured terrain draft.');
+      const beforeIDs = terrain.inputs.map((input) => input.id);
+      const afterIDs = result.snapshot.terrain.inputs.map((input) => input.id);
+      const featureIDs = result.topology.features.map((feature) => feature.id);
+      if (JSON.stringify(beforeIDs) !== JSON.stringify(afterIDs) || featureIDs.some((id) => !id)
+        || new Set(featureIDs).size !== featureIDs.length
+        || result.topology.selectedFeatureIDs.some((id) => !featureIDs.includes(id)))
+        throw new Error('The channel topology response changed the captured input or feature identities.');
+      setDraft((current) => {
+        if (!current || activeOwner.current !== requestState.owner || generation.current !== requestGeneration) return current;
+        return projectTerrainSnapshot(baseline, current, result.snapshot);
+      });
+      setSaveMessage(command.operation === 'load' || command.operation === 'select'
+        ? text(language, '渠道拓扑选择已更新。', 'Channel topology selection updated.')
+        : text(language, '渠道拓扑更改已进入父地形草稿；保存后才写入文件。', 'Channel topology changes are in the parent terrain draft. Save to write the file.'));
+      return result;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setSaveMessage(text(language, '渠道拓扑操作失败。', 'The channel topology operation failed.'));
+        setSaveErrorDetails(message(error));
+      }
+      return null;
+    } finally {
+      if (activeSave.current === requestState) {
+        activeSave.current = null;
+        setBusy(false);
+      }
+    }
+  };
+
   const onClassificationTransform: PageProps['onClassificationTransform'] = async (command: ClassificationTransformCommand) => {
     setSaveErrorDetails('');
     if (activeSave.current || busy) return false;
@@ -1867,7 +1948,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       : undefined;
 
   const pageProps: EditorPageProps | null = snapshot && draft && asset ? {
-    language, asset, snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
+    backend, language, asset, snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
     pageId: activePageID, onPageChange: (next) => requestTransition({ kind: 'page', pageID: next }),
     onFieldChange, onImagesChange, onRowCellChange, onSampleChange,
     ...(boundaryInitialConditionsWorkflow ? { boundaryInitialConditions: boundaryInitialConditionsWorkflow } : {}),
@@ -1883,6 +1964,10 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     ...(source.context.projectPath && backend.supports('model.gridFrame') ? { onGridFrame } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.gridImport') && backend.supports('model.save') ? { onGridImport } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.terrainTransform') && backend.supports('model.save') ? { onTerrainTransform } : {}),
+    canEditTerrainTopology: snapshot.canEdit && !!source.context.projectPath && !busy && validations.length === 0
+      && backend.supports('model.terrainTopology') && backend.supports('model.save'),
+    ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.terrainTopology')
+      && backend.supports('model.save') ? { onTerrainTopology } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.classificationTransform') && backend.supports('model.save') ? { onClassificationTransform } : {}),
     ...(!!source.context.projectPath && backend.supports('model.classificationMap') ? { onClassificationMap } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.manningTransform') && backend.supports('model.save') ? { onManningTransform } : {}),
@@ -2221,6 +2306,30 @@ function assertModelSnapshot(value: unknown): asserts value is ModelSnapshot {
 
 function requestIdentity(): string {
   return globalThis.crypto?.randomUUID?.() ?? 'edit-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
+function projectTerrainSnapshot(baseline: ModelSnapshot, current: ModelDraft, result: ModelSnapshot): ModelDraft {
+  const projected = createModelDraft(result);
+  const previous = current.terrainSelectionBaselineFields ?? {};
+  const selectionFields = new Set([
+    ...Object.keys(previous), ...Object.keys(result.fields).filter((id) => id.startsWith('TerrainSelection/')),
+    'TerrainLayersEditor/SelectedInputWithMap',
+  ]);
+  const selectionBaselines: Record<string, string | null> = {};
+  for (const id of selectionFields) {
+    const before = Object.prototype.hasOwnProperty.call(current.fields, id) ? current.fields[id] : null;
+    const initial = Object.prototype.hasOwnProperty.call(previous, id) ? previous[id]
+      : Object.prototype.hasOwnProperty.call(baseline.fields, id) ? baseline.fields[id] : null;
+    if (before === initial)
+      selectionBaselines[id] = Object.prototype.hasOwnProperty.call(result.fields, id) ? result.fields[id] : null;
+  }
+  const next: ModelDraft = {
+    ...current, sourceState: projected.sourceState, fields: projected.fields, rows: projected.rows,
+    samples: projected.samples, sampleText: projected.sampleText,
+    terrainView: result.terrain, terrainReadOnlyFields: result.readOnlyFields ?? [],
+    terrainSelectionBaselineFields: selectionBaselines,
+  };
+  return { ...next, changedCells: changedModelCells(next, snapshotRows(baseline)) };
 }
 
 function emptyDraft(): ModelDraft {

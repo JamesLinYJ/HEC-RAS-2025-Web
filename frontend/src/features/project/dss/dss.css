@@ -148,6 +148,167 @@
   display: block;
 }
 
+.project-dss-window-trigger,
+.project-dss-window-actions button,
+.project-dss-window-pagination button {
+  min-height: 25px;
+  padding: 4px 8px;
+  border: 1px solid rgba(123, 173, 160, .24);
+  border-radius: 4px;
+  color: #b5d4c9;
+  background: rgba(22, 64, 66, .35);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-dss-window-trigger {
+  margin: 5px 5px 2px 0;
+  font-size: 7px;
+}
+
+.project-dss-dialog {
+  box-sizing: border-box;
+  width: min(1080px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(125, 170, 180, .28);
+  border-radius: 8px;
+  color: #c5d5da;
+  background: #0b202a;
+  box-shadow: 0 18px 70px rgba(0, 0, 0, .5);
+}
+
+.project-dss-dialog::backdrop {
+  background: rgba(2, 10, 14, .72);
+  backdrop-filter: blur(2px);
+}
+
+.project-dss-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(135, 171, 187, .14);
+}
+
+.project-dss-dialog-header h2 {
+  margin: 0;
+  color: #a1c9b8;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.project-dss-dialog-header button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(135, 171, 187, .18);
+  border-radius: 4px;
+  color: #a9c0c8;
+  background: #102f3a;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.project-dss-dialog-content {
+  max-height: calc(100vh - 75px);
+  padding: 12px 16px 16px;
+  overflow: auto;
+}
+
+.project-dss-dialog .project-dss-window-source {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+  color: #96acb5;
+  font-size: 10px;
+}
+
+.project-dss-dialog .project-dss-window-source code {
+  color: #b2c5cb;
+  overflow-wrap: anywhere;
+}
+
+.project-dss-dialog .project-dss-window-source p {
+  margin: 2px 0;
+  color: #ddb47b;
+}
+
+.project-dss-window-actions,
+.project-dss-window-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 0;
+  color: #9cb0b6;
+  font-size: 9px;
+}
+
+.project-dss-window-actions small {
+  flex-basis: 100%;
+  color: #748d97;
+}
+
+.project-dss-window-actions [role="status"] {
+  color: #a9d3bf;
+}
+
+.project-dss-window-pagination label,
+.project-dss-window-pagination form {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.project-dss-window-pagination select,
+.project-dss-window-pagination input {
+  min-height: 25px;
+  max-width: 90px;
+  padding: 3px 5px;
+  border: 1px solid rgba(134, 169, 184, .18);
+  border-radius: 4px;
+  color: #c5d5da;
+  background: #0c2733;
+  font: inherit;
+}
+
+.project-dss-window-pagination button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.project-dss-dialog .project-dss-window-table-scroll {
+  max-height: min(62vh, 740px);
+  overflow: auto;
+}
+
+.project-dss-dialog .project-dss-window-table-scroll table {
+  min-width: 100%;
+  font-size: 10px;
+}
+
+.project-dss-dialog .project-dss-window-table-scroll th,
+.project-dss-dialog .project-dss-window-table-scroll td {
+  padding: 6px 8px;
+}
+
+.project-dss-dialog .project-dss-window-table-scroll tr.is-jump-target {
+  background: rgba(107, 164, 135, .18);
+}
+
+.project-dss-dialog .project-dss-time-series-svg {
+  min-height: 300px;
+}
+
+.project-dss-window-qualities pre {
+  max-height: 260px;
+}
+
 .project-dss-source-qualities pre {
   max-height: 110px;
   overflow: auto;

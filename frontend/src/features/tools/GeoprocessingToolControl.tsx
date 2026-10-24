@@ -7,7 +7,9 @@ import { GeoprocessingInputDetails } from './GeoprocessingInputDetails';
 import { GeoprocessingOutputDetails } from './GeoprocessingOutputDetails';
 import { readProjectProjection } from './geoprocessingUi';
 import { GeoprocessingPolylineExecutionDetails, type GeoprocessingExecutionView, type GeoprocessingPolylineResult } from './geoprocessing/GeoprocessingPolylineExecutionDetails';
-import { GeoprocessingPolylineSourcePicker, type GeoprocessingPolylineInput, type GeoprocessingSourceSelection } from './geoprocessing/GeoprocessingPolylineSourcePicker';
+import { GeoprocessingVectorSourcePicker, type GeoprocessingPolygonInput, type GeoprocessingPolylineInput, type GeoprocessingSourceSelection } from './geoprocessing/GeoprocessingVectorSourcePicker';
+import { inspectShapefileFamily } from './vector-import/vectorImportTypes';
+import { sameSourcePath } from './attributes/attributeTableTypes';
 import { ReprojectionToolControl } from './ReprojectionToolControl';
 import { ToolGroupButton } from './tool-controls/ToolGroupButton';
 import { ToolOptionsCog } from './tool-controls/ToolOptionsCog';
@@ -21,6 +23,7 @@ type Props = FeaturePageProps & { onDirtyStateChange?: (owner: string, dirty: bo
 type ValidationResult = { validationIssues: Array<{ field: string; message: string; severity: string }> };
 type FieldValues = GeoprocessingFieldValues;
 const supportedPolylineOperations = new Set(['Filter', 'Smooth', 'Reverse', 'CullByLength', 'DensifyPolylines', 'MergePolylines', 'LineOffset']);
+const supportedVectorOperations = new Set([...supportedPolylineOperations, 'BufferPolyline', 'PolylineToPolygon', 'BufferPolygon', 'DensifyPolygons', 'PolygonToPolyline']);
 
 function projectDirectory(path: string): string {
   if (!path.trim()) throw new Error('工程路径为空。');
@@ -41,15 +44,21 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string');
 }
 
-function parsePolylineResult(value: unknown, operation: string, expectedPathIDs: string[]): GeoprocessingPolylineResult {
+function parseVectorResult(value: unknown, operation: string, inputKind: 'Polyline' | 'Polygon', outputKind: 'Polyline' | 'Polygon',
+  expectedPathIDs: string[], outputHandler: 'Clipboard' | 'Shapefile'): GeoprocessingPolylineResult {
   if (!isRecord(value) || typeof value.canExecute !== 'boolean' || value.operation !== operation ||
       typeof value.outputTitle !== 'string' || !value.outputTitle.trim() ||
       !Number.isInteger(value.inputLineCount) || !Number.isInteger(value.outputLineCount) ||
+      !(value.inputPolygonCount === undefined || Number.isInteger(value.inputPolygonCount)) ||
+      !(value.outputPolygonCount === undefined || Number.isInteger(value.outputPolygonCount)) ||
       !(value.outputPath === null || typeof value.outputPath === 'string') ||
       !(value.clipboardText === null || typeof value.clipboardText === 'string') ||
-      !Array.isArray(value.outputs) || !Array.isArray(value.validationIssues) || !isStringArray(value.capturedPathIdentities) ||
+      !(value.outputFormat === null || value.outputFormat === undefined || typeof value.outputFormat === 'string') ||
+      !Array.isArray(value.outputs) || !Array.isArray(value.validationIssues) ||
+      !(value.capturedPathIdentities === undefined || value.capturedPathIdentities === null || isStringArray(value.capturedPathIdentities)) ||
+      !(value.capturedPolygonPathIdentities === undefined || value.capturedPolygonPathIdentities === null || isStringArray(value.capturedPolygonPathIdentities)) ||
       typeof value.outputKind !== 'string') {
-    throw new Error('服务端返回的折线执行回执格式无效。');
+    throw new Error('服务端返回的矢量执行回执格式无效。');
   }
   const issues = value.validationIssues.map(issue => {
     if (!isRecord(issue) || typeof issue.field !== 'string' || typeof issue.message !== 'string' || typeof issue.severity !== 'string') {
@@ -83,18 +92,91 @@ function parsePolylineResult(value: unknown, operation: string, expectedPathIDs:
       ...(mValues ? { mValues } : {}),
     };
   });
+  const polygonRaw = value.polygonOutputs;
+  if (!(polygonRaw === undefined || polygonRaw === null || Array.isArray(polygonRaw))) {
+    throw new Error('服务端返回的多边形输出格式无效。');
+  }
+  const polygonOutputs: GeoprocessingPolylineResult['polygonOutputs'] = (Array.isArray(polygonRaw) ? polygonRaw : []).map(output => {
+    if (!isRecord(output) || typeof output.featureIdentity !== 'string' || !output.featureIdentity.trim() ||
+        typeof output.pathIdentity !== 'string' || !output.pathIdentity.trim() ||
+        !Number.isInteger(output.sourceFeatureIndex) || (output.sourceFeatureIndex as number) < 0 ||
+        !Number.isInteger(output.pathIndex) || (output.pathIndex as number) < 0 || !Array.isArray(output.coordinates) ||
+        output.coordinates.length < 4 || !output.coordinates.every(point => Array.isArray(point) && point.length === 2 &&
+          point.every(coordinate => typeof coordinate === 'number' && Number.isFinite(coordinate))) ||
+        !(output.zValues === null || output.zValues === undefined || isStringArray(output.zValues)) ||
+        !(output.mValues === null || output.mValues === undefined || isStringArray(output.mValues)) ||
+        !(output.holes === null || output.holes === undefined || Array.isArray(output.holes)) ||
+        !(output.holeZValues === null || output.holeZValues === undefined || Array.isArray(output.holeZValues)) ||
+        !(output.holeMValues === null || output.holeMValues === undefined || Array.isArray(output.holeMValues))) {
+      throw new Error('服务端返回的多边形输出包含无效身份、环或坐标。');
+    }
+    const coordinates = output.coordinates as number[][];
+    if (coordinates[0]![0] !== coordinates[coordinates.length - 1]![0] ||
+        coordinates[0]![1] !== coordinates[coordinates.length - 1]![1]) {
+      throw new Error('服务端返回的多边形外环未闭合。');
+    }
+    const holesRaw = Array.isArray(output.holes) ? output.holes : [];
+    if (!holesRaw.every(ring => Array.isArray(ring) && ring.length >= 4 && ring.every(point => Array.isArray(point) && point.length === 2 &&
+      point.every(coordinate => typeof coordinate === 'number' && Number.isFinite(coordinate))) &&
+      ring[0]![0] === ring[ring.length - 1]![0] && ring[0]![1] === ring[ring.length - 1]![1])) {
+      throw new Error('服务端返回的多边形洞环未闭合或坐标无效。');
+    }
+    const zValues = isStringArray(output.zValues) ? output.zValues : undefined;
+    const mValues = isStringArray(output.mValues) ? output.mValues : undefined;
+    const holeZRaw = Array.isArray(output.holeZValues) ? output.holeZValues : [];
+    const holeMRaw = Array.isArray(output.holeMValues) ? output.holeMValues : [];
+    const validHoleOrdinates = (items: unknown[], dimension: string): Array<string[] | null> => {
+      if (items.length !== holesRaw.length || !items.every(item => item === null || isStringArray(item))) {
+        throw new Error(`服务端返回的多边形洞环 ${dimension} 维度数量不匹配。`);
+      }
+      return items.map((item, index) => {
+        if (item === null) return null;
+        if ((item as string[]).length !== holesRaw[index]!.length) throw new Error(`服务端返回的多边形洞环 ${dimension} 顶点数量不匹配。`);
+        return item as string[];
+      });
+    };
+    if ((zValues && zValues.length !== coordinates.length) || (mValues && mValues.length !== coordinates.length)) {
+      throw new Error('服务端多边形外环 Z/M 顶点数量不匹配。');
+    }
+    return {
+      featureIdentity: output.featureIdentity,
+      pathIdentity: output.pathIdentity,
+      sourceFeatureIndex: output.sourceFeatureIndex as number,
+      pathIndex: output.pathIndex as number,
+      coordinates,
+      ...(zValues ? { zValues } : {}),
+      ...(mValues ? { mValues } : {}),
+      holes: holesRaw as number[][][],
+      holeZValues: validHoleOrdinates(holeZRaw, 'Z'),
+      holeMValues: validHoleOrdinates(holeMRaw, 'M'),
+    };
+  });
   const inputLineCount = value.inputLineCount as number;
   const outputLineCount = value.outputLineCount as number;
-  const capturedPathIdentities = value.capturedPathIdentities;
-  if (inputLineCount !== expectedPathIDs.length || capturedPathIdentities.length !== expectedPathIDs.length ||
-      capturedPathIdentities.some((identity, index) => identity !== expectedPathIDs[index])) {
+  const inputPolygonCount = (value.inputPolygonCount ?? 0) as number;
+  const outputPolygonCount = (value.outputPolygonCount ?? 0) as number;
+  const capturedPathIdentities = isStringArray(value.capturedPathIdentities) ? value.capturedPathIdentities : [];
+  const capturedPolygonPathIdentities = isStringArray(value.capturedPolygonPathIdentities) ? value.capturedPolygonPathIdentities : [];
+  const captured = inputKind === 'Polyline' ? capturedPathIdentities : capturedPolygonPathIdentities;
+  const inputCount = inputKind === 'Polyline' ? inputLineCount : inputPolygonCount;
+  if (inputCount !== expectedPathIDs.length || captured.length !== expectedPathIDs.length ||
+      captured.some((identity, index) => identity !== expectedPathIDs[index])) {
     throw new Error('服务端回执没有绑定到本次提交的真实输入路径。');
   }
-  if (outputLineCount !== outputs.length || value.outputKind !== 'Polyline') {
-    throw new Error('服务端折线输出数量或几何类型与执行回执不一致。');
+  if (outputLineCount !== outputs.length || outputPolygonCount !== polygonOutputs.length ||
+      (value.canExecute && value.outputKind !== outputKind)) {
+    throw new Error('服务端矢量输出数量或几何类型与执行回执不一致。');
   }
-  if (value.canExecute && (value.outputPath !== null || typeof value.clipboardText !== 'string')) {
-    throw new Error('服务端没有返回可核验的剪贴板文本结果。');
+  if (value.canExecute && outputHandler === 'Clipboard' && (value.outputPath !== null || typeof value.clipboardText !== 'string' ||
+      (value.outputFormat !== null && value.outputFormat !== undefined && value.outputFormat !== (outputKind === 'Polygon' ? 'application/geo+json' : 'application/x-hecras-polylines+json')))) {
+    throw new Error('服务端没有返回与矢量结果类型匹配的文本预览。');
+  }
+  if (value.canExecute && outputHandler === 'Shapefile' && (typeof value.outputPath !== 'string' || !value.outputPath.trim() ||
+      value.clipboardText !== null || (value.outputFormat !== null && value.outputFormat !== undefined && value.outputFormat !== 'application/x-esri-shapefile'))) {
+    throw new Error('服务端没有返回可核验的 Shapefile 输出路径和格式回执。');
+  }
+  if (!value.canExecute && (value.outputPath !== null || value.clipboardText !== null)) {
+    throw new Error('服务端拒绝执行，却返回了输出数据。');
   }
   return {
     canExecute: value.canExecute,
@@ -102,12 +184,18 @@ function parsePolylineResult(value: unknown, operation: string, expectedPathIDs:
     outputTitle: value.outputTitle,
     inputLineCount,
     outputLineCount,
+    inputPolygonCount,
+    outputPolygonCount,
     outputPath: value.outputPath as string | null,
     clipboardText: value.clipboardText as string | null,
+    outputFormat: typeof value.outputFormat === 'string' ? value.outputFormat : null,
     outputs,
+    polygonOutputs,
     validationIssues: issues,
     capturedPathIdentities: [...capturedPathIdentities],
+    capturedPolygonPathIdentities: [...capturedPolygonPathIdentities],
     outputKind: value.outputKind,
+    outputHandler,
   };
 }
 
@@ -145,7 +233,7 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
   const [values, setValues] = useState<FieldValues>(() => initialValues(geoprocessingCatalog[0]!));
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(groups.map(group => group.id)));
   const [inputMode, setInputMode] = useState<'All' | 'Selected'>('All');
-  const [lineSelection, setLineSelection] = useState<GeoprocessingSourceSelection>({ capture: null, inputMode: 'All', selectedPathIDs: [] });
+  const [vectorSelection, setVectorSelection] = useState<GeoprocessingSourceSelection>({ capture: null, inputMode: 'All', selectedPathIDs: [] });
   const [outputName, setOutputName] = useState('');
   const [outputHandler, setOutputHandler] = useState('Clipboard');
   const [showOptions, setShowOptions] = useState(true);
@@ -164,13 +252,14 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
   const ownerRef = useRef(owner); ownerRef.current = owner;
   const [showReprojection, setShowReprojection] = useState(false);
   const activeTool = geoprocessingCatalog.find(tool => tool.id === activeToolId) ?? geoprocessingCatalog[0]!;
-  const isSupportedPolylineTool = supportedPolylineOperations.has(activeTool.operation);
-  const activeInputMode = isSupportedPolylineTool ? lineSelection.inputMode : inputMode;
-  const activeOutputHandler = isSupportedPolylineTool ? 'Clipboard' : outputHandler;
+  const isSupportedVectorTool = supportedVectorOperations.has(activeTool.operation) &&
+    (activeTool.inputKind === 'Polyline' || activeTool.inputKind === 'Polygon');
+  const activeInputMode = isSupportedVectorTool ? vectorSelection.inputMode : inputMode;
+  const activeOutputHandler = outputHandler;
   const defaults = initialValues(activeTool);
   const dirty = outputName !== '' || activeInputMode !== 'All' || activeOutputHandler !== (activeTool.outputKind === 'Raster' ? 'Tiff' : 'Clipboard') || JSON.stringify(values) !== JSON.stringify(defaults);
-  const fileOutput = !isSupportedPolylineTool && ['Shapefile', 'Map Layer', 'Tiff', 'CSV File', 'Text File'].includes(outputHandler);
-  const outputOptions = isSupportedPolylineTool ? ['Clipboard'] : activeTool.outputKind === 'Raster' ? ['Tiff', 'Map Layer']
+  const fileOutput = isSupportedVectorTool ? outputHandler === 'Shapefile' : ['Shapefile', 'Map Layer', 'Tiff', 'CSV File', 'Text File'].includes(outputHandler);
+  const outputOptions = isSupportedVectorTool ? ['Clipboard', 'Shapefile'] : activeTool.outputKind === 'Raster' ? ['Tiff', 'Map Layer']
     : activeTool.outputKind === 'Text' ? ['Clipboard', 'CSV File', 'Text File']
       : ['Clipboard', 'Shapefile', 'Map Layer'];
   const executeAvailable = backend.supports('geoprocessing.execute');
@@ -195,7 +284,7 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
     invalidateValidation();
     invalidateExecution();
     setValues(initialValues(activeTool)); setOutputName(''); setInputMode('All');
-    setLineSelection(current => ({ ...current, inputMode: 'All' }));
+    setVectorSelection(current => ({ ...current, inputMode: 'All' }));
     setOutputHandler(activeTool.outputKind === 'Raster' ? 'Tiff' : 'Clipboard');
     setShowOptions(true);
   }, [activeTool.id, invalidateExecution, invalidateValidation]);
@@ -229,8 +318,8 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
   const setInputSelection = (value: 'All' | 'Selected'): void => { invalidateValidation(); invalidateExecution(); setInputMode(value); };
   const setOutputChoice = (value: string): void => { invalidateValidation(); invalidateExecution(); setOutputHandler(value); };
   const setOutputTitle = (value: string): void => { invalidateValidation(); invalidateExecution(); setOutputName(value); };
-  const handleLineSelectionChange = useCallback((next: GeoprocessingSourceSelection): void => {
-    invalidateValidation(); invalidateExecution(); setLineSelection(next); setInputMode(next.inputMode);
+  const handleVectorSelectionChange = useCallback((next: GeoprocessingSourceSelection): void => {
+    invalidateValidation(); invalidateExecution(); setVectorSelection(next); setInputMode(next.inputMode);
   }, [invalidateExecution, invalidateValidation]);
 
   const validationRequest = (): Record<string, unknown> => ({
@@ -274,24 +363,48 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
     }
   };
 
-  const currentInputLines: GeoprocessingPolylineInput[] = lineSelection.capture
-    ? (lineSelection.inputMode === 'All' ? lineSelection.capture.lines
-      : lineSelection.capture.lines.filter(line => lineSelection.selectedPathIDs.includes(line.pathIdentity)))
+  const currentInputLines: GeoprocessingPolylineInput[] = vectorSelection.capture?.shapeType === 'Polyline'
+    ? (vectorSelection.inputMode === 'All' ? vectorSelection.capture.lines
+      : vectorSelection.capture.lines.filter(line => vectorSelection.selectedPathIDs.includes(line.pathIdentity)))
     : [];
+  const currentInputPolygons: GeoprocessingPolygonInput[] = vectorSelection.capture?.shapeType === 'Polygon'
+    ? (vectorSelection.inputMode === 'All' ? vectorSelection.capture.polygons
+      : vectorSelection.capture.polygons.filter(polygon => vectorSelection.selectedPathIDs.includes(polygon.pathIdentity)))
+    : [];
+  const currentInputPathIDs = activeTool.inputKind === 'Polyline'
+    ? currentInputLines.map(line => line.pathIdentity) : currentInputPolygons.map(polygon => polygon.pathIdentity);
   const projectProjection = readProjectProjection(context.projectXml);
   const hasBlockingValidation = validation?.validationIssues.some(issue =>
     issue.severity.toLowerCase() === 'error' || issue.severity.toLowerCase() === 'typeerror') ?? false;
-  const canRunPolylineTool = isSupportedPolylineTool && executeAvailable && !validating && execution.kind !== 'running' && execution.kind !== 'uncertain' &&
-    lineSelection.capture !== null && lineSelection.capture.owner === owner && currentInputLines.length > 0 &&
-    outputHandler === 'Clipboard' && Boolean(context.projectPath && context.projectRevision && context.projectXml && projectProjection) &&
+  const shapefileCaptureAvailable = backend.supports('workspace.file.inspect') && backend.supports('map.vector.captureShapefile');
+  const selectedInputCount = activeTool.inputKind === 'Polyline' ? currentInputLines.length : currentInputPolygons.length;
+  const sourceCapture = vectorSelection.capture;
+  const sourceProjectionVerified = sourceCapture?.sourceFamilyKind !== 'shapefile' || Boolean(sourceCapture.targetProjectionWKT?.trim());
+  const operationCannotPreserveNullableOrdinates = Boolean(sourceCapture?.hasNullableOrdinates && !supportedPolylineOperations.has(activeTool.operation));
+  const canRunVectorTool = isSupportedVectorTool && executeAvailable && !validating && execution.kind !== 'running' && execution.kind !== 'uncertain' &&
+    sourceCapture !== null && sourceCapture.owner === owner && sourceCapture.shapeType === activeTool.inputKind && selectedInputCount > 0 &&
+    (outputHandler === 'Clipboard' || (outputHandler === 'Shapefile' && shapefileCaptureAvailable && outputName.trim().length > 0)) &&
+    sourceProjectionVerified && !operationCannotPreserveNullableOrdinates && Boolean(context.projectPath && context.projectRevision && context.projectXml && projectProjection) &&
     !hasBlockingValidation;
 
-  const executePolylineTool = async (): Promise<void> => {
+  const isDirectExportsShapefile = (outputPath: string, projectPath: string): boolean => {
+    const normalized = outputPath.replaceAll('\\', '/');
+    const leaf = normalized.slice(normalized.lastIndexOf('/') + 1);
+    if (!leaf || leaf === '.' || leaf === '..' || !leaf.toLocaleLowerCase().endsWith('.shp')) return false;
+    if (!(/^[a-z]:\//i.test(normalized) || normalized.startsWith('//') || normalized.startsWith('/'))) return false;
+    const directory = normalized.slice(0, normalized.lastIndexOf('/')) || '/';
+    const base = projectDirectory(projectPath).replaceAll('\\', '/').replace(/\/+$/, '') || '/';
+    const exportsDirectory = base === '/' ? '/Exports' : `${base}/Exports`;
+    return sameSourcePath(directory, exportsDirectory);
+  };
+
+  const executeVectorTool = async (): Promise<void> => {
     setExecution({ kind: 'idle' }); executionOperationID.current = null;
-    if (!canRunPolylineTool || !lineSelection.capture || !context.projectPath || !context.projectXml || !projectProjection) return;
-    const capture = lineSelection.capture;
+    if (!canRunVectorTool || !sourceCapture || !context.projectPath || !context.projectXml || !projectProjection) return;
+    const capture = sourceCapture;
     const requestLines = [...currentInputLines];
-    const requestPathIDs = requestLines.map(line => line.pathIdentity);
+    const requestPolygons = [...currentInputPolygons];
+    const requestPathIDs = [...currentInputPathIDs];
     const requestToolID = activeTool.id;
     const requestOwner = owner;
     const request = {
@@ -302,12 +415,13 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
       projectProjectionValue: projectProjection.value,
       projectXml: context.projectXml,
       operation: activeTool.operation,
-      inputMode: lineSelection.inputMode,
+      inputMode: vectorSelection.inputMode,
       inputLines: requestLines,
+      inputPolygons: requestPolygons,
       cultureName: zh ? 'zh-CN' : 'en-US',
-      outputHandler: 'Clipboard',
-      outputName: null,
-      sourceFamily: null,
+      outputHandler,
+      outputName: outputHandler === 'Shapefile' ? outputName.trim() : null,
+      sourceFamily: capture.sourceFamily,
       targetProjectionWKT: capture.targetProjectionWKT,
       ...values,
     };
@@ -337,7 +451,26 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
         },
       });
       if (!isCurrent()) return;
-      const result = parsePolylineResult(raw, activeTool.operation, requestPathIDs);
+      let result = parseVectorResult(raw, activeTool.operation, activeTool.inputKind as 'Polyline' | 'Polygon',
+        activeTool.outputKind as 'Polyline' | 'Polygon', requestPathIDs, outputHandler as 'Clipboard' | 'Shapefile');
+      if (result.canExecute && outputHandler === 'Shapefile' && result.outputPath) {
+        setExecution(current => current.kind === 'running' ? { ...current, verifyingOutput: true } : current);
+        try {
+          if (!isDirectExportsShapefile(result.outputPath, context.projectPath)) {
+            throw new Error('服务端输出路径不在当前工程 Exports 目录的直接子级，未对该路径执行文件检查。');
+          }
+          const receipt = await inspectShapefileFamily(backend, result.outputPath, controller.signal);
+          if (!sameSourcePath(receipt.source.canonicalPath, result.outputPath) ||
+              !sameSourcePath(receipt.family.sourcePath, receipt.source.canonicalPath)) {
+            throw new Error('检查回执的规范路径与本次服务端输出不一致。');
+          }
+          result = { ...result, shapefileReceipt: { status: 'verified', inspection: receipt.source, family: receipt.family } };
+        } catch (verificationError) {
+          if (!isCurrent()) return;
+          result = { ...result, shapefileReceipt: { status: 'unverified', error: verificationError } };
+        }
+      }
+      if (!isCurrent()) return;
       setExecution(result.canExecute ? { kind: 'completed', result } : { kind: 'rejected', result });
     } catch (caught) {
       if (!isCurrent()) return;
@@ -358,7 +491,7 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
     }
   };
 
-  const cancelPolylineExecution = (): void => {
+  const cancelVectorExecution = (): void => {
     if (!executionController.current || execution.kind !== 'running') return;
     setExecution(current => current.kind === 'running' ? { ...current, cancelRequested: true } : current);
     executionController.current.abort('The user requested geoprocessing cancellation.');
@@ -425,9 +558,9 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
             <ToolOptionsCog language={language} expanded={showOptions} onToggle={() => setShowOptions(open => !open)} /></div>
 
           <div className="tools-parameter-grid">
-            {isSupportedPolylineTool
-              ? <GeoprocessingPolylineSourcePicker language={language} context={context} backend={backend} owner={owner}
-                selection={lineSelection} onSelectionChange={handleLineSelectionChange} />
+            {isSupportedVectorTool
+              ? <GeoprocessingVectorSourcePicker language={language} context={context} backend={backend} owner={owner}
+                geometryKind={activeTool.inputKind as 'Polyline' | 'Polygon'} selection={vectorSelection} onSelectionChange={handleVectorSelectionChange} />
               : <GeoprocessingInputDetails language={language} context={context} tool={activeTool} inputMode={inputMode} onInputModeChange={setInputSelection} />}
             <div className="tools-parameter-fields"><ToolOptionsFlyout open={showOptions} tool={activeTool} language={language} values={values}
               outputOptions={outputOptions} outputHandler={activeOutputHandler} outputName={outputName} fileOutput={fileOutput}
@@ -438,13 +571,17 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
           <div className="tools-actions tools-gp-actions">
             <button className="tools-button tools-button-secondary" type="button" onClick={() => void validate()} disabled={validating || execution.kind === 'running' || !validateAvailable}>{validating ? (zh ? '校验中…' : 'Validating…') : (zh ? '校验参数' : 'Validate parameters')}</button>
             {validating && <button className="tools-button tools-button-danger" type="button" onClick={cancelValidation}>{zh ? '取消校验' : 'Cancel validation'}</button>}
-            {isSupportedPolylineTool
-              ? <button className="tools-button tools-button-primary" type="button" onClick={() => void executePolylineTool()} disabled={!canRunPolylineTool}
-                title={!executeAvailable ? (zh ? '当前服务未开放折线工具执行。' : 'Polyline execution is unavailable on the current service.')
-                  : !lineSelection.capture ? (zh ? '先读取并核验一个已保存的 GeoJSON 折线图层。' : 'Read and verify a saved GeoJSON polyline layer first.')
+            {isSupportedVectorTool
+              ? <button className="tools-button tools-button-primary" type="button" onClick={() => void executeVectorTool()} disabled={!canRunVectorTool}
+                title={!executeAvailable ? (zh ? '当前服务未开放矢量工具执行。' : 'Vector execution is unavailable on the current service.')
+                  : !vectorSelection.capture ? (zh ? `先读取并核验一个已保存的${activeTool.inputKind === 'Polygon' ? 'GeoJSON 多边形' : 'GeoJSON 或 Shapefile 折线'}图层。` : `Read and verify a saved ${activeTool.inputKind.toLowerCase()} layer first.`)
                     : !projectProjection ? (zh ? '当前工程 XML 未提供可读取的投影定义。' : 'The active project XML has no readable projection definition.')
+                      : vectorSelection.capture.sourceFamilyKind === 'shapefile' && !vectorSelection.capture.targetProjectionWKT ? (zh ? 'Shapefile 来源缺少服务端确认的目标工程投影 WKT。' : 'The Shapefile source has no service-confirmed target project WKT.')
+                        : operationCannotPreserveNullableOrdinates ? (zh ? '此工具要求可表达有限 Z/M 值；来源包含空值，执行已锁定。' : 'This operation requires finite Z/M values; the source contains null ordinates, so execution is locked.')
+                        : outputHandler === 'Shapefile' && !shapefileCaptureAvailable ? (zh ? '当前服务未开放输出文件及完整文件族核验。' : 'Output inspection and complete family capture are unavailable on the current service.')
+                          : outputHandler === 'Shapefile' && !outputName.trim() ? (zh ? '请填写服务器输出名称。' : 'Enter a server output name.')
                       : hasBlockingValidation ? (zh ? '请先修正后端参数校验中的错误。' : 'Resolve backend parameter validation errors first.')
-                        : (zh ? '运行服务端折线工具' : 'Run the polyline tool')}>
+                        : (zh ? '运行服务端矢量工具' : 'Run the vector tool')}>
                 {execution.kind === 'running' ? (zh ? '执行中…' : 'Running…') : execution.kind === 'uncertain' ? (zh ? '终态未确认' : 'Outcome unconfirmed') : (zh ? '运行工具' : 'Run tool')}
               </button>
               : <button className="tools-button tools-button-primary" type="button" disabled title={zh ? '当前工具的真实来源几何与执行回执尚未接通' : 'Verified source geometry and execution receipts are not connected for this tool'}>{zh ? '运行工具' : 'Run tool'}</button>}
@@ -458,14 +595,16 @@ export function GeoprocessingToolControl({ language, context, backend, onDirtySt
             }) : <div className="tools-notice is-success">{zh ? '服务端未返回参数错误。此回执只确认参数校验，不代表输入源或执行已验证。' : 'The service returned no parameter errors. This receipt confirms parameter validation only, not source reading or execution.'}</div>}
           </section>}
           {validationError && <div className="tools-inline-error" role="alert">{validationError}{validationDiagnostic && <details><summary>{zh ? '原始诊断' : 'Raw diagnostic'}</summary><pre>{validationDiagnostic}</pre></details>}</div>}
-          <div className="tools-execution-boundary">{!isSupportedPolylineTool
+          <div className="tools-execution-boundary">{!isSupportedVectorTool
             ? (zh ? '此工具尚未接通可核验的实际输入与结果回执；可编辑和校验参数，但不能执行。' : 'This tool has no verified input and result path yet; parameters can be edited and validated, but execution remains disabled.')
-            : !executeAvailable ? (zh ? '当前服务未开放折线工具执行。' : 'Polyline tool execution is unavailable on the current service.')
+            : !executeAvailable ? (zh ? '当前服务未开放矢量工具执行。' : 'Vector execution is unavailable on the current service.')
+              : operationCannotPreserveNullableOrdinates ? (zh ? '来源含空值 Z/M；当前这类工具要求有限 Z/M 值，因此执行保持禁用。' : 'The source contains null Z/M values; this operation requires finite ordinates, so execution remains disabled.')
               : execution.kind === 'uncertain' ? (zh ? '本次执行终态未确认；请先检查服务端操作状态。修改参数或重新读取来源后可发起新请求。' : 'The execution terminal state is unconfirmed. Check the service operation before starting a new request; changing parameters or rereading the source resets this state.')
-                : (zh ? '当前仅支持读取已保存 GeoJSON 折线并预览、下载服务端文本结果；文件写入和地图图层提交尚未接通。' : 'Saved GeoJSON polylines can be read and the service text result can be previewed or downloaded; file writes and map-layer commits are not connected.')}</div>
-          {isSupportedPolylineTool
+                : outputHandler === 'Shapefile' ? (zh ? 'Shapefile 将写入服务器当前工程 Exports 目录；仅在检查主文件并捕获完整文件族后确认可用。地图图层提交仍未开放。' : 'Shapefile output is written under the active project’s server Exports directory and is confirmed only after primary-file inspection and complete family capture. Map-layer commits remain unavailable.')
+                  : (zh ? '使用服务端返回的实际文本预览；可复制或下载服务端结果。地图图层提交仍未开放。' : 'Preview the actual text returned by the service and copy or download it. Map-layer commits remain unavailable.')}</div>
+          {isSupportedVectorTool
             ? <GeoprocessingPolylineExecutionDetails language={language} tool={activeTool} view={execution}
-              operationID={executionOperationID.current} onCancel={cancelPolylineExecution} />
+              operationID={executionOperationID.current} onCancel={cancelVectorExecution} />
             : <GeoprocessingOutputDetails language={language} running={false} />}
         </main>
       </div>

@@ -26,5 +26,5 @@ function WindComponent(props: EditorPageProps & { schema?: EditorPageProps['sche
   const schemaField = props.schema?.fields.find((field) => field.id === props.fieldID) ?? { id: props.fieldID, title: props.fieldID, kind: 'number', sourceType: 'double' };
   const value = draft.fields[fieldID] ?? snapshot.fields[fieldID] ?? '';
   const readOnly = !snapshot.canEdit || snapshot.readOnlyFields?.includes(fieldID) === true;
-  return <UnitAwareNumberField id={fieldID} title={props.title} value={value} baseline={snapshot.fields[fieldID]} field={schemaField} unitData={props.unitData} unitLabel={props.unitLabel} disabled={readOnly} language={language} onChange={(sourceValue) => props.onFieldChange(fieldID, sourceValue)} />;
+  return <UnitAwareNumberField backend={props.backend} id={fieldID} title={props.title} value={value} baseline={snapshot.fields[fieldID]} field={schemaField} unitData={props.unitData} unitLabel={props.unitLabel} disabled={readOnly} language={language} onChange={(sourceValue) => props.onFieldChange(fieldID, sourceValue)} />;
 }

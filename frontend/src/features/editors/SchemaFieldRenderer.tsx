@@ -318,9 +318,12 @@ export function validateModelDraft(draft: EditorPageProps['draft'], schemas: Edi
   const schemaFields = schemas.flatMap((schema) => schema.fields.map((field) => ({ schema, field })));
   for (const [fieldID, value] of Object.entries(draft.fields)) {
     if (value === snapshot.fields[fieldID] || snapshot.readOnlyFields?.includes(fieldID)) continue;
-    const candidates = schemaFields.filter(({ schema, field }) => fieldID === `${field.scope ?? schema.id}/${field.id}` || fieldID.endsWith(`/${field.id}`));
-    const candidate = candidates.find(({ schema, field }) => !field.readOnly && fieldID.includes(`/${field.scope ?? schema.id}/${field.id}`))
-      ?? candidates.find(({ field }) => !field.readOnly);
+    // Repeated editors add an owner prefix, but retain the schema scope. A
+    // property name alone cannot identify its editor: derived channel bounds
+    // share names with editable functional-surface bounds.
+    const candidate = schemaFields.find(({ schema, field }) => !field.readOnly
+      && (fieldID === `${field.scope ?? schema.id}/${field.id}`
+        || fieldID.endsWith(`/${field.scope ?? schema.id}/${field.id}`)));
     if (!candidate) continue;
     const { field } = candidate;
     const scope = fieldID.slice(0, -(field.id.length + 1));

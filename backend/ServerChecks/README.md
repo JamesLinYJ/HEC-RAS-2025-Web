@@ -133,6 +133,16 @@ For the shared browser/Electron interaction check, set `HECRAS_VERIFY_SERVER_URL
 
 Run `--run-association-raster-budget` to check aggregate association pixel limits across layer counts and viewport sizes.
 
+Verify the source-equivalent Cartesian combined cell-size edit through the actual geometry mesh HTTP operations:
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- \
+  --run-geometry-mesh-patch-http http://127.0.0.1:5080 \
+  /tmp/hecras-geometry-mesh-patch
+```
+
+This runner creates a new real Project/Geometry fixture in the supplied output directory, adds a Cartesian topology only to that generated Geometry HDF, and checks the single `setCartesianCombinedCellSize` mesh-draft mutation. It requires both primary and secondary region sizes to change together, round-trips the before/after draft states with the same selected FID, rejects zero/negative/non-finite inputs and stale source revisions, verifies that the source HDF stays unchanged until `model.save`, then reopens the HDF and checks both values plus the source `AutoPopulateMeshValues` behavior for its four outer arcs. The test requires an already-running loopback C# server. It does not start a service or touch a caller-owned fixture.
+
 Verify that a computed Plan's Terrain association is rendered and sampled through the actual C# HTTP operations:
 
 ```sh

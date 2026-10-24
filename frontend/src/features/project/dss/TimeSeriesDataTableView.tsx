@@ -1,8 +1,11 @@
 import type { Language } from '../../../shared/workbench';
 import type { DssTimeSeriesData } from './types';
+import { TimeSeriesDataTableWindow } from './TimeSeriesDataTableWindow';
 
 interface TimeSeriesDataTableViewProps {
   data: DssTimeSeriesData;
+  pathname: string;
+  sourceRevision: string;
   language: Language;
 }
 
@@ -13,7 +16,7 @@ function sourceValue(value: number | null | undefined, language: Language): stri
   return String(value);
 }
 
-export function TimeSeriesDataTableView({ data, language }: TimeSeriesDataTableViewProps) {
+export function TimeSeriesDataTableView({ data, pathname, sourceRevision, language }: TimeSeriesDataTableViewProps) {
   const zh = language === 'zh';
   const rowCount = Math.min(data.times.length, data.values.length);
   const visibleCount = Math.min(rowCount, rowLimit);
@@ -37,5 +40,6 @@ export function TimeSeriesDataTableView({ data, language }: TimeSeriesDataTableV
       <pre>{JSON.stringify(data.qualities)}</pre>
       <small>{zh ? '保留 Host 返回的原始数组；未假设其质量位与单个样本一一对应。' : 'The host array is preserved as returned; no one-to-one sample mapping is assumed.'}</small>
     </details>}
+    <TimeSeriesDataTableWindow data={data} pathname={pathname} sourceRevision={sourceRevision} language={language} />
   </section>;
 }

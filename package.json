@@ -12,6 +12,7 @@
     "build:web": "npm run typecheck && vite build",
     "test:ui": "node scripts/verify-ui.mjs",
     "test:gateway": "node scripts/verify-gateway.mjs",
+    "test:editors": "node scripts/verify-editor-validation.mjs",
     "test:wasm": "node scripts/verify-wasm.mjs",
     "serve:web": "node scripts/start-server.mjs",
     "setup:desktop": "node node_modules/electron/install.js",
