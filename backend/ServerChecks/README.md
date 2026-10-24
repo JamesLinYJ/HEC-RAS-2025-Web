@@ -173,3 +173,7 @@ The runner creates a fresh project fixture with two existing polygon modificatio
 ### External source session context
 
 `--run-session-references-http <loopback-base-url> <result-hover-manifest.json> <new-output-directory>` creates a disposable empty project and attaches copied Plan, Result, Terrain, Geometry and Boundary Condition HDF sources. It verifies Host-issued context composition, saved-map/catalog readback, rejected source/session conflicts and an external Terrain save with a rebased capability. The output directory must be outside the repository and must not exist; the original fixture remains unchanged. This is real HTTP/file-format acceptance, separate from UI and live-provider sign-in verification.
+
+### Classification and Manning editor round trip
+
+`--run-classification-manning-http <loopback-base-url> <new-output-directory>` creates an isolated project with real classification and Manning HDF files and a small classification raster. It exercises fixed-identity raster mapping edits, rejection of inserted/deleted/key-mutated mapping rows, polygon undo/redo, NLCD interpretation defaults and N-Value preview, then saves and reopens both surface layers. The directory must be new and outside the repository; this runner contacts an existing loopback service and does not launch one. These HTTP/HDF checks are separate from browser interaction.

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
-import type { BackendGateway, Language } from '../../shared/workbench';
+import type { BackendGateway, FeaturePageProps, Language, WorkbenchContext } from '../../shared/workbench';
 import type { CatalogTreeNode, CatalogTreeSnapshot } from './CatalogTreeSnapshot';
+import type { GeometryBackupCommittedCallback } from './geometrybackupworkflow/geometryBackupWorkflow';
 import { ProjectTreeModeReactView } from './ProjectTreeModeReactView';
 import type { ProjectTreeContextMenu } from './ProjectTreeModeReactView';
 import {
@@ -22,6 +23,10 @@ import type { ProjectTreeAction, ProjectTreeCategory, ProjectTreeModeName } from
 export interface ProjectTreeModeProps {
   language: Language;
   backend: BackendGateway;
+  context: WorkbenchContext;
+  hasUnsavedDrafts?: boolean;
+  onContextCommit?: FeaturePageProps['onContextCommit'];
+  onGeometryBackupCommitted?: GeometryBackupCommittedCallback;
   mode: ProjectTreeModeName;
   projectSnapshot: CatalogTreeSnapshot | null;
   catalogSnapshot: CatalogTreeSnapshot | null;
@@ -41,6 +46,10 @@ export interface ProjectTreeModeProps {
 export function ProjectTreeMode({
   language,
   backend,
+  context,
+  hasUnsavedDrafts,
+  onContextCommit,
+  onGeometryBackupCommitted,
   mode,
   projectSnapshot,
   catalogSnapshot,
@@ -114,6 +123,10 @@ export function ProjectTreeMode({
     <ProjectTreeModeReactView
       language={language}
       backend={backend}
+      context={context}
+      hasUnsavedDrafts={hasUnsavedDrafts}
+      onContextCommit={onContextCommit}
+      onGeometryBackupCommitted={onGeometryBackupCommitted}
       mode={mode}
       snapshot={snapshot}
       loading={loading}

@@ -43,6 +43,72 @@
   font-size: 10px;
 }
 
+.ras-data-grid-selection-status {
+  min-width: 0;
+  padding: 5px 0;
+  color: #42606a;
+  font-size: 10px;
+}
+
+.ras-data-grid-column-heading {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.ras-data-grid-column-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ras-data-grid-column-resize {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 9px;
+  width: 9px;
+  min-height: 25px;
+  margin: 0 -4px 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.ras-data-grid-column-resize::after {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: 1px;
+  background: #aebfc5;
+  content: '';
+}
+
+.ras-data-grid-column-resize:hover::after,
+.ras-data-grid-column-resize:focus-visible::after {
+  width: 2px;
+  background: #197c84;
+}
+
+.ras-data-grid td[aria-selected="true"] {
+  position: relative;
+  box-shadow: inset 0 0 0 2px #267e87;
+  background-color: #e6f4f3;
+}
+
+.ras-data-grid td[aria-selected="true"] input,
+.ras-data-grid td[aria-selected="true"] select {
+  background-color: #f7ffff;
+}
+
+.ras-data-grid [role="gridcell"]:focus-visible {
+  outline: 2px solid #126b73;
+  outline-offset: -2px;
+}
+
 .ras-data-grid-sort-button {
   display: inline-flex;
   width: 100%;

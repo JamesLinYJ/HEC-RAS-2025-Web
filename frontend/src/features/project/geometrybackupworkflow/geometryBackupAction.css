@@ -1,0 +1,57 @@
+.geometry-backup-action {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.geometry-backup-action > h4,
+.geometry-backup-action > p {
+  margin: 0;
+}
+
+.geometry-backup-action .geometry-backup-name-field {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--project-muted, #667085);
+  font-size: 0.82rem;
+}
+
+.geometry-backup-action .geometry-backup-name-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.geometry-backup-action > button {
+  justify-self: start;
+}
+
+.geometry-backup-action .geometry-backup-disabled,
+.geometry-backup-action .geometry-backup-notice {
+  color: var(--project-muted, #667085);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.geometry-backup-action .geometry-backup-receipt {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.geometry-backup-action .geometry-backup-receipt > div {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.geometry-backup-action .geometry-backup-receipt dt {
+  color: var(--project-muted, #667085);
+  font-size: 0.75rem;
+}
+
+.geometry-backup-action .geometry-backup-receipt dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}

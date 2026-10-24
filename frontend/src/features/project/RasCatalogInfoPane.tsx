@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
-import type { BackendGateway, Language } from '../../shared/workbench';
+import type { BackendGateway, FeaturePageProps, Language, WorkbenchContext } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
 import type { CatalogTreeNode } from './CatalogTreeSnapshot';
+import type { GeometryBackupCommittedCallback } from './geometrybackupworkflow/geometryBackupWorkflow';
+import { GeometryBackupAction } from './geometrybackupworkflow/GeometryBackupAction';
 import { BackupCatalogSummary } from './BackupCatalogSummary';
 import { BoundaryConditionCatalogSummary } from './BoundaryConditionCatalogSummary';
 import { ClassificationCatalogSummary } from './ClassificationCatalogSummary';
@@ -19,19 +21,24 @@ import { localizeProjectTreeStatus } from './ProjectTreeModeSectionTitles';
 export interface RasCatalogInfoPaneProps {
   language: Language;
   backend: BackendGateway;
+  context: WorkbenchContext;
+  hasUnsavedDrafts?: boolean;
+  onContextCommit?: FeaturePageProps['onContextCommit'];
+  onGeometryBackupCommitted?: GeometryBackupCommittedCallback;
   node: CatalogTreeNode | null;
 }
 
 /** Selected-node detail dispatch and runtime diagnostics from RasCatalogInfoPane. */
-export function RasCatalogInfoPane({ language, backend, node }: RasCatalogInfoPaneProps) {
+export function RasCatalogInfoPane({ language, backend, context, hasUnsavedDrafts, onContextCommit, onGeometryBackupCommitted, node }: RasCatalogInfoPaneProps) {
   if (!node) return <div className="project-tree-detail-empty"><span>◇</span><p>{text(language, '选择工程对象查看目录信息。', 'Select a project item to inspect its catalog information.')}</p></div>;
 
   const summaryProps = { language, node, icon: catalogNodeIcon(node), typeLabel: catalogNodeTypeLabel(language, node) };
+  const backupActionProps = { language, backend, context, hasUnsavedDrafts, onContextCommit, onGeometryBackupCommitted };
   let summary: ReactNode;
   switch (node.sourceClass) {
     case 'ModelSectionContext': summary = <ProjectCatalogSummary {...summaryProps} typeLabel={text(language, '工程', 'Project')} />; break;
-    case 'BackupNodeVM': summary = <BackupCatalogSummary {...summaryProps} />; break;
-    case 'ObservableGeometry': summary = <GeometryCatalogSummary {...summaryProps} />; break;
+    case 'BackupNodeVM': summary = <BackupCatalogSummary {...summaryProps} {...backupActionProps} />; break;
+    case 'ObservableGeometry': summary = <><GeometryCatalogSummary {...summaryProps} /><GeometryBackupAction {...backupActionProps} node={node} action="create" /></>; break;
     case 'ObservableTerrain': summary = <TerrainCatalogSummary {...summaryProps} />; break;
     case 'ObservableBoundaryCondition': summary = <BoundaryConditionCatalogSummary {...summaryProps} />; break;
     case 'ObservablePlan': summary = <PlanCatalogSummary {...summaryProps} />; break;

@@ -28,6 +28,7 @@ jobs:
       - run: npm run test:editors
       - run: npm run test:recipes
       - run: npm run test:context
+      - run: npm run test:clipboard
       - run: npm run test:cumulus-auth
       - run: node scripts/verify-map-result-hover.mjs
       - run: node scripts/verify-map-result-labels.mjs

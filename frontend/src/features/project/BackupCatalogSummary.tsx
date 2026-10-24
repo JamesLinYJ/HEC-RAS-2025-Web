@@ -1,12 +1,24 @@
-import type { Language } from '../../shared/workbench';
+import type { BackendGateway, FeaturePageProps, Language, WorkbenchContext } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
 import type { CatalogTreeNode } from './CatalogTreeSnapshot';
+import type { GeometryBackupCommittedCallback } from './geometrybackupworkflow/geometryBackupWorkflow';
 import { CatalogSummaryDetails } from './CatalogSummaryDetails';
 import { RasCatalogSummary } from './RasCatalogSummary';
+import { GeometryBackupAction } from './geometrybackupworkflow/GeometryBackupAction';
 
-export function BackupCatalogSummary({ language, node, icon, typeLabel }: {
-  language: Language; node: CatalogTreeNode; icon: string; typeLabel: string;
-}) {
+export interface BackupCatalogSummaryProps {
+  language: Language;
+  backend: BackendGateway;
+  context: WorkbenchContext;
+  hasUnsavedDrafts?: boolean;
+  onContextCommit?: FeaturePageProps['onContextCommit'];
+  onGeometryBackupCommitted?: GeometryBackupCommittedCallback;
+  node: CatalogTreeNode;
+  icon: string;
+  typeLabel: string;
+}
+
+export function BackupCatalogSummary({ language, backend, context, hasUnsavedDrafts, onContextCommit, onGeometryBackupCommitted, node, icon, typeLabel }: BackupCatalogSummaryProps) {
   const backup = node.backupSummary;
   const capability = backup?.canSaveAsNewGeometry;
   const restoreState = capability === undefined
@@ -29,8 +41,21 @@ export function BackupCatalogSummary({ language, node, icon, typeLabel }: {
     >
       <CatalogSummaryDetails language={language} title={text(language, '备份信息', 'Backup information')} fields={[
         { id: 'restore-check', label: text(language, '恢复校验', 'Restore check'), value: restoreState },
+        { id: 'backup-revision', label: text(language, '备份 SHA-256', 'Backup SHA-256'), value: backup?.revision },
         { id: 'parent-geometry', label: text(language, '父级几何路径', 'Parent geometry path'), value: backup?.parentGeometryPath },
+        { id: 'parent-geometry-revision', label: text(language, '父级几何 SHA-256', 'Parent Geometry SHA-256'), value: backup?.parentGeometryRevision },
+        { id: 'project-revision', label: text(language, '工程 SHA-256', 'Project SHA-256'), value: backup?.projectRevision },
       ]} />
+      <GeometryBackupAction
+        language={language}
+        backend={backend}
+        context={context}
+        hasUnsavedDrafts={hasUnsavedDrafts}
+        onContextCommit={onContextCommit}
+        onGeometryBackupCommitted={onGeometryBackupCommitted}
+        node={node}
+        action="restore"
+      />
     </RasCatalogSummary>
   );
 }

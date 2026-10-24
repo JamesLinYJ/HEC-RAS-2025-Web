@@ -42,6 +42,15 @@ export { RasCatalogSummary } from './RasCatalogSummary';
 export { RasCatalogSummaryHeader } from './RasCatalogSummaryHeader';
 export { CatalogFilePathControl } from './CatalogFilePathControl';
 export { BackupCatalogSummary } from './BackupCatalogSummary';
+export type { BackupCatalogSummaryProps } from './BackupCatalogSummary';
+export { GeometryBackupAction } from './geometrybackupworkflow/GeometryBackupAction';
+export type { GeometryBackupActionKind, GeometryBackupActionProps } from './geometrybackupworkflow/GeometryBackupAction';
+export type {
+  GeometryBackupCommittedCallback,
+  GeometryBackupCommittedEvent,
+  GeometryBackupRestoreReceipt,
+  GeometryNamedBackupReceipt,
+} from './geometrybackupworkflow/geometryBackupWorkflow';
 export { ClassificationCatalogSummary } from './ClassificationCatalogSummary';
 export { ExternalFileConnectionCatalogSummary } from './ExternalFileConnectionCatalogSummary';
 export { NValueCatalogSummary } from './NValueCatalogSummary';

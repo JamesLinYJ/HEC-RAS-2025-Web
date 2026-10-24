@@ -1,7 +1,8 @@
 import type { MouseEvent } from 'react';
-import type { BackendGateway, Language } from '../../shared/workbench';
+import type { BackendGateway, FeaturePageProps, Language, WorkbenchContext } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
 import type { CatalogTreeNode, CatalogTreeSnapshot } from './CatalogTreeSnapshot';
+import type { GeometryBackupCommittedCallback } from './geometrybackupworkflow/geometryBackupWorkflow';
 import type { ProjectTreeAction, ProjectTreeCategory, ProjectTreeModeName } from './ProjectTreeModeVM';
 import { projectTreeModelActionIdentity } from './ProjectTreeModelActions';
 import { DefaultRasCatalogNode } from './DefaultRasCatalogNode';
@@ -17,6 +18,10 @@ export interface ProjectTreeContextMenu {
 export interface RasCatalogProps {
   language: Language;
   backend: BackendGateway;
+  context: WorkbenchContext;
+  hasUnsavedDrafts?: boolean;
+  onContextCommit?: FeaturePageProps['onContextCommit'];
+  onGeometryBackupCommitted?: GeometryBackupCommittedCallback;
   mode: ProjectTreeModeName;
   snapshot: CatalogTreeSnapshot | null;
   loading: boolean;
@@ -49,6 +54,10 @@ export interface RasCatalogProps {
 export function RasCatalog({
   language,
   backend,
+  context,
+  hasUnsavedDrafts,
+  onContextCommit,
+  onGeometryBackupCommitted,
   mode,
   snapshot,
   loading,
@@ -94,7 +103,15 @@ export function RasCatalog({
                   : <div className="project-tree-scroll">{visibleRoots.map((node) => <DefaultRasCatalogNode key={node.id} node={node} depth={0} language={language} collapsedIds={collapsedIds} selectedNodeId={selectedNode?.id ?? null} selectedIds={selectedIds} mode={mode} onToggle={onToggle} onSelect={onSelect} onOpen={onOpen} onContextMenu={onContextMenu} />)}</div>}
           {selectedIds.size > 1 && <div className="project-selection-count">{selectedIds.size} {text(language, '项已选', 'selected')}</div>}
         </div>
-        <aside className="project-tree-inspector"><RasCatalogInfoPane language={language} backend={backend} node={selectedNode} /></aside>
+        <aside className="project-tree-inspector"><RasCatalogInfoPane
+          language={language}
+          backend={backend}
+          context={context}
+          hasUnsavedDrafts={hasUnsavedDrafts}
+          onContextCommit={onContextCommit}
+          onGeometryBackupCommitted={onGeometryBackupCommitted}
+          node={selectedNode}
+        /></aside>
       </div>
 
       {selectedForMenu && contextMenu && <div className="project-node-context" style={{ left: Math.min(contextMenu.x, window.innerWidth - 205), top: Math.min(contextMenu.y, window.innerHeight - 105) }} onClick={(event) => event.stopPropagation()}>

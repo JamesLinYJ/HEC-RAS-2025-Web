@@ -13,14 +13,6 @@ export function RasterClassificationInputProperties({ props, input }: { props: E
   const rows: ModelRow[] = draft.rows[tableID] ?? input.rows;
   const rasterNameField = `${input.scope}/RasterClassificationInputProperties/RasterClassificationInput_Name`;
   const rasterTypeField = `${input.scope}/RasterClassificationInputProperties/RasterClassificationInput_TypeName`;
-  const tableSchema = props.tableSchemas?.find((table) => table.id === tableID);
-  const columns = tableSchema?.columns.map((column) => ({
-    id: column.id,
-    title: column.title,
-    sourceType: column.sourceType,
-    readOnly: column.readOnly || column.id === 'Key',
-  }));
-
   return (
     <section className="editor-terrain-card" aria-label={language === 'zh' ? '栅格分类输入属性' : 'Raster classification input properties'}>
       <h3>{language === 'zh' ? '栅格分类输入属性' : 'Raster classification input properties'}</h3>
@@ -32,10 +24,10 @@ export function RasterClassificationInputProperties({ props, input }: { props: E
       <ClassificationMappingEditor
         language={language}
         rows={rows}
+        sourceRows={input.rows}
         tableID={tableID}
         canEdit={snapshot.canEdit}
         onCellChange={props.onRowCellChange}
-        columns={columns}
       />
     </section>
   );

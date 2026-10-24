@@ -4,7 +4,9 @@ import { errorDiagnostics, message, text } from '../../shared/workbench';
 import { validateSessionReferenceContext, withSessionReferenceContext } from '../../shared/sessionReferences';
 import type { WorkspaceUploadResult } from '../../shared/workbench';
 import type { CatalogTreeNode, CatalogTreeRequest, CatalogTreeSnapshot } from './CatalogTreeSnapshot';
-import { catalogAssetKind } from './CatalogTreeSnapshot';
+import { catalogAssetKind, walkCatalogTree } from './CatalogTreeSnapshot';
+import { assertModelSnapshot, exactCoreLayerContext, modelLoadRequest, updatedModelContext } from '../tools/coreImportWorkflow';
+import type { ModelSnapshot } from '../editors/model';
 import {
   isProjectTreeSHA256,
   projectTreeModelActionIdentity,
@@ -23,6 +25,9 @@ import { MigrateProjectControl } from './MigrateProjectControl';
 import { NewGeometryDialog } from './NewGeometryDialog';
 import { NewPlanDialog } from './NewPlanDialog';
 import { NewBoundaryConditionDialog } from './NewBoundaryConditionDialog';
+import { SurfaceCreationDialog } from './SurfaceCreationDialog';
+import type { SurfaceCreationKind, VerifiedSurfaceCreation } from './SurfaceCreationWorkflow';
+import type { GeometryBackupCommittedEvent } from './geometrybackupworkflow/geometryBackupWorkflow';
 import type { CreatedModel } from './ProjectModelCreationWorkflow';
 import type { RecentProjectRecord, SelectedProjectFile } from './ProjectTypes';
 import { isAbsoluteServerPath, MAX_RECENT_PROJECTS, RECENT_PROJECTS_STORAGE_KEY } from './ProjectTypes';
@@ -67,6 +72,13 @@ interface UploadedWorkspaceState extends WorkspaceUploadResult {
 interface TreeErrors {
   project?: string;
   catalog?: string;
+}
+
+interface VerifiedAssetFileCapture {
+  sourcePath: string;
+  canonicalPath: string;
+  revision: string;
+  length: number;
 }
 
 function readRecentProjects(): RecentProjectRecord[] {
@@ -131,6 +143,15 @@ function sameProjectSource(left: WorkbenchContext, right: WorkbenchContext): boo
     left.coreLayerContext?.identityToken === right.coreLayerContext?.identityToken;
 }
 
+function sameProjectSelection(left: WorkbenchContext, right: WorkbenchContext): boolean {
+  return sameProjectSource(left, right) &&
+    left.selectedAsset?.path === right.selectedAsset?.path &&
+    left.selectedAsset?.kind === right.selectedAsset?.kind &&
+    left.selectedAsset?.revision === right.selectedAsset?.revision &&
+    JSON.stringify(left.selectedAsset?.locator ?? null) === JSON.stringify(right.selectedAsset?.locator ?? null) &&
+    JSON.stringify(left.coreLayerContext ?? null) === JSON.stringify(right.coreLayerContext ?? null);
+}
+
 function sameServerPath(left: string, right: string): boolean {
   const normalize = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '');
   const normalizedLeft = normalize(left);
@@ -139,6 +160,14 @@ function sameServerPath(left: string, right: string): boolean {
   return isWindowsPath(normalizedLeft) && isWindowsPath(normalizedRight)
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
+}
+
+function isVerifiedAssetFileCapture(value: unknown, requestedPath: string): value is VerifiedAssetFileCapture {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const capture = value as Partial<VerifiedAssetFileCapture>;
+  return typeof capture.sourcePath === 'string' && sameServerPath(capture.sourcePath, requestedPath) &&
+    typeof capture.canonicalPath === 'string' && sameServerPath(capture.canonicalPath, requestedPath) &&
+    isProjectTreeSHA256(capture.revision) && Number.isSafeInteger(capture.length) && (capture.length ?? 0) > 0;
 }
 
 function rawDiagnosticText(error: unknown): string {
@@ -175,6 +204,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [migrationOpen, setMigrationOpen] = useState(false);
   const [modelCreationDialog, setModelCreationDialog] = useState<'newGeometry' | 'newPlan' | 'newBoundary' | null>(null);
+  const [surfaceCreationKind, setSurfaceCreationKind] = useState<SurfaceCreationKind | null>(null);
   const [openProjectDialog, setOpenProjectDialog] = useState(false);
   const [externalConnectionsOpen, setExternalConnectionsOpen] = useState(false);
   const [uploadedWorkspace, setUploadedWorkspace] = useState<UploadedWorkspaceState | null>(null);
@@ -198,6 +228,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const projectSaveAbort = useRef<AbortController | undefined>(undefined);
   const treeRequestGeneration = useRef(0);
   const treeAbort = useRef<AbortController | undefined>(undefined);
+  const geometryBackupReadbackGeneration = useRef(0);
+  const geometryBackupReadbackAbort = useRef<AbortController | undefined>(undefined);
   const treeActionGeneration = useRef(0);
   const treeActionBusy = useRef(false);
   const treeActionAbort = useRef<AbortController | undefined>(undefined);
@@ -229,6 +261,21 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
             ? text(language, '新建工程表单有未保存草稿；请先保存或关闭该表单。', 'The new-project form has an unsaved draft; save or close it first.')
             : hasUnsavedDrafts
               ? text(language, '存在未保存的模型编辑草稿；请先保存或处理草稿。', 'Unsaved model-editor drafts exist; save or resolve them first.')
+              : undefined;
+  const surfaceCreationDisabledReason = !hasBackendFileIdentity || !context.projectXml || !hasProjectRevision || !context.projectSessionID
+    ? text(language, '请先打开具有工程 XML 和 SHA-256 修订的服务器工程。', 'Open a server project with project XML and a SHA-256 revision first.')
+    : fileBusy || libraryImportBusy
+      ? text(language, '另一个工程文件操作正在进行，请完成后再创建图层。', 'Another project-file operation is in progress. Finish it before creating a layer.')
+    : !backend.supports('surfaceCreation.inspect') || !backend.supports('surfaceCreation.create')
+      ? text(language, '当前服务暂不支持创建此类工程图层。', 'The current service does not support creating this project layer.')
+      : !backend.supports('workspace.file.inspect') || !backend.supports('project.tree.load')
+        ? text(language, '当前服务无法核验输出文件与工程目录读回。', 'The current service cannot verify the output file and project-catalog read-back.')
+        : !props.onContextCommit
+          ? text(language, '当前工程会话无法确认本次操作仍属于原工程。', 'The current project session cannot confirm that the operation still belongs to the original project.')
+          : newProjectDirty
+            ? text(language, '新建工程表单有未保存草稿；请先保存或关闭该表单。', 'The new-project form has an unsaved draft; save or close it first.')
+            : hasUnsavedDrafts
+              ? text(language, '存在未保存的编辑草稿；请先保存或处理草稿。', 'Unsaved edit drafts exist; save or resolve them first.')
               : undefined;
   const title = currentFile?.fileName ?? (context.projectPath ? displayFileName(context.projectPath) : null);
   const downloadableWorkspace = uploadedWorkspace && context.projectPath &&
@@ -627,6 +674,165 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     setModelCreationDialog(kind);
   };
 
+  const openSurfaceCreationDialog = (kind: SurfaceCreationKind): void => {
+    if (surfaceCreationDisabledReason) {
+      setNotice(surfaceCreationDisabledReason);
+      return;
+    }
+    setNotice(undefined);
+    setSurfaceCreationKind(kind);
+  };
+
+  const onSurfaceCreated = (source: WorkbenchContext, verified: VerifiedSurfaceCreation, selected: WorkbenchContext): boolean => {
+    const active = contextRef.current;
+    if (!sameProjectSelection(active, source) || !sameProjectSource(selected, source) ||
+        selected.selectedAsset?.path !== verified.asset.canonicalPath ||
+        selected.selectedAsset?.revision !== verified.asset.revision ||
+        selected.selectedAsset?.name !== verified.node.name ||
+        selected.selectedAsset?.kind !== catalogAssetKind(verified.node)) {
+      setNotice(text(language, `已写入“${verified.created.name}”，但工程上下文或目录选择已变化；本次没有切换选择。请在目录中重新读回核对。`, `“${verified.created.name}” was written, but the project context or catalog selection changed. The selection was not switched; verify it in the catalog.`));
+      return false;
+    }
+    contextRef.current = selected;
+    onContextChange(selected);
+    setSurfaceCreationKind(null);
+    setNotice(text(language, `已创建“${verified.created.name}”并由工程目录读回确认。`, `Created “${verified.created.name}” and confirmed it through project-catalog read-back.`));
+    setTreeReloadKey((key) => key + 1);
+    return true;
+  };
+
+  const onGeometryBackupCommitted = async (source: WorkbenchContext, event: GeometryBackupCommittedEvent): Promise<void> => {
+    const generation = ++geometryBackupReadbackGeneration.current;
+    const previousController = geometryBackupReadbackAbort.current;
+    previousController?.abort();
+    if (previousController) setFileBusy(false);
+    const controller = new AbortController();
+    geometryBackupReadbackAbort.current = controller;
+    const projectPath = source.projectPath;
+    const projectXml = source.projectXml;
+    const projectRevision = source.projectRevision;
+    const isCurrent = (): boolean => generation === geometryBackupReadbackGeneration.current &&
+      !controller.signal.aborted && !draftProtectionRef.current.newProjectDirty &&
+      !draftProtectionRef.current.hasUnsavedDrafts && sameProjectSelection(contextRef.current, source);
+
+    setFileError(undefined);
+    setFileErrorDetails(undefined);
+    if (!sameProjectSelection(contextRef.current, source) || draftProtectionRef.current.newProjectDirty ||
+        draftProtectionRef.current.hasUnsavedDrafts || !projectPath || !projectXml ||
+        !isProjectTreeSHA256(projectRevision)) {
+      setNotice(text(language, '备份回执已返回，但当前工程选择已变化；没有切换资产。请刷新目录核对。', 'The backup receipt returned after the project selection changed. No asset was selected; refresh the catalog to verify it.'));
+      return;
+    }
+    const readContext: WorkbenchContext = { ...source, projectPath, projectXml, projectRevision };
+
+    if (event.action === 'create') {
+      const receipt = event.receipt;
+      let xmlFingerprint: string;
+      try { xmlFingerprint = await projectTreeXmlSHA(projectXml); }
+      catch (error) {
+        if (isCurrent()) setNotice(message(error, language));
+        return;
+      }
+      if (!isCurrent()) return;
+      if (!sameServerPath(receipt.projectPath, projectPath) ||
+          receipt.projectRevision.toUpperCase() !== projectRevision.toUpperCase() ||
+          receipt.projectXmlFingerprint.toUpperCase() !== xmlFingerprint.toUpperCase() ||
+          !source.selectedAsset?.path || !sameServerPath(receipt.geometryPath, source.selectedAsset.path) ||
+          (source.selectedAsset.revision && receipt.geometryRevision.toUpperCase() !== source.selectedAsset.revision.toUpperCase())) {
+        setNotice(text(language, '备份已返回，但回执与当前工程或几何来源不匹配；目录未刷新。', 'The backup receipt does not match the current project or geometry source; the catalog was not refreshed.'));
+        return;
+      }
+      if (!props.onContextCommit?.(source, source)) {
+        setNotice(text(language, '备份已写入，但当前工程会话没有接受原来源确认。', 'The backup was written, but the current project session rejected the source-context check.'));
+        return;
+      }
+      setFileBusy(false);
+      retryTrees();
+      setNotice(text(language, '几何备份已创建，工程目录正在刷新。', 'The geometry backup was created and the project catalog is refreshing.'));
+      return;
+    }
+
+    const receipt = event.receipt;
+    setFileBusy(true);
+    setNotice(text(language, '正在核验恢复后的几何文件与工程目录…', 'Verifying the restored geometry file and project catalog…'));
+    try {
+      const xmlFingerprint = await projectTreeXmlSHA(projectXml);
+      if (!isCurrent()) return;
+      if (!sameServerPath(receipt.projectPath, projectPath) ||
+          receipt.projectRevision.toUpperCase() !== projectRevision.toUpperCase() ||
+          receipt.projectXmlFingerprint.toUpperCase() !== xmlFingerprint.toUpperCase() ||
+          !isAbsoluteServerPath(receipt.newAssetPath) || !receipt.newName ||
+          !isProjectTreeSHA256(receipt.newAssetRevision)) {
+        throw new Error(text(language, '恢复回执与当前工程修订不匹配。', 'The restore receipt does not match the current project revision.'));
+      }
+      if (!backend.supports('workspace.file.inspect') || !backend.supports('project.tree.load') || !backend.supports('model.load')) {
+        throw new Error(text(language, '当前服务无法核验恢复后的几何文件和模型。', 'The current service cannot verify the restored geometry file and model.'));
+      }
+      const assetCaptureRaw: unknown = await backend.request('workspace.file.inspect', { sourcePath: receipt.newAssetPath }, { signal: controller.signal });
+      if (!isCurrent()) return;
+      if (!isVerifiedAssetFileCapture(assetCaptureRaw, receipt.newAssetPath) ||
+          assetCaptureRaw.revision.toUpperCase() !== receipt.newAssetRevision.toUpperCase()) {
+        throw new Error(text(language, '恢复文件的 SHA-256 与回执不一致。', 'The restored file SHA-256 does not match its receipt.'));
+      }
+      const coreLayerContext = exactCoreLayerContext(source, source.selectedAsset);
+      if (source.coreLayerContext && !coreLayerContext) {
+        throw new Error(text(language, '当前工程引用与来源选择不匹配，请刷新工程后重试。', 'The project references do not match the selected source. Refresh the project and try again.'));
+      }
+      const treeRaw: unknown = await backend.request<CatalogTreeSnapshot>('project.tree.load', {
+        projectPath,
+        projectXml,
+        projectSessionID: source.projectSessionID,
+        mode: 'Project',
+        ...(coreLayerContext ? { coreLayerContext } : {}),
+      }, { signal: controller.signal });
+      if (!isCurrent()) return;
+      if (!treeRaw || typeof treeRaw !== 'object' || !Array.isArray((treeRaw as CatalogTreeSnapshot).roots)) {
+        throw new Error(text(language, '工程目录没有返回可读的树结构。', 'The project catalog did not return a readable tree.'));
+      }
+      const matches = walkCatalogTree((treeRaw as CatalogTreeSnapshot).roots).filter(node =>
+        node.sourceClass === 'ObservableGeometry' && node.name === receipt.newName &&
+        typeof node.assetID === 'string' && sameServerPath(node.assetID, assetCaptureRaw.canonicalPath));
+      if (matches.length !== 1) {
+        throw new Error(text(language, `工程目录未能按名称和文件路径唯一读回“${receipt.newName}”。`, `The project catalog did not read back exactly one “${receipt.newName}” at the restored file path.`));
+      }
+      const node = matches[0];
+      const asset = {
+        path: assetCaptureRaw.canonicalPath,
+        kind: 'Geometry',
+        name: node.name,
+        revision: assetCaptureRaw.revision,
+        locator: node.locator ?? undefined,
+      };
+      const modelRaw: unknown = await backend.request<ModelSnapshot>('model.load', modelLoadRequest(readContext, asset), { signal: controller.signal });
+      if (!isCurrent()) return;
+      assertModelSnapshot(modelRaw);
+      if (modelRaw.revision.toUpperCase() !== receipt.newAssetRevision.toUpperCase()) {
+        throw new Error(text(language, '几何模型读回修订与恢复回执不一致。', 'The loaded geometry revision does not match the restore receipt.'));
+      }
+      if (!props.onContextCommit?.(source, source)) {
+        throw new Error(text(language, '当前工程会话拒绝了原来源确认；没有切换到恢复后的几何。', 'The project session rejected the source-context check; the restored geometry was not selected.'));
+      }
+      if (!isCurrent()) return;
+      const selected = updatedModelContext(readContext, asset, modelRaw);
+      contextRef.current = selected;
+      onContextChange(selected);
+      setTreeReloadKey((key) => key + 1);
+      setNotice(receipt.cleanupWarning
+        ? text(language, `已恢复并读回“${receipt.newName}”。清理提示：${receipt.cleanupWarning}`, `Restored and read back “${receipt.newName}”. Cleanup note: ${receipt.cleanupWarning}`)
+        : text(language, `已恢复并读回“${receipt.newName}”，现在已选中该几何。`, `Restored and read back “${receipt.newName}”; it is now selected.`));
+    } catch (error) {
+      if (!isCurrent()) return;
+      setFileError(message(error, language));
+      setFileErrorDetails(rawDiagnosticText(error));
+      setNotice(text(language, '备份恢复操作已返回，但完整文件与工程目录读回未通过；没有切换当前资产。', 'The restore operation returned, but full file and catalog read-back did not pass. The current asset was not changed.'));
+    } finally {
+      if (generation === geometryBackupReadbackGeneration.current && !controller.signal.aborted) {
+        geometryBackupReadbackAbort.current = undefined;
+        setFileBusy(false);
+      }
+    }
+  };
+
   const openNode = (node: CatalogTreeNode): void => {
     selectNode(node);
     onNavigate(featureForNode(node));
@@ -930,6 +1136,11 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         <div className="project-toolbar-breadcrumb"><span className="project-toolbar-mark">RAS</span><span>{text(language, '工程管理器', 'Project Explorer')}</span>{title && <><i>/</i><strong title={title}>{title}</strong></>}</div>
         <div className="project-toolbar-actions">
           {headerAction}
+          {hasBackendFileIdentity && <>
+            <button type="button" className="project-button project-button-secondary" data-testid="project-create-terrain" disabled={Boolean(surfaceCreationDisabledReason)} title={surfaceCreationDisabledReason} onClick={() => openSurfaceCreationDialog('newTerrain')}>{text(language, '新建地形', 'New terrain')}</button>
+            <button type="button" className="project-button project-button-secondary" data-testid="project-create-classification" disabled={Boolean(surfaceCreationDisabledReason)} title={surfaceCreationDisabledReason} onClick={() => openSurfaceCreationDialog('newClassification')}>{text(language, '新建分类图层', 'New classification layer')}</button>
+            <button type="button" className="project-button project-button-secondary" data-testid="project-create-nvalue" disabled={Boolean(surfaceCreationDisabledReason)} title={surfaceCreationDisabledReason} onClick={() => openSurfaceCreationDialog('newNValue')}>{text(language, '新建糙率图层', 'New N-Value layer')}</button>
+          </>}
           {hasBackendFileIdentity && <button type="button" className="project-button project-button-secondary" data-testid="project-external-connections-open" onClick={() => setExternalConnectionsOpen(true)}>{text(language, '外部连接', 'Connections')}</button>}
           {workspaceArchiveUrl && downloadableWorkspace && <a className="project-button project-button-secondary" data-testid="project-download-workspace" aria-label={text(language, '请求下载当前工程所属的完整上传工作区 ZIP', 'Request the complete uploaded workspace ZIP that contains the current project')} href={workspaceArchiveUrl} download title={text(language, '请求下载当前工程所属的完整上传工作区 ZIP。', 'Request the complete uploaded workspace ZIP that contains the current project.')}>{text(language, '下载工作区 ZIP', 'Download workspace ZIP')}</a>}
           <button type="button" className="project-button project-button-secondary" disabled={fileBusy || libraryImportBusy} onClick={() => setOpenProjectDialog(true)}>{text(language, '打开工程', 'Open project')}</button>
@@ -997,6 +1208,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
             key={JSON.stringify([context.projectSessionID, context.projectPath])}
             language={language}
             backend={backend}
+            context={context}
+            hasUnsavedDrafts={hasUnsavedDrafts || newProjectDirty}
             mode={treeMode}
             projectSnapshot={projectSnapshot}
             catalogSnapshot={catalogSnapshot}
@@ -1010,6 +1223,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
             onOpen={openNode}
             onPerformAction={(action, node) => void performTreeAction(action, node)}
             onRetry={retryTrees}
+            onContextCommit={props.onContextCommit}
+            onGeometryBackupCommitted={onGeometryBackupCommitted}
           />}
         </div>
       )}
@@ -1082,6 +1297,17 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         language={language} backend={backend} context={context} open={modelCreationDialog === 'newBoundary'}
         blockedReason={modelCreationDisabledReason} hasUnsavedDrafts={hasUnsavedDrafts}
         onClose={() => setModelCreationDialog(null)} onContextCommit={props.onContextCommit} onCreated={onModelCreated}
+      />
+      <SurfaceCreationDialog
+        language={language}
+        backend={backend}
+        context={context}
+        kind={surfaceCreationKind}
+        hasUnsavedDrafts={hasUnsavedDrafts || newProjectDirty}
+        blockedReason={surfaceCreationDisabledReason}
+        onClose={() => setSurfaceCreationKind(null)}
+        onContextCommit={props.onContextCommit}
+        onCreated={onSurfaceCreated}
       />
 
       {(pendingOpen || pendingCloseDraft) && <div className="project-modal-backdrop project-guard-backdrop" role="presentation">

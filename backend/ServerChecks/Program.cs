@@ -10,6 +10,17 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-classification-manning-http", string classificationBaseUrl, string classificationOutput])
+            {
+                TextWriter protocol = Console.Out;
+                ClassificationManningAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunClassificationManningAcceptanceAsync(
+                    new Uri(EnsureTrailingSlash(classificationBaseUrl)), classificationOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-session-references-http", string referenceBaseUrl, string referenceManifest, string referenceOutput])
             {
                 TextWriter protocol = Console.Out;

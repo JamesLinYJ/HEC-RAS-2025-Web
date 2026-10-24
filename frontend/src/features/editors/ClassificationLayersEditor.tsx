@@ -4,6 +4,7 @@ import { ClassificationGeometryEditor } from './ClassificationGeometryEditor';
 import { ClassificationRasterEditor } from './ClassificationRasterEditor';
 import { DetailedClassificationHeader } from './DetailedClassificationHeader';
 import { PolygonClassificationInputProperties } from './PolygonClassificationInputProperties';
+import { ClassificationImportEditor } from './ClassificationImportEditor';
 
 const selectedClassificationField = 'ClassificationLayersEditor/ClassificationLayer_SelectedClassificationInput';
 
@@ -15,7 +16,10 @@ export function ClassificationLayersEditor(props: EditorPageProps) {
   const selectedID = draft.fields[selectedClassificationField] ?? classification?.selectedId ?? '';
   const selected = inputs.find((input) => input.id === selectedID) ?? inputs[0];
   const selectedIndex = selected ? inputs.findIndex((input) => input.id === selected.id) : -1;
-  if (!selected) return <div className="editor-empty-state">{language === 'zh' ? '该图层没有分类输入。' : 'This layer has no classification inputs.'}</div>;
+  if (!selected) return <section className="editor-schema-page editor-classification-inputs">
+    <ClassificationImportEditor {...props} />
+    <div className="editor-empty-state">{language === 'zh' ? '该图层没有分类输入；可以从服务端可访问的 TIFF 或多边形 Shapefile 导入。' : 'This layer has no classification inputs. Import a server-visible TIFF or polygon shapefile.'}</div>
+  </section>;
   const inputNameKey = `${selected.scope}/Name`;
   const displayName = draft.fields[inputNameKey] ?? selected.name;
   const isRaster = Boolean(selected.tableId);
@@ -26,6 +30,7 @@ export function ClassificationLayersEditor(props: EditorPageProps) {
 
   return (
     <section className="editor-schema-page editor-classification-inputs">
+      <ClassificationImportEditor {...props} />
       <DetailedClassificationHeader props={props} selected={selected} />
       <div className="editor-classification-layout">
         <nav className="editor-line-list" aria-label={language === 'zh' ? '分类输入' : 'Classification inputs'}>

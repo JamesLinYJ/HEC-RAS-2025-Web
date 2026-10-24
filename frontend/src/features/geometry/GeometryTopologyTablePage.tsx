@@ -43,13 +43,18 @@ export function GeometryTopologyTablePage(props: GeometryTopologyTablePageProps)
         table={props.table}
         localRows={props.localRows}
         editable={props.canEdit}
+        allowLocalAdd={props.kind !== 'node'}
         busy={props.busy}
         onChange={props.onChange}
-        onDelete={props.onDelete}
+        onDelete={props.kind === 'node' && !props.canEdit ? undefined : props.onDelete}
         onLocalAdd={props.onLocalAdd}
         onSelect={(ids) => props.onSelectionChange?.([...(props.table?.rows ?? []), ...props.localRows].filter((row) => ids.includes(row.id)))}
       />
-      <div className="geometry-inline-help">{gt(props.language, 'validationNote')} · {gt(props.language, title)}</div>
+      <div className="geometry-inline-help">{props.kind === 'node'
+        ? (props.language === 'zh'
+          ? '节点是拓扑中的源要素，支持按所选节点执行删除并由拓扑草稿撤销；节点新建与地图拖动不在此表格页提供。'
+          : 'Nodes are source topology features. Selected nodes can be deleted through the topology draft and undone; node creation and map dragging are not provided in this table page.')
+        : <>{gt(props.language, 'validationNote')} · {gt(props.language, title)}</>}</div>
     </div>
   );
 }

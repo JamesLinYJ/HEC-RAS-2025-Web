@@ -24,6 +24,10 @@ export function ModelDataTable({ tableID, rows, columns, canEdit, onCellChange, 
         columns={localizedColumns}
         getRowId={row => row.id}
         getCellValue={(row, column) => row.values[column.id] ?? ''}
+        canPasteCell={(_row, column) => canEdit && column.readOnly !== true}
+        onCellPaste={(row, column, value) => {
+          if (canEdit && column.readOnly !== true) onCellChange(tableID, row.id, column.id, value);
+        }}
         rowHeaderLabel={language === 'zh' ? '行编号' : 'Row ID'}
         rowHeaderContent="#"
         renderCell={(row, column, sourceIndex) => {

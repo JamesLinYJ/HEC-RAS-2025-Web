@@ -436,7 +436,7 @@
           "topology.recipe",
           "topology.filter"
         ],
-        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations. Recipe inspect calls topology.recipe with the captured model/revision/draftState/controlPointFIDs and optional recipe text; response revision, draftIdentity, FIDs, schema, steps and diagnostics are checked against the active owner. Apply uses topology.edit applyRecipe for the captured control-point FIDs; returned topology snapshot enters the parent draft and existing undo/redo lifecycle, and only parent model.save writes Geometry HDF. Recipe controls expose source-supported ingredient/parameter editors; unknown parameter types remain read-only because Host schema supplies no parameter description. For an existing step, every Host-provided parameter remains in its draft; the source parameter whitelist controls visible form fields and defaults for newly added steps only. Serialization writes the visible parameters in source order, then appends the existing hidden parameters in their original order, so editing or reordering a step does not drop hidden algorithm values. Tag create/set/remove uses selected source FIDs; topology.filter validates owner/revision/draft/FIDs and changes selection only. The overview apply-factor control edits supported all-topology arc/control-point size fields in the same draft; cross-page selected scope is unavailable and node coordinates remain read-only. Geometry save sends fields: {} rather than replaying read-only catalog-summary fields, so Host applies only captured child drafts while preserving parent metadata. These facts are static source wiring; no recipe runtime acceptance is claimed."
+        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations. Recipe inspect calls topology.recipe with the captured model/revision/draftState/controlPointFIDs and optional recipe text; response revision, draftIdentity, FIDs, schema, steps and diagnostics are checked against the active owner. Apply uses topology.edit applyRecipe for the captured control-point FIDs; returned topology snapshot enters the parent draft and existing undo/redo lifecycle, and only parent model.save writes Geometry HDF. Recipe controls expose source-supported ingredient/parameter editors; unknown parameter types remain read-only because Host schema supplies no parameter description. For an existing step, every Host-provided parameter remains in its draft; the source parameter whitelist controls visible form fields and defaults for newly added steps only. Serialization writes the visible parameters in source order, then appends the existing hidden parameters in their original order, so editing or reordering a step does not drop hidden algorithm values. Tag create/set/remove uses selected source FIDs; topology.filter validates owner/revision/draft/FIDs and changes selection only. The overview apply-factor control edits supported all-topology arc/control-point size fields in the same draft; cross-page selected scope is unavailable and node coordinates remain read-only in this table page: Host mapCommand/moveNode exists, but the page does not capture the map drag context and MapCellSize required to call it. Selected-node deletion uses the existing topology draft; node creation and map dragging are not offered here. Geometry save sends fields: {} rather than replaying read-only catalog-summary fields, so Host applies only captured child drafts while preserving parent metadata. These facts are static source wiring; no recipe runtime acceptance is claimed."
       },
       {
         "id": "terrain-levee-composition",
@@ -654,33 +654,48 @@
       },
       {
         "id": "classification-and-manning-editors",
-        "mount": "EditorWorkbench → ClassificationEditor / NValueEditor → ClassificationLayersEditor / ManningsNEditor → source-specific raster, mapping, polygon, constant and classification-layer controls",
+        "mount": "EditorWorkbench → ClassificationEditor / NValueEditor → ClassificationLayersEditor → ClassificationImportEditor / ClassificationRasterEditor → RasterClassificationInputProperties → ClassificationMappingEditor / ClassificationGeometryEditor; SourceManagerControl → ClassificationImporter; EditorWorkbench → ManningsNEditor → ConstantManningsNEditor / ClassificationLayerManningNEditor → ManningInterpretationTable",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
           "frontend/src/features/editors/ClassificationEditor.tsx",
           "frontend/src/features/editors/ClassificationLayersEditor.tsx",
+          "frontend/src/features/editors/ClassificationImportEditor.tsx",
+          "frontend/src/features/editors/ClassificationLayerSummary.tsx",
+          "frontend/src/features/editors/DetailedClassificationHeader.tsx",
           "frontend/src/features/editors/ClassificationRasterEditor.tsx",
+          "frontend/src/features/editors/RasterClassificationInputProperties.tsx",
           "frontend/src/features/editors/ClassificationMappingEditor.tsx",
+          "frontend/src/features/editors/classificationMappingValidation.ts",
           "frontend/src/features/editors/ClassificationGeometryEditor.tsx",
           "frontend/src/features/editors/PolygonClassificationInputProperties.tsx",
           "frontend/src/features/editors/ClassificationVisualizationOptions.tsx",
-          "frontend/src/features/editors/DetailedClassificationHeader.tsx",
           "frontend/src/features/editors/NValueEditor.tsx",
           "frontend/src/features/editors/ManningsNEditor.tsx",
           "frontend/src/features/editors/ConstantManningsNEditor.tsx",
           "frontend/src/features/editors/ClassificationLayerManningNEditor.tsx",
+          "frontend/src/features/editors/ManningInterpretationTable.tsx",
+          "frontend/src/features/editors/manningEditorUi.ts",
           "frontend/src/features/editors/DetailedManningsNHeader.tsx",
+          "frontend/src/features/tools/SourceManagerControl.tsx",
+          "frontend/src/features/tools/ClassificationImporter.tsx",
+          "frontend/src/features/tools/ClassificationRasterImporterDialog.tsx",
+          "frontend/src/features/tools/ClassificationVectorImporter.tsx",
+          "frontend/src/features/editors/model.ts",
           "backend/Host/ClassificationEditorService.cs",
           "backend/Host/ClassificationGeometryService.cs",
           "backend/Host/ManningEditorService.cs",
-          "backend/Host/NValuePreviewService.cs"
+          "backend/Host/NValuePreviewService.cs",
+          "backend/Host/ModelEditorAdapter.cs",
+          "backend/Host/BackendWorker.cs"
         ],
-        "stateOwner": "Classification and Manning views are derived from the current model snapshot plus ModelDraft fields/rows and the selected input/mode. Classification mapping and polygon values and existing Manning interpretation rows stay attached to that parent draft.",
+        "stateOwner": "Classification inputs, selected polygon input, fields, mapping rows and accepted transform projections are bound to the active model snapshot and ModelDraft. The polygon canvas selection and clipboard are local editor state. Manning source mode, association and interpretation rows use the same parent model owner; asynchronous Manning refresh/default operations are accepted only for the captured asset, revision, sourceState and association.",
         "readActions": [
           "model.load",
+          "model.classificationInspect",
+          "model.classificationMap",
           "nvalue.preview"
         ],
-        "writeBoundary": "model.classificationTransform reconciles classification fields and mapping rows against the captured snapshot and returns a draft projection; model.manningTransform applies the supported Manning operation against the same model identity. Ordinary edits and accepted projections remain in ModelDraft until model.save. nvalue.preview is read-only. Classification import, mapping-row add/remove, map-click polygon editing, and persisted visualization transparency are not connected."
+        "writeBoundary": "ClassificationLayersEditor mounts ClassificationImportEditor in its inputs view; SourceManagerControl separately mounts ClassificationImporter for a selected Surface Layers asset. Both inspect server-visible TIFF or polygon Shapefile paths with model.classificationInspect, then require a clean editable classification model and a matching source capture before the explicit model.classificationImport operation. Import is an immediate HDF write, not a ModelDraft edit; only a matching new model revision and accepted project-context receipt refresh the baseline, and an uncertain result requires reload/readback before retry. Ordinary classification transforms (input reorder/remove and polygon geometry operations) use model.classificationTransform and stay in ModelDraft until model.save. Polygon selection is local to the project-coordinate SVG, not a main-map click action; create/replace/delete/copy/paste/undo/redo preserve the captured input/feature identities and Z/M data. Polygon class-value fields also enter ModelDraft. Raster mapping row identity and integer Key are source-owned and immutable; only Value is editable. The original ObservableClassificationMapRow exposes a getter-only Key, and the original collection-change handler rejects row add/delete, so the UI correctly offers neither key editing nor row insertion/removal; these are not migration gaps. model.classificationMap renders the current model/draft raster and legend for preview; its opacity slider is local preview state only. For Manning, Constant values and existing interpretation Value cells update ModelDraft. Classification association changes refresh the Host projection through model.manningTransform(refresh); setNLCD updates only exact name matches already present and preserves other rows. Source keys, row IDs and row count remain Host-owned/read-only, consistent with the original fixed-row table and Host contract. nvalue.preview is read-only and is enabled only for a clean saved model revision; it returns raster, legend and histogram data. Parent model.save is the persistence boundary for ordinary edits. Source wiring only; no runtime acceptance is claimed."
       },
       {
         "id": "air-pressure-boundary-editor",
@@ -1022,7 +1037,7 @@
           "geometry.mesh.load",
           "geometry.culverts.load"
         ],
-        "writeBoundary": "Selection/filtering does not itself edit model data. Topology arc/region filtering uses topology.filter and only selects validated current FIDs; node coordinates remain read-only because there is no Host move command. Existing arc/region/mesh edits continue through topology.edit or geometry.mesh.edit, culvert edits through geometry.culverts.edit, and the parent model.save commits the Geometry HDF. This documents mounted source relationships, not a new Host command or UI acceptance."
+        "writeBoundary": "Selection/filtering does not itself edit model data. Topology arc/region filtering uses topology.filter and only selects validated current FIDs; node coordinates remain read-only in this table page because it has no captured map drag context/MapCellSize, although Host mapCommand/moveNode exists; selected-node deletion uses the existing topology draft and nodes cannot be locally added here. Existing arc/region/mesh edits continue through topology.edit or geometry.mesh.edit, culvert edits through geometry.culverts.edit, and the parent model.save commits the Geometry HDF. This documents mounted source relationships, not a new Host command or UI acceptance."
       },
       {
         "id": "catalog-tree-search-filter",
@@ -1156,6 +1171,7 @@
         "mount": "ModelDataTable → DataGrid → GenericEnumFilterControl; SourceManagerControl → AttributeTableEditorControl → AttributeTableDataGrid → DataGrid → GenericEnumFilterControl",
         "source": [
           "frontend/src/controls/DataGrid.tsx",
+          "frontend/src/controls/dataGridClipboard.ts",
           "frontend/src/controls/GenericEnumFilterControl.tsx",
           "frontend/src/features/editors/ModelDataTable.tsx",
           "frontend/src/features/tools/attributes/AttributeTableEditorControl.tsx",
@@ -1163,9 +1179,9 @@
           "frontend/src/features/tools/attributes/attributeTableTypes.ts",
           "backend/Host/AttributeTableService.cs"
         ],
-        "stateOwner": "DataGrid owns only the current view search, selected discrete-value filter, sort and page index; it derives a filtered/sorted indexed row sequence without mutating source rows. Stable row.id and column.id remain the source identities, and row ordinals refer to original source order. ModelDataTable edits continue to be owned by the parent ModelDraft. AttributeTableDataGrid owns cell drafts keyed by [rowId,columnId] and a selected column; the attribute source capture remains owned by the existing SourceManager workflow.",
+        "stateOwner": "DataGrid owns current view search, discrete-value filter, sort/page and cell selection by stable source rowID/columnID; selection coordinates are resolved through the current sorted/filtered indexed view. Column widths are local view state. ModelDataTable edits remain in the parent ModelDraft. AttributeTableDataGrid owns cell drafts keyed by [rowId,columnId] and a selected column; source capture stays in SourceManagerControl.",
         "readActions": [],
-        "writeBoundary": "GenericEnumFilterControl filters discrete values from the selected data column; it does not claim schema enum metadata. When more than 80 distinct values are present, the option list is hidden and text search remains available; data rows are not truncated by this limit. Sorting/filtering only changes the visible indexed sequence. ModelDataTable calls the existing onCellChange(tableID,rowID,columnID,rawString) path, retaining empty/intermediate/invalid numeric text for the parent draft and preserving existing row selectors. AttributeTableDataGrid keeps null distinct from strings and applies edits through the existing attributeTable.transform in-memory preview; no Shapefile write-back was added. This does not implement all C# DataGrid features (including paste, multi-cell selection, drag column resizing and row/column edit menus), nor TableOrList/ListDetail preference/detail surfaces. Source-level wiring only; no build or runtime acceptance is claimed."
+        "writeBoundary": "GenericEnumFilterControl filters observed discrete values from the selected column; it does not claim schema enum metadata. Above 80 distinct values, the option list is hidden but text search and full data rows remain available. Sorting/filtering/page views do not mutate or truncate source rows. Cell selection supports click, Shift-click, Ctrl/Command-click, Shift-arrow and Ctrl/Command-Shift-arrow over the current indexed view. Copy serializes selected cells as TSV; paste resolves cells back to source row/column IDs, supports rectangular TSV and one-cell fill, skips read-only/adapter-rejected cells and passes strings without numeric coercion. ModelDataTable continues calling onCellChange(tableID,rowID,columnID,rawString), preserving intermediate/invalid text in ModelDraft. AttributeTableDataGrid routes changes to its [rowId,columnId] local drafts and existing explicit attributeTable.transform preview; it does not write a Shapefile. Column resize supports drag, Shift-arrow and double-click reset, but width changes remain local. Remaining source behaviors not wired here include Ctrl+Arrow edge jumps, Delete/Backspace clearing, context menu, formula/reference offset semantics, dirty-cell/toast aggregation and a disk write-back operation for attribute-table edits. TableOrList preference and ListDetail surfaces are also outside this grid. These are source-wiring facts, not build or runtime acceptance."
       },
       {
         "id": "project-settings-and-example-catalog",
@@ -1187,6 +1203,73 @@
           "projectLibrary.catalog"
         ],
         "writeBoundary": "Settings change only the application theme preference or clear the current app recent-project list; neither writes project files. The example catalog request uses debugMode=false and the UI retains only kind=example entries. Search is local over returned title/description/tags, with keyboard navigation. Opening an example uses projectLibrary.open with a user-entered Host absolute destination, then project.open and the existing parent context acceptance path. ExampleProjectSummaryPage keeps `busy` for a real open operation and `canOpen` as a separate gate for the primary action; an invalid or unavailable destination disables Open without disabling Back. No default Host directory, credentials, filesystem enumeration or generic server search is available through this UI contract; the existing ProjectOpenProjectDialog upload/path workflow remains separate. Source wiring only; no build or GUI acceptance is claimed."
+      },
+      {
+        "id": "project-surface-creation",
+        "mount": "ProjectExplorerControl toolbar → SurfaceCreationDialog → useSurfaceCreation",
+        "source": [
+          "frontend/src/features/project/ProjectExplorerControl.tsx",
+          "frontend/src/features/project/SurfaceCreationDialog.tsx",
+          "frontend/src/features/project/SurfaceCreationWorkflow.ts",
+          "frontend/src/features/project/ProjectTreeModelActions.ts",
+          "backend/Host/SurfaceCreationService.cs",
+          "backend/Host/ModelCreationService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "ProjectExplorerControl owns the selected project session/XML/SHA and active creation kind; the dialog owns the name, inspect receipt and in-flight operation generation. The created model receipt and selected asset are accepted only while the original project owner remains current.",
+        "readActions": [
+          "workspace.file.inspect",
+          "surfaceCreation.inspect",
+          "project.tree.load"
+        ],
+        "writeBoundary": "Toolbar actions create Terrain, Classification, or N-Value surfaces. The flow rejects browser-local projects and unsaved drafts, inspects a clean server project and proposed name/target folder, rechecks project SHA before surfaceCreation.create, then inspects the new HDF and reads the Project tree back to verify exactly one node with the requested kind/name/path before changing the selected asset. The Host creates a real HDF in the expected Terrains or Surface Layers folder and returns a file receipt; this flow does not separately commit .ras XML. Cancellation after submission leaves the outcome uncertain and requires directory verification before retry. This is a React integration/workflow record, not an additional original C# inventory item and not a runtime-acceptance claim."
+      },
+      {
+        "id": "geometry-backup-actions",
+        "mount": "ProjectExplorerControl → ProjectTreeMode → ProjectTreeModeReactView → RasCatalog → RasCatalogInfoPane → GeometryCatalogSummary / BackupCatalogSummary → GeometryBackupAction",
+        "source": [
+          "frontend/src/features/project/ProjectExplorerControl.tsx",
+          "frontend/src/features/project/ProjectTreeMode.tsx",
+          "frontend/src/features/project/ProjectTreeModeReactView.tsx",
+          "frontend/src/features/project/RasCatalog.tsx",
+          "frontend/src/features/project/RasCatalogInfoPane.tsx",
+          "frontend/src/features/project/GeometryCatalogSummary.tsx",
+          "frontend/src/features/project/BackupCatalogSummary.tsx",
+          "frontend/src/features/project/geometrybackupworkflow/GeometryBackupAction.tsx",
+          "frontend/src/features/project/geometrybackupworkflow/geometryBackupWorkflow.ts",
+          "backend/Host/GeometryBackupService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "ProjectExplorerControl owns the project/session context, selected asset, tree refresh and restore read-back generation. GeometryBackupAction owns its entered backup name, operation state and verified service receipt; its identity is bound to the current project XML/revision, selected Geometry or backup node, source paths/revisions and optional CoreLayerContext.",
+        "readActions": [
+          "workspace.file.inspect",
+          "model.load",
+          "project.tree.load",
+          "catalog.tree.load"
+        ],
+        "writeBoundary": "A clean saved server project is required; unsaved drafts, uncaptured session references, stale node identity or missing Host/parent callbacks disable the action. Create first inspects the exact Geometry canonical path and SHA, model.load confirms the same source revision, then geometry.backup.createNamed receives the captured project/XML and Geometry identities; the receipt is checked before the parent refreshes the catalog. Restore first rechecks the selected backup and its parent Geometry, then geometry.backup.restore creates a separate Geometry file without overwriting either input. The parent verifies the returned file SHA, reads project.tree.load for exactly one matching Geometry node, model.load checks the new asset revision, and only then changes the selected asset. These operations do not implicitly save .ras XML or the editor's model draft. This is source-level wiring only; no build, service, browser or GUI acceptance is claimed, and the React action is workflow glue rather than an additional original C# inventory item."
+      },
+      {
+        "id": "raster-calculator-transient-preview",
+        "mount": "ToolsPageView → tools-tab-raster-calculator → RasterCalculatorEditor → RasterCalculatorInputRecipe / RasterCalculatorConstantRecipe",
+        "source": [
+          "frontend/src/features/tools/index.tsx",
+          "frontend/src/features/tools/RasterCalculatorEditor.tsx",
+          "frontend/src/features/tools/RasterCalculatorRecipe.ts",
+          "frontend/src/features/tools/RasterCalculatorInputRecipe.tsx",
+          "frontend/src/features/tools/RasterCalculatorConstantRecipe.tsx",
+          "frontend/src/features/map/ProjectTreeListener.ts",
+          "backend/Host/RasterCalculatorService.cs",
+          "backend/Host/RasterCalculatorContracts.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "RasterCalculatorEditor owns the project/session/core-reference owner, selected saved-map identity and inspected source capture, expression, input/constant recipes, NoData behavior, output label, preview extent/resolution, selected profile, request generation and temporary RGBA result. Recipe state is page-local and reported as the tools.raster-calculator dirty owner; changing project owner resets it.",
+        "readActions": [
+          "map.document.list",
+          "map.tree.load",
+          "raster.calculator.inspect"
+        ],
+        "writeBoundary": "The UI lists the current saved map catalog and explicitly inspects one supported map (Project, Buildable, Geometry or Plan). Host inspection returns actual Terrain and map-output Result sources, file dependencies/revisions, NoData choices and a context token bound to project/XML/map/.vis identities. The UI validates source IDs/revisions, Result map types/profile selection, expression/constants and either the intersection of selected-source extents or explicit finite world bounds; raster resolution is capped at 1536 per side and 2,097,152 pixels total. raster.calculator.evaluate rechecks the context and source files and returns a transient Host RasterRenderer RGBA frame; selecting another Result profile runs evaluation again. The preview remains inside this panel: the current parent MapView has no transient-layer registration callback, and neither inspect nor evaluate writes .ras, .vis, model HDF or input rasters. There are no Add to Map or Save Existing actions in this React flow. This is source-level wiring only; no build, service, browser or GUI acceptance is claimed."
       }
     ],
     "stateInvariants": [

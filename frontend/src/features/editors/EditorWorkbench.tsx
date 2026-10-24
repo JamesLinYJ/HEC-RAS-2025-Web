@@ -6,7 +6,7 @@ import { BoundaryConditionEditor, BOUNDARY_EDITOR_PAGE_IDS } from './BoundaryCon
 import { ClassificationEditor } from './ClassificationEditor';
 import { EditorCatalogBrowser } from './EditorCatalogBrowser';
 import { NValueEditor } from './NValueEditor';
-import type { ClassificationMapData, ClassificationTransformCommand, EditorPageProps, EditorSchema, EditorPageProps as PageProps, ManningTransformOperation, ModelDraft, ModelSnapshot, NValuePreviewData, SeriesTransformOperation, SpatialGridData, SpatialGridInspection, SpatialGridSelection, TerrainTransformCommand } from './model';
+import type { ClassificationImportFile, ClassificationImportInspection, ClassificationImportWorkflow, ClassificationMapData, ClassificationTransformCommand, EditorPageProps, EditorSchema, EditorPageProps as PageProps, ManningTransformOperation, ModelDraft, ModelSnapshot, NValuePreviewData, SeriesTransformOperation, SpatialGridData, SpatialGridInspection, SpatialGridSelection, TerrainTransformCommand } from './model';
 import { pageTitle, schemaForAsset, snapshotRows } from './model';
 import { changedModelCells, createModelDraft, isModelDraftDirty, updateModelSample, validateChangedSamples } from './modelDraft';
 import { validateChangedTableCells, validateModelDraft } from './SchemaFieldRenderer';
@@ -22,6 +22,7 @@ import { AttachInitialConditionsDialog } from './AttachInitialConditionsDialog';
 import { ModelAssociationsPanel } from './associations/ModelAssociationsPanel';
 import type { TerrainMapProjectOwner, TerrainMapViewport, TerrainTopologyResponse } from './terrainTopologyTypes';
 import { projectXmlSha } from '../map/ProjectTreeListener';
+import { hasUncapturedSessionReferences, modelSaveRequest } from '../tools/coreImportWorkflow';
 
 type DisplayMode = 'model' | 'catalog';
 interface SourceContext { context: WorkbenchContext; owner: string }
@@ -73,12 +74,16 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const [view, setView] = useState<DisplayMode>('model');
   const [pending, setPending] = useState<Transition | null>(null);
   const [busy, setBusy] = useState(false);
+  const [classificationImportRunning, setClassificationImportRunning] = useState(false);
+  const [classificationImportUncertainVersion, setClassificationImportUncertainVersion] = useState(0);
   const [saveMessage, setSaveMessage] = useState('');
   const [saveErrorDetails, setSaveErrorDetails] = useState('');
   const [saveErrors, setSaveErrors] = useState<Array<{ fieldID: string; title: string; message: string }>>([]);
   const generation = useRef(0);
   const pendingSaveContinuation = useRef<Transition | null>(null);
   const activeSave = useRef<{ owner: string; controller: AbortController } | null>(null);
+  const classificationImportRequest = useRef<{ owner: string; controller: AbortController } | null>(null);
+  const classificationImportUncertainOwners = useRef(new Set<string>());
   const acceptedReceipt = useRef<{ owner: string; snapshot: ModelSnapshot } | null>(null);
   const loadedOwner = useRef<string | null>(null);
   const [initialConditionsOperation, setInitialConditionsOperation] = useState<BoundaryInitialConditionsOperation | null>(() =>
@@ -94,7 +99,16 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     persistInitialConditionsOperation(operation);
   };
 
+  const markClassificationImportUncertain = (owner: string): void => {
+    classificationImportUncertainOwners.current.add(owner);
+    setClassificationImportUncertainVersion((version) => version + 1);
+  };
+
   const desiredSource = useMemo(() => sourceFor(props.context), [props.context]);
+  const classificationImportUncertain = useMemo(
+    () => classificationImportUncertainOwners.current.has(source.owner),
+    [source.owner, classificationImportUncertainVersion],
+  );
   const dirty = useMemo(() => {
     const currentDraft = draft ?? emptyDraft();
     const selectionBaselines = {
@@ -1888,6 +1902,140 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     }
   };
 
+  const onClassificationImportInspect: ClassificationImportWorkflow['inspect'] = async (files, signal) => {
+    const currentSnapshot = snapshotRef.current;
+    const currentDraft = draftRef.current;
+    if (!currentSnapshot || !currentDraft || !asset || asset.kind !== 'Surface Layers' || !currentSnapshot.classification
+      || !source.context.projectPath || source.context.projectXml == null || !source.context.projectRevision || !source.context.projectSessionID
+      || !currentSnapshot.canEdit || activeSave.current || busy || classificationImportRunning || classificationImportUncertain
+      || !backend.supports('model.classificationInspect') || !classificationDraftIsClean(currentSnapshot, currentDraft)
+      || validations.length > 0 || hasUncapturedSessionReferences(source.context, asset)) {
+      throw new Error('分类来源检查要求当前工程中的可编辑分类模型与干净、有效的草稿。');
+    }
+    if (files.length === 0 || signal.aborted) throw new DOMException('分类来源检查已取消或没有来源。', 'AbortError');
+    const owner = source.owner;
+    const revision = currentSnapshot.revision;
+    const requestGeneration = generation.current;
+    const baselineDraft = currentDraft;
+    const result = await backend.request<ClassificationImportInspection>('model.classificationInspect', {
+      model: modelSaveRequest(source.context, asset, currentSnapshot),
+      files,
+    }, { signal });
+    const latestSnapshot = snapshotRef.current;
+    const latestDraft = draftRef.current;
+    if (signal.aborted || activeOwner.current !== owner || generation.current !== requestGeneration
+      || !latestSnapshot || !latestDraft || latestSnapshot.revision !== revision || latestDraft !== baselineDraft
+      || !classificationDraftIsClean(latestSnapshot, latestDraft)) {
+      throw new DOMException('分类来源检查属于已切换或已修改的模型状态。', 'AbortError');
+    }
+    if (!result || !Array.isArray(result.items) || typeof result.projection !== 'string')
+      throw new Error('分类来源检查没有返回完整的预览数据。');
+    return { revision, inspection: result };
+  };
+
+  const onClassificationImportCommit: ClassificationImportWorkflow['commit'] = async (expectedRevision, files, signal) => {
+    setSaveErrorDetails('');
+    const currentSnapshot = snapshotRef.current;
+    const currentDraft = draftRef.current;
+    if (activeSave.current || busy || classificationImportRunning) return null;
+    if (!currentSnapshot || !currentDraft || !asset || asset.kind !== 'Surface Layers' || !currentSnapshot.classification
+      || !source.context.projectPath || source.context.projectXml == null || !source.context.projectRevision || !source.context.projectSessionID
+      || !currentSnapshot.canEdit || !onContextCommit || !backend.supports('model.classificationImport')
+      || !backend.supports('model.save') || !classificationDraftIsClean(currentSnapshot, currentDraft)
+      || validations.length > 0 || initialConditionsOperation || classificationImportUncertain
+      || hasUncapturedSessionReferences(source.context, asset)) {
+      throw new Error('分类导入要求当前工程中的可编辑分类模型、干净有效的草稿和可接纳的工程回执。');
+    }
+    if (expectedRevision !== currentSnapshot.revision || signal.aborted)
+      throw new DOMException('分类导入检查修订已过期。', 'AbortError');
+    if (!validClassificationImportSelections(files)) throw new Error('分类导入来源选项无效或身份重复。');
+
+    const owner = source.owner;
+    const requestGeneration = generation.current;
+    const revision = currentSnapshot.revision;
+    const baselineDraft = currentDraft;
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort();
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', abortFromCaller, { once: true });
+    const requestState = { owner, controller };
+    activeSave.current = requestState;
+    classificationImportRequest.current = requestState;
+    setClassificationImportRunning(true);
+    setBusy(true);
+    setSaveMessage('');
+    setSaveErrors([]);
+    const isCurrentRequest = () => activeSave.current === requestState
+      && activeOwner.current === owner && generation.current === requestGeneration
+      && snapshotRef.current?.revision === revision && !controller.signal.aborted;
+    let receivedSnapshot = false;
+    try {
+      const result = await backend.request<ModelSnapshot>('model.classificationImport', {
+        model: modelSaveRequest(source.context, asset, currentSnapshot),
+        files,
+      }, { signal: controller.signal });
+      receivedSnapshot = true;
+      if (!isCurrentRequest() || draftRef.current !== baselineDraft) {
+        if (activeSave.current === requestState && activeOwner.current === owner && !controller.signal.aborted) {
+          markClassificationImportUncertain(owner);
+          setSaveMessage(text(language, '分类导入回执属于已变化的草稿；最终保存状态未接纳。请重新载入并检查模型。', 'The classification receipt belongs to a changed draft and was not accepted. Reload and inspect the model.'));
+        }
+        return null;
+      }
+      assertModelSnapshot(result);
+      if (result.revision === revision || !result.classification || !result.canEdit)
+        throw new Error('分类导入保存回执没有确认新的可编辑模型修订。');
+      assertClassificationImportReceipt(currentSnapshot.classification, result.classification);
+
+      const nextContext = updatedContext(source.context, asset, result);
+      const nextSource = sourceFor(nextContext);
+      acceptedReceipt.current = { owner: nextSource.owner, snapshot: result };
+      if (!onContextCommit(source.context, nextContext)) {
+        acceptedReceipt.current = null;
+        markClassificationImportUncertain(owner);
+        setSaveMessage(text(language, '服务端已返回新模型修订，但当前工程会话没有接纳回执；请重新载入并核对模型。', 'The server returned a new model revision, but the active project session rejected the receipt. Reload and verify the model.'));
+        return null;
+      }
+      onDirtyStateChange?.(owner, false);
+      activeOwner.current = nextSource.owner;
+      setSnapshot(result);
+      setDraft(createModelDraft(result));
+      setSource(nextSource);
+      setSaveMessage(text(language, '分类来源已导入并由新的模型保存回执确认。', 'Classification sources were imported and confirmed by a new model-save receipt.'));
+      return result;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        if (receivedSnapshot) markClassificationImportUncertain(owner);
+        setSaveMessage(text(language, receivedSnapshot ? '分类导入回执无法核验；请重新载入模型后检查。' : '分类来源导入失败。',
+          receivedSnapshot ? 'The classification import receipt could not be verified. Reload the model and inspect it.' : 'Classification source import failed.'));
+        setSaveErrorDetails(message(error, language));
+      } else if (controller.signal.aborted && activeOwner.current === owner && generation.current === requestGeneration) {
+        markClassificationImportUncertain(owner);
+        setSaveMessage(text(language, '已请求取消分类导入，但没有收到最终保存回执；请重新载入并核对模型后再决定是否重试。',
+          'Classification import cancellation was requested, but no final save receipt arrived. Reload and verify the model before retrying.'));
+      }
+      return null;
+    } finally {
+      signal.removeEventListener('abort', abortFromCaller);
+      const ownsImportRequest = classificationImportRequest.current === requestState;
+      if (ownsImportRequest) classificationImportRequest.current = null;
+      if (activeSave.current === requestState) {
+        activeSave.current = null;
+        setBusy(false);
+      }
+      if (ownsImportRequest) setClassificationImportRunning(false);
+    }
+  };
+
+  const cancelClassificationImport = (): void => {
+    const request = classificationImportRequest.current;
+    if (!request) return;
+    markClassificationImportUncertain(request.owner);
+    setSaveMessage(text(language, '已请求取消分类导入。服务端最终状态未知，重新载入并核对模型前不能再次导入。',
+      'Classification import cancellation was requested. The server’s final state is unknown; do not retry before reloading and verifying the model.'));
+    request.controller.abort();
+  };
+
   const onClassificationMap: PageProps['onClassificationMap'] = async (signal) => {
     const currentSnapshot = snapshotRef.current;
     const currentDraft = draftRef.current;
@@ -1898,7 +2046,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     const revision = currentSnapshot.revision;
     const requestGeneration = generation.current;
     const selectedField = 'ClassificationLayersEditor/ClassificationLayer_SelectedClassificationInput';
-    const selectedInputID = currentDraft.fields[selectedField] ?? currentClassification.selectedId ?? currentClassification.inputs[0]?.id ?? '';
+    const selectedInputID = currentDraft.fields[selectedField] ?? currentClassification.selectedId ?? '';
     const fields = Object.fromEntries(Object.entries(currentDraft.fields).filter(([id]) =>
       id === selectedField || id.startsWith('ClassificationInputs/')));
     fields[selectedField] = selectedInputID;
@@ -1926,7 +2074,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     const latestFields = Object.fromEntries(Object.entries(latestDraft?.fields ?? {}).filter(([id]) => id === selectedField || id.startsWith('ClassificationInputs/')));
     const latestModelStamp = JSON.stringify({
       sourceState: latestDraft?.sourceState,
-      fields: { ...latestFields, [selectedField]: latestDraft?.fields[selectedField] ?? latestClassification?.selectedId ?? latestClassification?.inputs[0]?.id ?? '' },
+      fields: { ...latestFields, [selectedField]: latestDraft?.fields[selectedField] ?? latestClassification?.selectedId ?? '' },
       rows: Object.fromEntries(Object.entries(latestDraft?.rows ?? {}).filter(([tableID]) => latestTableIDs.has(tableID))),
     });
     if (latestModelStamp !== draftStamp) throw new DOMException('分类输入在地图预览期间发生了变化。', 'AbortError');
@@ -2242,6 +2390,37 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     }
     : undefined;
 
+  const classificationImportBlockedMessage = classificationImportUncertain
+    ? text(language, '上次分类导入的服务端状态未确认；请切换后重新载入该模型并核对内容，再开始新的导入。', 'The previous classification import has an unconfirmed server status. Reload and verify the model before starting another import.')
+    : dirty ? text(language, '请先保存或丢弃当前草稿，再检查或导入分类来源。', 'Save or discard the current draft before inspecting or importing classification sources.')
+      : validations.length > 0 ? text(language, '当前草稿含无效值；修正后才能导入分类来源。', 'Correct invalid draft values before importing classification sources.')
+        : !asset || asset.kind !== 'Surface Layers' || !snapshot?.classification ? text(language, '当前资产不是可导入的分类图层。', 'The active asset is not an importable classification layer.')
+          : !snapshot.canEdit ? text(language, '当前分类模型为只读。', 'The current classification model is read-only.')
+            : !source.context.projectPath || source.context.projectXml == null || !source.context.projectRevision || !source.context.projectSessionID
+              ? text(language, '分类导入需要当前工程路径、XML 快照、修订和会话。', 'Classification import requires the current project path, XML snapshot, revision and session.')
+              : hasUncapturedSessionReferences(source.context, asset)
+                ? text(language, '当前分类资产携带未精确捕获的会话引用；请从当前工程树重新载入。', 'The classification asset has uncaptured session references. Reload it from the active project tree.')
+                : !backend.supports('model.classificationInspect') ? text(language, '当前服务未提供分类来源检查。', 'The active service does not provide classification source inspection.')
+                  : !backend.supports('model.classificationImport') || !backend.supports('model.save') || !onContextCommit
+                    ? text(language, '当前服务或工程会话未提供可接纳的分类导入保存回执。', 'The active service or project session cannot accept a classification import save receipt.')
+                    : activeSave.current || busy || initialConditionsOperation
+                      ? text(language, '当前另一个模型操作尚未结束。', 'Another model operation is still in progress.')
+                      : '';
+  const classificationImportCanInspect = Boolean(snapshot && draft && asset?.kind === 'Surface Layers' && snapshot.classification
+    && snapshot.canEdit && !dirty && validations.length === 0 && !busy && !activeSave.current
+    && !classificationImportRunning && !classificationImportUncertain && !initialConditionsOperation
+    && !!source.context.projectPath && source.context.projectXml != null && !!source.context.projectRevision && !!source.context.projectSessionID
+    && !hasUncapturedSessionReferences(source.context, asset) && backend.supports('model.classificationInspect'));
+  const classificationImportWorkflow: ClassificationImportWorkflow | undefined = asset?.kind === 'Surface Layers' ? {
+    owner: source.owner,
+    canInspect: classificationImportCanInspect,
+    canImport: classificationImportCanInspect && backend.supports('model.classificationImport')
+      && backend.supports('model.save') && !!onContextCommit,
+    ...(classificationImportBlockedMessage ? { blockedMessage: classificationImportBlockedMessage } : {}),
+    inspect: onClassificationImportInspect,
+    commit: onClassificationImportCommit,
+  } : undefined;
+
   const pageProps: EditorPageProps | null = snapshot && draft && asset ? {
     backend, language, asset, snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
     pageId: activePageID, onPageChange: (next) => requestTransition({ kind: 'page', pageID: next }),
@@ -2268,6 +2447,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       && backend.supports('model.save') ? { onTerrainTopology } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.classificationTransform') && backend.supports('model.save') ? { onClassificationTransform } : {}),
     ...(!!source.context.projectPath && backend.supports('model.classificationMap') ? { onClassificationMap } : {}),
+    ...(classificationImportWorkflow ? { classificationImport: classificationImportWorkflow } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.manningTransform') && backend.supports('model.save') ? { onManningTransform } : {}),
     canPreviewNValue: !!source.context.projectPath && !!source.context.projectRevision && !!snapshot.manning
       && !dirty && !busy && backend.supports('nvalue.preview'),
@@ -2284,6 +2464,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
           {asset && <p className="editor-workbench-subtitle">{editorAssetKind(language, asset.kind)} · {asset.path}</p>}
         </div>
         <div className="editor-workbench-actions">
+          {view === 'model' && classificationImportRunning && <button type="button" className="editor-button" data-testid="classification-import-cancel" onClick={cancelClassificationImport}>{text(language, '请求取消分类导入', 'Request classification import cancellation')}</button>}
           <button type="button" className={view === 'model' ? 'editor-button editor-button-selected' : 'editor-button'} disabled={!asset} onClick={() => requestTransition({ kind: 'view', view: 'model' })}>{text(language, '模型页面', 'Model')}</button>
           <button type="button" className={view === 'catalog' ? 'editor-button editor-button-selected' : 'editor-button'} onClick={() => requestTransition({ kind: 'view', view: 'catalog' })}>{text(language, '控件目录 · 开发预览', 'Control catalog · preview')}</button>
           {view === 'model' && <button type="button" className="editor-button" disabled={!dirty || busy || !snapshot} onClick={discard}>{text(language, '丢弃草稿', 'Discard draft')}</button>}
@@ -2559,6 +2740,85 @@ function updatedContext(context: WorkbenchContext, asset: NonNullable<WorkbenchC
   if (committedCore) nextContext.coreLayerContext = committedCore;
   else if (hasCommittedCore) delete nextContext.coreLayerContext;
   return nextContext;
+}
+
+function classificationDraftIsClean(snapshot: ModelSnapshot, draft: ModelDraft): boolean {
+  // Draft projections are Host-issued structural edits even when their current
+  // fields happen to compare equal to the loaded values.
+  if (draft.classificationView || draft.terrainView || draft.manningView || draft.boundaryView) return false;
+  const baselines = {
+    ...(draft.terrainSelectionBaselineFields ?? {}),
+    ...(draft.classificationSelectionBaselineFields ?? {}),
+  };
+  if (Object.keys(baselines).length === 0) return !isModelDraftDirty(snapshot, draft);
+  const fields = { ...draft.fields };
+  for (const [fieldID, baselineValue] of Object.entries(baselines)) {
+    const currentValue = Object.prototype.hasOwnProperty.call(fields, fieldID) ? fields[fieldID] : null;
+    if (currentValue !== baselineValue) continue;
+    if (Object.prototype.hasOwnProperty.call(snapshot.fields, fieldID)) fields[fieldID] = snapshot.fields[fieldID];
+    else delete fields[fieldID];
+  }
+  return !isModelDraftDirty(snapshot, { ...draft, fields });
+}
+
+function validClassificationImportSelections(files: ClassificationImportFile[]): boolean {
+  if (!Array.isArray(files) || files.length === 0) return false;
+  const key = (path: string) => {
+    const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+    return /^[a-z]:\//i.test(normalized) || normalized.startsWith('//') ? normalized.toLowerCase() : normalized;
+  };
+  if (files.some((file) => !file || typeof file.file !== 'string' || !file.file.trim()
+    || !(file.file.startsWith('/') || file.file.startsWith('\\\\') || /^[a-z]:[\\/]/i.test(file.file))
+    || !isSha256(file.revision) || !['Raster', 'Polygon'].includes(file.kind))) return false;
+  if (new Set(files.map((file) => key(file.file))).size !== files.length) return false;
+  if (files.some((file) => {
+    const extension = file.file.split(/[\\/]/).pop()?.split('.').pop()?.toLowerCase();
+    return file.kind === 'Raster'
+      ? !['tif', 'tiff'].includes(extension ?? '') || !file.name?.trim()
+      : extension !== 'shp' || (file.column != null && typeof file.column !== 'string');
+  })) return false;
+  const rasterNames = files.filter((file) => file.kind === 'Raster').map((file) => file.name!.trim().toLocaleLowerCase());
+  return new Set(rasterNames).size === rasterNames.length;
+}
+
+function assertClassificationImportReceipt(
+  before: NonNullable<ModelSnapshot['classification']>,
+  after: NonNullable<ModelSnapshot['classification']>,
+): void {
+  const ids = after.inputs.map((input) => input.id);
+  const scopes = after.inputs.map((input) => input.scope);
+  if (ids.some((id) => !id) || new Set(ids).size !== ids.length
+    || scopes.some((scope) => !scope) || new Set(scopes).size !== scopes.length)
+    throw new Error('The classification import receipt contains duplicate or empty input identities/scopes.');
+  const beforeIDs = before.inputs.map((input) => input.id);
+  const retained = after.inputs.filter((input) => beforeIDs.includes(input.id));
+  if (retained.length !== before.inputs.length || retained.some((input, index) =>
+    input.id !== before.inputs[index]?.id || input.scope !== before.inputs[index]?.scope))
+    throw new Error('The classification import receipt changed existing input identities, scopes or order.');
+  for (const input of after.inputs) {
+    const rowIDs = input.rows.map((row) => row.id);
+    if (rowIDs.some((id) => !id) || new Set(rowIDs).size !== rowIDs.length)
+      throw new Error(`The classification import receipt contains invalid mapping row identities for ${input.id}.`);
+    const polygonIDs = input.polygons.map((polygon) => polygon.id);
+    if (polygonIDs.some((id) => !id) || new Set(polygonIDs).size !== polygonIDs.length)
+      throw new Error(`The classification import receipt contains invalid polygon identities for ${input.id}.`);
+    const prior = before.inputs.find((item) => item.id === input.id);
+    if (prior) {
+      const previousRows = prior.rows.map((row) => row.id);
+      if (previousRows.length !== rowIDs.length || previousRows.some((id, index) => id !== rowIDs[index]))
+        throw new Error(`The classification import receipt changed existing mapping row identities for ${input.id}.`);
+      const previousPolygons = prior.polygons.map((polygon) => polygon.id);
+      const retainedPolygons = input.polygons.filter((polygon) => previousPolygons.includes(polygon.id)).map((polygon) => polygon.id);
+      if (retainedPolygons.length !== previousPolygons.length || previousPolygons.some((id, index) => retainedPolygons[index] !== id))
+        throw new Error(`The classification import receipt changed existing polygon identities for ${input.id}.`);
+    }
+  }
+  const beforePolygons = before.inputs.reduce((count, input) => count + input.polygons.length, 0);
+  const afterPolygons = after.inputs.reduce((count, input) => count + input.polygons.length, 0);
+  if (ids.length <= beforeIDs.length && afterPolygons <= beforePolygons)
+    throw new Error('The classification import save receipt did not add an input or polygon.');
+  if (after.selectedId && !ids.includes(after.selectedId))
+    throw new Error('The classification import receipt selected a missing input.');
 }
 
 function updatedContextAfterInitialConditions(

@@ -51,6 +51,10 @@ export function AttributeTableDataGrid({ language, table, busy, onAdd, onRename,
     if (!editable) return <span className="attribute-cell-readonly" title={column.type}>{formatAttributeCell(stored)}</span>;
     if (column.type === 'Boolean') {
       const booleanValue = value?.toLocaleLowerCase();
+      if (value !== null && booleanValue !== 'true' && booleanValue !== 'false') {
+        return <input aria-label={`${column.name} ${rowId}`} disabled={busy} type="text" value={value}
+          onChange={event => setDraftValue(rowId, column, event.currentTarget.value)} />;
+      }
       return <select aria-label={`${column.name} ${rowId}`} disabled={busy} value={booleanValue === 'true' || booleanValue === 'false' ? booleanValue : '__null'}
         onChange={event => setDraftValue(rowId, column, event.target.value === '__null' ? null : event.target.value)}>
         <option value="__null">{zh ? '空值' : 'Null'}</option><option value="true">true</option><option value="false">false</option>
@@ -88,6 +92,16 @@ export function AttributeTableDataGrid({ language, table, busy, onAdd, onRename,
         columns={dataGridColumns}
         getRowId={row => row.id}
         getCellValue={(row, column) => row.values[column.id] ?? null}
+        getClipboardCellValue={(row, column) => {
+          const key = cellKey(row.id, column.id);
+          return Object.prototype.hasOwnProperty.call(drafts, key) ? drafts[key]!.value : row.values[column.id] ?? null;
+        }}
+        canPasteCell={(_row, column) => !busy && column.readOnly !== true && isSupportedAttributeCellType(column.sourceType ?? '')}
+        onCellPaste={(row, column, value) => {
+          if (busy || column.readOnly) return;
+          const attributeColumn = table.columns.find(item => item.id === column.id);
+          if (attributeColumn && isSupportedAttributeCellType(attributeColumn.type)) setDraftValue(row.id, attributeColumn, value);
+        }}
         renderCell={(row, column) => {
           const attributeColumn = table.columns.find(item => item.id === column.id)!;
           return cellEditor(row.id, attributeColumn, row.values[attributeColumn.id] ?? null);

@@ -183,6 +183,41 @@ export interface ClassificationMapData {
   projection?: string | null;
 }
 
+export interface ClassificationImportFile {
+  file: string;
+  revision: string;
+  kind: 'Raster' | 'Polygon';
+  column?: string | null;
+  name?: string | null;
+}
+
+export interface ClassificationImportItem {
+  selection: ClassificationImportFile;
+  columns: string[];
+  featureCount: number;
+  previewFeatureCount: number;
+  geoJson?: string | null;
+  raster?: SpatialGridPreview | null;
+  rows?: number;
+  columnsCount?: number;
+  bands?: number;
+}
+
+export interface ClassificationImportInspection {
+  items: ClassificationImportItem[];
+  projection: string;
+}
+
+/** Host-backed source inspection followed by an immediate, receipt-checked import save. */
+export interface ClassificationImportWorkflow {
+  owner: string;
+  canInspect: boolean;
+  canImport: boolean;
+  blockedMessage?: string;
+  inspect: (files: string[], signal: AbortSignal) => Promise<{ revision: string; inspection: ClassificationImportInspection }>;
+  commit: (revision: string, files: ClassificationImportFile[], signal: AbortSignal) => Promise<ModelSnapshot | null>;
+}
+
 export interface NValuePreviewData {
   revision: string;
   projectRevision: string;
@@ -406,6 +441,7 @@ export interface EditorPageProps {
   onTerrainTransform?: (command: TerrainTransformCommand) => Promise<boolean>;
   onClassificationTransform?: (command: ClassificationTransformCommand) => Promise<boolean>;
   onClassificationMap?: (signal?: AbortSignal) => Promise<ClassificationMapData>;
+  classificationImport?: ClassificationImportWorkflow;
   onManningTransform?: (operation: ManningTransformOperation) => Promise<boolean>;
   canPreviewNValue?: boolean;
   onNValuePreview?: (signal?: AbortSignal) => Promise<NValuePreviewData>;
