@@ -27,7 +27,7 @@ HTTP 操作的受理 ID、传输状态、求解器进度与终态分别管理。
 
 `useMapHoverIdentify → map.hover.identify → MapHoverIdentifyService → MapDynamicProfileService.SampleForMapNode` 使用同一个已确认的 Result 帧所有者。MultiResult 请求传 slot 0 时间轴索引，响应保留各子来源按时间匹配后的原生 profile 索引；`mapResultHoverIdentity` 只接纳与当前绘制帧路径、修订、类型和原生时刻一致的标签。Host 按具体节点重新绑定共享的 Result 来源，避免普通 Result 与 MultiResult 同时可见时串用时刻。更换节点、来源或时间先清除旧标签，迟到响应不能恢复它；鼠标离开和隐藏来源也使捕获失效。
 
-结果图层的显隐使用 `MapLayerTree → map.tree.perform(visibility) → MapTreeService.SetSourceVisibility`，保存回执确认后才更新树。原 `RasTreeBase.SerializeDefault` 无论是否勾选都保存 Type/Name，因此 Result 和 MultiResult 取消勾选后仍是当前地图成员，必须保留精确 locator 并可重新显示；移除来源属于单独的删除动作。
+结果图层的显隐使用 `MapLayerTree → map.tree.perform(visibility) → MapTreeService.SetSourceVisibility`，保存回执确认后才更新树。原 `RasTreeBase.SerializeDefault` 无论是否勾选都保存 Type/Name，因此 Result、MultiResult、Terrain、NValue 和 Classification 取消勾选后仍是当前地图成员，必须保留精确 locator 并可重新显示；移除来源属于单独的删除动作。显隐保存会使旧渲染帧失效，同一工程会话与地图的显式比较来源仍保留，并由服务端对新 `.vis` 修订重新验证 locator、路径与 SHA。
 
 浏览器的“导入工程图层”经 `ServerBackend.uploadMapSources` 把用户选择的 GeoJSON、完整 Shapefile 文件族或自包含 GeoTIFF 放入工程 `Map Sources` 的独立目录；工程 SHA、会话和文件名先校验，文件夹发布后再逐项进入原有地图导入事务。每次 `.vis` 提交都推进修订，失败后先重读地图再允许继续写入。上传成功与地图导入成功分别处理；已复制的来源不会因后续失败而冒充已保存地图。直接“导入 GeoJSON”和绘制仍属于浏览器草稿。刷新图层只重新读取工程地图；切换到新计算结果时也会刷新来源树。
 
@@ -52,6 +52,14 @@ HTTP 操作的受理 ID、传输状态、求解器进度与终态分别管理。
 控件拆分不自动提供原 UI 的全部命令。父级尚未提供的结构编辑、混合值重置、地图几何操作、结果捕获或会话引用事务，必须保持明确的能力边界，不能显示成功回执。`workspace.file.inspect` 为用户明确输入的服务端文件路径捕获规范路径和 SHA；核心图层检查与复制继续验证该捕获，不要求用户手填 SHA。
 
 关联地图层由 `useAssociatedMapLayers → map.associations.load` 读取。所有者来自当前所选 Result 的 `treeRoots`，Geometry、Plan、Result 与分类/NValue/Terrain 关联节点保持各自 locator。图像沿返回的 world viewport 绘制，实际像素尺寸受聚合预算限制；鼠标识别携带该帧的来源 SHA、依赖、所有者及上下文。相机、显隐、来源或会话变化先使旧捕获失效。
+
+地形 HDF 的文件 SHA 与动态剖面的完整依赖摘要是不同身份。鼠标识别先核验 HDF SHA，再按 HDF、栅格和 sidecar 的依赖摘要匹配剖面；所有采样完成后再次核验依赖。前端回执沿用绘制帧所捕获的 HDF SHA，不把依赖摘要误当文件 SHA。
+
+分类输入由 `ClassificationLayersEditor` 按来源种类挂载栅格分类属性、映射表或多边形分类属性；`ManningsNEditor` 按模式挂载常数或分类糙率编辑器，默认值操作只更新匹配分类行的草稿。空间时序以 rows 为权威，同一 table-backed 序列的 samples 仅作图表投影，不在结构变换和保存时重复提交。新增测站保留原行、测站和 payload GUID 身份。
+
+拓扑页分别挂载 `TopologyArcsEditor`、`TopologyRegionsEditor` 和 `TopologyNodesEditor`。弧段标签、点坐标对话框、快速缩放与 Recipe 操作都属于当前可撤销草稿；Recipe 检查与应用之间核对 revision、draftState 和 draftIdentity。`RasCatalog` 的树行、树模式及详情面板共享现有选择和展开状态，不建立第二份工程会话。地图时间轴的结果选择、比较槽和滑条共享唯一 `useMapResultFrames`，首尾帧导航仍使用服务端 step ID。
+
+`MapFeaturePage` 只把已确认连续栅格帧的精确 `rasterSource` 传给 `RasterSymbologyEditor`，直方图、颜色带与应用调用真实符号服务；`.vis` 提交回执必须匹配请求的上一修订和来源 SHA。只用于当前渲染、尚未持久化的 plot options 保持只读。水力工具页的 Wilcock 控件与单位计算器分别调用 `wilcock.load/evaluate` 和 `unitCalculator.load/convert`；数值运算留在 C#，前端只管理输入、工况、请求与真实结果显示。
 
 ## 迁移参考契约范围
 

@@ -5,11 +5,18 @@ import { schemaForPage } from './model';
 import { editorAssetKind, editorText } from './editorLocalization';
 import { ColorPickerPropertyItem } from '../../controls/ColorPickerPropertyItem';
 import { ComboBoxPropertyItem } from '../../controls/ComboBoxPropertyItem';
+import { BetterComboBox } from '../../controls/BetterComboBox';
+import { BetterComboBoxPropertyItem } from '../../controls/BetterComboBoxPropertyItem';
 import { InputDateTimePropertyItem } from '../../controls/InputDateTimePropertyItem';
 import { InputTextPropertyItem } from '../../controls/InputTextPropertyItem';
 import { NumberBox } from '../../controls/NumberBox';
 import { NumericPropertyItem } from '../../controls/NumericPropertyItem';
 import { ParagraphPropertyItem } from '../../controls/ParagraphPropertyItem';
+import { RadioButtonInputTextPropertyItem } from '../../controls/RadioButtonInputTextPropertyItem';
+import { SliderPropertyItem } from '../../controls/SliderPropertyItem';
+import { SliderTextPropertyItem } from '../../controls/SliderTextPropertyItem';
+import { TextPropertyItem } from '../../controls/TextPropertyItem';
+import { ToggleablePropertyItem } from '../../controls/ToggleablePropertyItem';
 import '../../controls/propertyItems.css';
 
 interface SchemaFieldRendererProps {
@@ -57,8 +64,11 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
   const scopePrefix = fieldKeyPrefix ?? field.scope ?? schema.id;
   const fieldKey = `${scopePrefix}/${field.id}`;
   const value = values?.[fieldKey] ?? snapshot?.fields[fieldKey] ?? '';
+  const sourceControl = (field.sourceControl ?? '').toLowerCase();
+  const radioBinding = (field as EditorFieldSchema & { radioBinding?: { route: string; value: string } | null }).radioBinding;
+  const radioTextControl = /^radiobuttoninputtextpropertyitem\d*$/.test(sourceControl) && Boolean(radioBinding?.route && radioBinding.value);
   const title = editorText(language, snapshot?.fieldTitles?.[fieldKey] ?? field.title);
-  const isReadOnly = !canEdit || preview || field.readOnly === true || snapshot?.readOnlyFields?.includes(fieldKey) === true || ['display', 'catalogFile', 'catalogTitle'].includes(field.kind);
+  const isReadOnly = !canEdit || preview || field.readOnly === true || snapshot?.readOnlyFields?.includes(fieldKey) === true || ['display', 'catalogFile', 'catalogTitle'].includes(field.kind) || /^textpropertyitem\d*$/.test(sourceControl);
   const visible = (field.visibleBy ?? []).every((gate) => {
     const key = `${scopePrefix}/${gate}`;
     return truthy(values?.[key] ?? snapshot?.fields[key]);
@@ -71,29 +81,39 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
   });
   const disabled = isReadOnly || !enabled;
   const choices = choicesFor(field, snapshot ?? undefined, fieldKey);
-  const sourceControl = (field.sourceControl ?? '').toLowerCase();
   const label = <span className="editor-field-label">{title}{isReadOnly && <span className="editor-readonly-tag">{isChinese(language) ? '只读' : 'Read only'}</span>}</span>;
   const help = field.help ? <small className="editor-field-help">{editorText(language, field.help)}</small> : null;
   let control;
   if (field.kind === 'toggle') {
-    control = <label className="editor-toggle"><input type="checkbox" checked={truthy(value)} disabled={disabled} onChange={(event) => onFieldChange?.(fieldKey, event.currentTarget.checked ? 'true' : 'false')} />{isChinese(language) ? '启用' : 'Enabled'}</label>;
+    control = /^toggleablepropertyitem\d*$/.test(sourceControl)
+      ? <ToggleablePropertyItem id={generatedID} checked={truthy(value)} title={title} disabled={disabled} onChange={(checked) => onFieldChange?.(fieldKey, checked ? 'true' : 'false')} />
+      : <label className="editor-toggle"><input type="checkbox" checked={truthy(value)} disabled={disabled} onChange={(event) => onFieldChange?.(fieldKey, event.currentTarget.checked ? 'true' : 'false')} />{isChinese(language) ? '启用' : 'Enabled'}</label>;
   } else if (field.kind === 'color' || /^colorpickerpropertyitem\d*$/.test(sourceControl)) {
     control = <ColorPickerPropertyItem id={generatedID} value={value} disabled={disabled} readOnly={isReadOnly} language={language} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
   } else if (['choice', 'recipe', 'connection', 'classificationMapping', 'layerSource'].includes(field.kind)) {
     const hasCurrentChoice = choices.some((choice) => choice.id === value);
     const propertyComboBox = /^comboboxpropertyitem\d*$/.test(sourceControl);
     const nativeComboBox = /^combobox\d*$/.test(sourceControl);
-    if (propertyComboBox || nativeComboBox) {
+    const betterPropertyComboBox = /^bettercomboboxpropertyitem\d*$/.test(sourceControl);
+    const betterComboBox = /^bettercombobox\d*$/.test(sourceControl);
+    const choiceOptions = choices.map((choice) => ({
+      value: choice.id,
+      label: `${choice.titleIsUserData ? choice.title : editorText(language, choice.title)}${choice.description ? ` — ${editorText(language, choice.description)}` : ''}`,
+    }));
+    const currentValueLabel = (currentValue: string) => isChinese(language) ? `当前值：${currentValue}` : `Current value: ${currentValue}`;
+    const emptyLabel = isChinese(language) ? '请选择…' : 'Select…';
+    if (betterPropertyComboBox) {
+      control = <BetterComboBoxPropertyItem id={generatedID} selectedValue={value} itemsSource={choiceOptions} disabled={disabled} currentValueLabel={currentValueLabel} emptyLabel={emptyLabel} onSelectedValueChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
+    } else if (betterComboBox) {
+      control = <BetterComboBox id={generatedID} value={value} options={choiceOptions} disabled={disabled} currentValueLabel={currentValueLabel} emptyLabel={emptyLabel} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
+    } else if (propertyComboBox || nativeComboBox) {
       control = <ComboBoxPropertyItem
         id={generatedID}
         value={value}
         disabled={disabled}
-        currentValueLabel={(currentValue) => isChinese(language) ? `当前值：${currentValue}` : `Current value: ${currentValue}`}
-        emptyLabel={isChinese(language) ? '请选择…' : 'Select…'}
-        options={choices.map((choice) => ({
-          value: choice.id,
-          label: `${choice.titleIsUserData ? choice.title : editorText(language, choice.title)}${choice.description ? ` — ${editorText(language, choice.description)}` : ''}`,
-        }))}
+        currentValueLabel={currentValueLabel}
+        emptyLabel={emptyLabel}
+        options={choiceOptions}
         onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)}
       />;
     } else {
@@ -110,6 +130,29 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
     control = <ImageCollection fieldKey={fieldKey} images={imageList} disabled={disabled} onImagesChange={onImagesChange} language={language} />;
   } else if (field.kind === 'display') {
     control = <ParagraphPropertyItem id={generatedID} value={value} />;
+  } else if (/^textpropertyitem\d*$/.test(sourceControl)) {
+    control = <TextPropertyItem value={value} language={language} />;
+  } else if (radioTextControl && radioBinding) {
+    const selectionKey = `${scopePrefix}/${radioBinding.route}`;
+    const selectedValue = values?.[selectionKey] ?? snapshot?.fields[selectionKey] ?? '';
+    const error = disabled ? null : validateFieldValue(field, value, language);
+    control = <>
+      <RadioButtonInputTextPropertyItem
+        id={generatedID}
+        value={value}
+        title={title}
+        groupName={selectionKey}
+        optionValue={radioBinding.value}
+        selectedValue={selectedValue}
+        disabled={disabled}
+        readOnly={isReadOnly}
+        readOnlyLabel={isChinese(language) ? '只读' : 'Read only'}
+        ariaInvalid={Boolean(error)}
+        onTextChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)}
+        onSelectionChange={(nextValue) => onFieldChange?.(selectionKey, nextValue)}
+      />
+      {error && <small className="editor-field-error">{error}</small>}
+    </>;
   } else if (field.kind === 'date' && sourceControl === 'inputdatetimepropertyitem') {
     const error = disabled ? null : validateFieldValue(field, value, language);
     control = <>
@@ -120,8 +163,26 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
     control = <InputTextPropertyItem id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} acceptsReturn onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
   } else if (field.kind === 'slider') {
     const error = disabled ? null : validateFieldValue({ ...field, kind: 'number' }, value, language);
+    if (/^slidertextpropertyitem\d*$/.test(sourceControl)) {
       control = <>
-      <input id={generatedID} type="text" inputMode="decimal" value={value} readOnly={isReadOnly} disabled={disabled} placeholder={field.placeholder ? editorText(language, field.placeholder) : undefined} aria-invalid={error ? 'true' : undefined} onChange={(event) => onFieldChange?.(fieldKey, event.currentTarget.value)} />
+        <SliderTextPropertyItem id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} minValue={field.minimum ?? undefined} maxValue={field.maximum ?? undefined} step={field.sourceType === 'int' ? 1 : 'any'} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
+        {error && <small className="editor-field-error">{error}</small>}
+      </>;
+    } else if (field.minimum != null && field.maximum != null) {
+      control = <>
+        <SliderPropertyItem id={generatedID} value={value} minValue={field.minimum} maxValue={field.maximum} step={field.sourceType === 'int' ? 1 : 'any'} disabled={disabled} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
+        {error && <small className="editor-field-error">{error}</small>}
+      </>;
+    } else {
+      control = <>
+        <input id={generatedID} type="text" inputMode="decimal" value={value} readOnly={isReadOnly} disabled={disabled} placeholder={field.placeholder ? editorText(language, field.placeholder) : undefined} aria-invalid={error ? 'true' : undefined} onChange={(event) => onFieldChange?.(fieldKey, event.currentTarget.value)} />
+        {error && <small className="editor-field-error">{error}</small>}
+      </>;
+    }
+  } else if (field.kind === 'number' && /^slidertextpropertyitem\d*$/.test(sourceControl)) {
+    const error = disabled ? null : validateFieldValue(field, value, language);
+    control = <>
+      <SliderTextPropertyItem id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} minValue={field.minimum ?? undefined} maxValue={field.maximum ?? undefined} step={field.sourceType === 'int' ? 1 : 'any'} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
       {error && <small className="editor-field-error">{error}</small>}
     </>;
   } else if (field.kind === 'number' && /^numericpropertyitem\d*$/.test(sourceControl)) {
@@ -150,7 +211,7 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
 
   return (
     <div className={`editor-field editor-field-${field.kind}`}>
-      {field.kind !== 'toggle' && <label htmlFor={generatedID}>{label}</label>}
+      {field.kind !== 'toggle' && !radioTextControl && <label htmlFor={generatedID}>{label}</label>}
       {control}
       {help}
       {Boolean(field.enabledBy?.length) && !enabled && !preview && <small className="editor-field-muted">{isChinese(language) ? '当前计划模式下不可用' : 'Unavailable for the current plan mode'}</small>}

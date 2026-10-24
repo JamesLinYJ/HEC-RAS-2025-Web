@@ -16,8 +16,7 @@ export async function checkTerrainUI({ manifest, evaluate, waitFor, command, nav
   const row = `document.querySelector(${JSON.stringify(rowSelector)})`;
   const images = `Array.from(document.querySelectorAll('svg.map-canvas image[data-source-kind=terrain]'))`;
   const image = `${images}.find(image=>image.dataset.sourcePath===${JSON.stringify(manifest.terrain.sourcePath)}&&image.dataset.treeNodeId===(${row})?.dataset.nodeId)`;
-  const imageFallback = `${images}.find(image=>image.dataset.sourcePath===${JSON.stringify(manifest.terrain.sourcePath)}&&String(image.dataset.sourceRevision).toUpperCase()===${JSON.stringify(manifest.terrain.sourceRevision.toUpperCase())})`;
-  const currentImage = `(${image})??(${imageFallback})`;
+  const currentImage = `(${image})`;
   const checks = [];
   const samples = [];
   const frames = [];

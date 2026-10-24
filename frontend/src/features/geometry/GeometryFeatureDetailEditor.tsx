@@ -21,16 +21,21 @@ export interface GeometryFeatureDetailEditorProps {
   onDelete?: (rows: GeometryRow[]) => void;
   onLocalAdd?: () => void;
   onCommand?: (row: GeometryRow, field: GeometryField, command: string, value?: string) => void;
+  onSelectionChange?: (rows: GeometryRow[]) => void;
 }
 
 export function GeometryFeatureDetailEditor({
   language, kind, table, localRows = [], fieldOrder, readOnlyFieldIDs = [], clearCommands = {}, forceSetCommands = {}, editable, busy,
-  allowLocalAdd = false, onChange, onDelete, onLocalAdd, onCommand,
+  allowLocalAdd = false, onChange, onDelete, onLocalAdd, onCommand, onSelectionChange,
 }: GeometryFeatureDetailEditorProps) {
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const rows = useMemo(() => [...(table?.rows ?? []), ...localRows], [table?.rows, localRows]);
   const selectedRows = rows.filter((row) => selectedIDs.includes(row.id));
   const localRowIDs = useMemo(() => new Set(localRows.map((row) => row.id)), [localRows]);
+  const selectRows = (ids: string[]): void => {
+    setSelectedIDs(ids);
+    onSelectionChange?.(rows.filter((row) => ids.includes(row.id)));
+  };
   const detailFields = useMemo(() => {
     const sourceFields = new Map((table?.editableFields ?? []).map((field) => [field.id, field]));
     const columns = new Map((table?.columns ?? []).map((column) => [column.id, column]));
@@ -64,7 +69,7 @@ export function GeometryFeatureDetailEditor({
         onChange={onChange}
         onDelete={onDelete}
         onLocalAdd={onLocalAdd}
-        onSelect={setSelectedIDs}
+        onSelect={selectRows}
       />
       <GeometryDetailFields
         language={language}

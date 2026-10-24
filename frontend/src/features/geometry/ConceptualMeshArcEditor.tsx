@@ -1,8 +1,10 @@
 import type { GeometryTopologyTablePageProps } from './GeometryTopologyTablePage';
 import { GeometryFeatureDetailEditor } from './GeometryFeatureDetailEditor';
+import type { GeometryRow } from './geometryTypes';
 
 export type ConceptualMeshArcEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'> & {
   onCommand?: (row: Parameters<GeometryTopologyTablePageProps['onChange']>[0], field: Parameters<GeometryTopologyTablePageProps['onChange']>[1], command: string, value?: string) => void;
+  onSelectionChange?: (rows: GeometryRow[]) => void;
 };
 
 const arcFieldOrder = [
@@ -16,7 +18,7 @@ const arcForceSetCommands = {
   LaplaceBC: 'forceSetArcChoice',
 };
 
-export function ConceptualMeshArcEditor({ onCommand, canEdit, ...props }: ConceptualMeshArcEditorProps) {
+export function ConceptualMeshArcEditor({ onCommand, onSelectionChange, canEdit, ...props }: ConceptualMeshArcEditorProps) {
   return (
     <GeometryFeatureDetailEditor
       {...props}
@@ -28,6 +30,7 @@ export function ConceptualMeshArcEditor({ onCommand, canEdit, ...props }: Concep
       clearCommands={arcClearCommands}
       forceSetCommands={arcForceSetCommands}
       onCommand={onCommand}
+      onSelectionChange={onSelectionChange}
     />
   );
 }

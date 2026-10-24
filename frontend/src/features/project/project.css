@@ -143,6 +143,19 @@
 .project-tree-node-icon.is-group { color: #65a7a4; }
 .project-tree-node-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
 .project-tree-source-kind { flex: 0 0 auto; max-width: 88px; overflow: hidden; color: #536c78; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.project-layer-error-indicator { position: relative; flex: 0 0 auto; }
+.project-layer-error-indicator > summary { width: 15px; height: 18px; display: grid; place-items: center; list-style: none; border-radius: 3px; color: #d6ad69; cursor: pointer; font-size: 10px; font-weight: 700; }
+.project-layer-error-indicator > summary::-webkit-details-marker { display: none; }
+.project-layer-error-indicator.is-error > summary { color: #ef8981; }
+.project-layer-error-indicator.is-warning > summary { color: #d6ad69; }
+.project-layer-error-indicator.is-info > summary { color: #7eb1c2; }
+.project-layer-error-popover { position: absolute; z-index: 12; top: 19px; right: -8px; width: min(300px, 72vw); max-height: 190px; overflow: auto; padding: 9px; border: 1px solid rgba(147, 180, 195, .21); border-radius: 5px; background: #102c3a; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); color: #a9bcc5; }
+.project-layer-error-popover > strong { display: block; color: #d2e0e5; font-size: 8px; font-weight: 500; line-height: 1.5; }
+.project-layer-error-popover ul { display: flex; flex-direction: column; gap: 5px; margin: 6px 0 0; padding: 0; list-style: none; }
+.project-layer-error-popover li + li { padding-top: 5px; border-top: 1px solid rgba(151, 185, 201, .09); }
+.project-layer-error-popover li > span { color: #d6ad69; font: 7px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.project-layer-error-indicator.is-error .project-layer-error-popover li > span { color: #ef9991; }
+.project-layer-error-popover p { margin: 3px 0 0; color: #a9bcc5; font-size: 8px; line-height: 1.5; overflow-wrap: anywhere; }
 .project-tree-pin { color: #d5b66d; font-size: 7px; }
 .project-diagnostic-dot { flex: 0 0 5px; width: 5px; height: 5px; border-radius: 50%; background: #d7ad67; }.project-diagnostic-dot.is-valid,.project-diagnostic-dot.is-ready { background: #63d3b3; }.project-diagnostic-dot.is-error,.project-diagnostic-dot.is-failed { background: #f0837c; }
 .project-result-state { overflow: hidden; max-width: 62px; color: #839ba6; font: 7px ui-monospace, 'SFMono-Regular', Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }

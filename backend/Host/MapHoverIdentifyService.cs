@@ -54,6 +54,7 @@ public static class MapHoverIdentifyService
             request.Map, request.SelectionOverrides, request.ContextToken);
         CatalogTreeNode[] treeNodes = Flatten(context.Tree.Roots).ToArray();
         var rows = new CatalogTreeNode[request.Layers.Length];
+        var terrainSources = new Dictionary<int, MapResultRenderService.TerrainSourceSnapshot>();
         var nodeKeys = new HashSet<string>(StringComparer.Ordinal);
         for (int index = 0; index < request.Layers.Length; index++)
         {
@@ -70,6 +71,8 @@ public static class MapHoverIdentifyService
                 throw new SourceFileChangedException();
             rows[index] = matches[0];
             ValidateCapture(context, request, capture, matches[0]);
+            if (capture.Kind == "terrain")
+                terrainSources.Add(index, CaptureTerrainSource(context, capture));
         }
 
         MapDynamicProfileResult? dynamicValues = null;
@@ -106,7 +109,7 @@ public static class MapHoverIdentifyService
                     AddDynamicEntries(context, request, capture, resultValues, entries);
                     break;
                 case "terrain":
-                    AddDynamicEntries(context, request, capture, dynamicValues!, entries);
+                    AddDynamicEntries(context, request, capture, dynamicValues!, entries, terrainSources[index]);
                     break;
                 case "raster":
                     MapHoverIdentifyEntry? raster = SampleRaster(context, request, capture, row);
@@ -129,6 +132,8 @@ public static class MapHoverIdentifyService
         }
 
         context.EnsureUnchanged();
+        foreach (MapResultRenderService.TerrainSourceSnapshot terrain in terrainSources.Values)
+            MapResultRenderService.VerifyTerrainSources(terrain);
         // These owners were read before the outer Project was opened. Recheck
         // them after every later asynchronous sample as well, so a source
         // replacement during another layer's read cannot publish an old label.
@@ -597,14 +602,20 @@ public static class MapHoverIdentifyService
 
     private static void AddDynamicEntries(ResolvedMapResultContext context,
         MapHoverIdentifyRequest request, MapHoverLayerCapture capture,
-        MapDynamicProfileResult sample, ICollection<MapHoverIdentifyEntry> entries)
+        MapDynamicProfileResult sample, ICollection<MapHoverIdentifyEntry> entries,
+        MapResultRenderService.TerrainSourceSnapshot? terrainSource = null)
     {
         IEnumerable<MapDynamicProfileSeries> series = sample.Lines[0].Series
             .Where(item => item.SourceKind == (capture.Kind == "result" ? "Result" : "Terrain"));
         if (capture.Kind == "terrain")
         {
+            // Dynamic profiles identify a Terrain by the digest of its HDF,
+            // rasters and sidecars. The map capture identifies the HDF itself.
+            // Compare each identity in its own domain instead of treating the
+            // dependency digest as the file SHA returned by associations.load.
+            if (terrainSource is null) throw new SourceFileChangedException();
             series = series.Where(item => SamePath(item.SourcePath, capture.SourcePath!) &&
-                item.SourceRevision.Equals(capture.SourceRevision, StringComparison.OrdinalIgnoreCase));
+                item.SourceRevision.Equals(terrainSource.Revision, StringComparison.OrdinalIgnoreCase));
         }
         else
         {
@@ -634,8 +645,21 @@ public static class MapHoverIdentifyService
             string units = string.IsNullOrWhiteSpace(item.Units) ? string.Empty : " " + item.Units;
             string label = $"{item.Name} — {field}: {value}{units}";
             entries.Add(new(capture.Node, capture.Kind, label, value, "number",
-                item.SourcePath, item.SourceRevision, item.MapType, item.ProfileIndex, null, null));
+                item.SourcePath, capture.Kind == "terrain" ? capture.SourceRevision! : item.SourceRevision,
+                item.MapType, item.ProfileIndex, null, null));
         }
+    }
+
+    private static MapResultRenderService.TerrainSourceSnapshot CaptureTerrainSource(
+        ResolvedMapResultContext context, MapHoverLayerCapture capture)
+    {
+        Terrain[] matches = context.Project.Terrains.Where(terrain =>
+            SamePath(ResolveProjectAssetPath(context.Project, terrain.Filename), capture.SourcePath!)).ToArray();
+        if (matches.Length != 1) throw new SourceFileChangedException();
+        MapResultRenderService.TerrainSourceSnapshot source =
+            MapResultRenderService.CaptureTerrainSources(matches[0]);
+        MapResultChartService.EnsureUnchanged(source.Path, capture.SourceRevision!);
+        return source;
     }
 
     private static Projection? ProjectProjection(string? projectXml)

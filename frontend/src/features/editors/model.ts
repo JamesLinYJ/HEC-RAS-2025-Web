@@ -175,7 +175,7 @@ export interface ModelDraft {
   changedCells: Record<string, Array<{ rowID: string; columnID: string }>>;
 }
 
-export type SeriesTransformOperation = 'appendRow' | 'removeLastRow';
+export type SeriesTransformOperation = 'appendRow' | 'removeLastRow' | 'clear' | 'interpolate' | 'addStation';
 export type BoundaryPayloadTransformOperation = 'create' | 'remove';
 
 export interface EditorPageProps {

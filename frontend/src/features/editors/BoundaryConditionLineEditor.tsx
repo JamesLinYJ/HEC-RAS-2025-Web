@@ -3,8 +3,11 @@ import type { EditorPageProps } from './model';
 import { BoundaryConditionLinePayloadsList } from './BoundaryConditionLinePayloadsList';
 import { BoundaryConditionLineQuickEditPicker } from './BoundaryConditionLineQuickEditPicker';
 import { DetailedBCLineHeaderControl } from './DetailedBCLineHeaderControl';
+import { IrregularTimeSeriesPayloadEditor } from './IrregularTimeSeriesPayloadEditor';
+import { hasRegularTimeDefinition } from './PayloadListItem';
 import { RegularSpatiallyVariableTimeSeriesPayloadEditor } from './RegularSpatiallyVariableTimeSeriesPayloadEditor';
 import { RegularTimeSeriesPayloadEditor } from './RegularTimeSeriesPayloadEditor';
+import { SpatiallyVariableTimeSeriesPayloadEditor } from './SpatiallyVariableTimeSeriesPayloadEditor';
 
 type BoundaryLine = NonNullable<EditorPageProps['snapshot']['boundary']>['lines'][number];
 
@@ -40,9 +43,16 @@ export function BoundaryConditionLineEditor(props: EditorPageProps) {
         createOpen={createOpen}
         onCreateOpenChange={setCreateOpen}
       />
-      {unboundSeries.map((series) => series.schemaId === 'RegularSpatiallyVariableTimeSeriesPayloadEditor'
-        ? <RegularSpatiallyVariableTimeSeriesPayloadEditor {...props} key={series.pageId} series={series} />
-        : <RegularTimeSeriesPayloadEditor {...props} key={series.pageId} series={series} />)}
+      {unboundSeries.map((series) => {
+        if (series.schemaId === 'RegularSpatiallyVariableTimeSeriesPayloadEditor') {
+          return hasRegularTimeDefinition(series, props)
+            ? <RegularSpatiallyVariableTimeSeriesPayloadEditor {...props} key={series.pageId} series={series} />
+            : <SpatiallyVariableTimeSeriesPayloadEditor {...props} key={series.pageId} series={series} />;
+        }
+        if (series.schemaId === 'IrregularTimeSeriesPayloadEditor') return <IrregularTimeSeriesPayloadEditor {...props} key={series.pageId} series={series} />;
+        if (series.schemaId === 'RegularTimeSeriesPayloadEditor') return <RegularTimeSeriesPayloadEditor {...props} key={series.pageId} series={series} />;
+        return <p className="editor-field-muted" key={series.pageId}>{props.language === 'zh' ? `当前没有迁移 ${series.schemaId} 的时序编辑控件。` : `No time-series editor has been ported for ${series.schemaId}.`}</p>;
+      })}
     </div>
   </div>;
 }

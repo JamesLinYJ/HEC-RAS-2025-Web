@@ -6,6 +6,7 @@ import type { BackgroundMapsVMState } from './BackgroundMapsVM';
 import { MapDocumentTabs } from './MapDocumentTabs';
 import { MapLayerTree } from './MapLayerTree';
 import { MapSettingsPanel } from './MapSettingsPanel';
+import { RasterSymbologyEditor } from './symbology/RasterSymbologyEditor';
 import { DEFAULT_MAP_DISPLAY_SETTINGS } from './MapSettings';
 import type { MapDisplaySettings } from './MapSettings';
 import { MapTimeAxis } from './MapTimeAxis';
@@ -190,6 +191,12 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
   const selectedResultIdentity = context.selectedAsset?.kind === 'Result'
     ? JSON.stringify([context.selectedAsset.path, context.selectedAsset.revision]) : null;
   const activeDocument = documents.find((document) => document.id === activeDocumentID) ?? null;
+  const activeDocumentRef = useRef(activeDocument);
+  activeDocumentRef.current = activeDocument;
+  const symbologySourceRef = useRef<{
+    projectKey: string; documentID: string; nodeID: string;
+    acceptedVisualizationRevision: string; source: Record<string, unknown>;
+  } | null>(null);
   const owner = activeDocument?.id ?? ('local:' + context.projectSessionID);
   const ownerState = mapStateByOwner[owner] ?? EMPTY_MAP_OWNER_STATE;
   const activeLayers = ownerState.layers;
@@ -788,6 +795,22 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
   };
 
   const selectedBackend = selectedBackendNode?.owner === owner ? selectedBackendNode : null;
+  const selectedRaster = selectedBackend && activeDocument
+    ? persistedRasters.layers.find(layer => layer.treeNodeID === selectedBackend.nodeID &&
+      layer.visualizationRevision === activeDocument.visualizationRevision &&
+      layer.hoverCapture.mapType === 'SingleBandRasterMapLayer')
+    : undefined;
+  if (selectedRaster && selectedBackend && activeDocument?.visualizationRevision) {
+    symbologySourceRef.current = { projectKey: projectContextKey, documentID: activeDocument.id,
+      nodeID: selectedBackend.nodeID, acceptedVisualizationRevision: activeDocument.visualizationRevision,
+      source: selectedRaster.hoverCapture.rasterSource };
+  }
+  const symbologySource = selectedBackend && activeDocument &&
+    symbologySourceRef.current?.projectKey === projectContextKey &&
+    symbologySourceRef.current.documentID === activeDocument.id &&
+    symbologySourceRef.current.nodeID === selectedBackend.nodeID &&
+    symbologySourceRef.current.acceptedVisualizationRevision === activeDocument.visualizationRevision
+    ? symbologySourceRef.current.source : undefined;
   const layerCount = visibleLayers.length + mapImages.length;
   const featureCount = visibleLayers.reduce((sum, layer) => sum + layer.features.length, 0);
   const zoomPercent = Number.isFinite(viewport.scale) ? Math.round(viewport.scale * 100) : 100;
@@ -1056,6 +1079,28 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
               </div>
             )}
           </section>
+          {symbologySource && selectedBackend && activeDocument && <RasterSymbologyEditor
+            key={`${owner}:${selectedBackend.nodeID}`}
+            backend={backend} context={context} language={language}
+            source={symbologySource} viewport={resultViewport}
+            onDirtyStateChange={onDirtyStateChange}
+            onVisualizationCommitted={(previousRevision, nextRevision) => {
+              if (projectContextKeyRef.current !== projectContextKey) return;
+              const current = activeDocumentRef.current;
+              if (!current || current.id !== activeDocument.id ||
+                  current.visualizationRevision?.toUpperCase() !== previousRevision.toUpperCase()) return;
+              // Keep only this editor's confirmed source capture while fresh
+              // pixels load. Palette saves must not discard its unapplied
+              // symbology draft; old raster images are never reused here.
+              symbologySourceRef.current = { projectKey: projectContextKey, documentID: activeDocument.id,
+                nodeID: selectedBackend.nodeID, acceptedVisualizationRevision: nextRevision,
+                source: symbologySource };
+              setVisualizationRevision(nextRevision);
+              setDocuments(previous => previous.map(document => ({ ...document,
+                visualizationRevision: nextRevision, visibilityTransition: null })));
+              setStatusMessage(text(language, '栅格符号已保存。', 'Raster symbology was saved.'));
+            }}
+          />}
           <MapSettingsPanel settings={settings} onChange={setSettings} language={language} />
           {settings.showVelocityArrows && <p className="map-velocity-status" role="status" data-testid="map-velocity-status">
             {velocityField.loading ? text(language, '正在读取当前时刻的速度场…', 'Reading velocity at the current output time…')

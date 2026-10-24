@@ -457,6 +457,10 @@ export async function checkResultHoverUI({ manifest, evaluate, waitFor, command,
   const ordinaryHide = await evaluate(`(() => {const row=${ordinaryRowExpression};const input=row?.querySelector('input[type=checkbox]');if(!input||!input.checked||input.disabled)return false;input.click();return true;})()`);
   assert.equal(ordinaryHide, true, 'Could not temporarily hide ordinary Result through its real map-tree checkbox.');
   await waitFor(`(() => {const input=(${ordinaryRowExpression})?.querySelector('input[type=checkbox]');return input?.checked===false&&!input.disabled;})()`, 'hide ordinary Result while checking active MultiResult', 60_000);
+  for (const source of matrixSourceList(firstMultiCase)) {
+    await waitFor(`document.querySelector(${JSON.stringify(sourceSelector(source.selectionIndex))})?.value===${JSON.stringify(sourceValue(source))}`,
+      `explicit comparison slot ${source.selectionIndex} survives an unrelated visibility save`, 60_000);
+  }
   await runCase(firstMultiCase, firstMultiIndex);
 
   const hidden = await evaluate(`(() => {const row=${multiRowExpression};const input=row?.querySelector('input[type=checkbox]');if(!input||!input.checked||input.disabled)return false;input.click();return true;})()`);

@@ -3,11 +3,10 @@ import { ModelDataTable } from './ModelDataTable';
 
 export type BoundarySeries = NonNullable<NonNullable<EditorPageProps['snapshot']['boundary']>['series'][string]>;
 
-/** Scalar time-series editor. It also renders irregular scalar payload rows using the same source table shape. */
+/** Regular scalar time-series editor with the source time-window definition fields. */
 export function RegularTimeSeriesPayloadEditor({ series, ...props }: EditorPageProps & { series: BoundarySeries }) {
-  const isRegular = series.schemaId === 'RegularTimeSeriesPayloadEditor';
   return <section className="editor-series-panel" aria-label={props.language === 'zh' ? '时序载荷编辑器' : 'Time-series payload editor'}>
-    {isRegular && <TimeSeriesDefinitionFields {...props} series={series} />}
+    <TimeSeriesDefinitionFields {...props} series={series} />
     <BoundarySeriesValueView {...props} series={series} />
   </section>;
 }
@@ -77,9 +76,8 @@ export function BoundarySeriesValueView({ series, ...props }: EditorPageProps & 
   const samples = props.draft.samples[series.pageId] ?? series.samples;
   const rows = series.tableId ? props.draft.rows[series.tableId] ?? series.rows : [];
   const stations = series.tableId ? props.draft.rows[`${series.pageId}/Stations`] ?? series.stations : [];
-  const appendSupported = series.operations.includes('appendRow');
-  const removeSupported = series.operations.includes('removeLastRow');
-  const transformUnavailable = (appendSupported || removeSupported) && !props.onSeriesTransform;
+  const actionableOperations = series.operations.filter((operation) => ['appendRow', 'removeLastRow', 'clear', 'interpolate'].includes(operation));
+  const transformUnavailable = actionableOperations.length > 0 && !props.onSeriesTransform;
   return <>
     <div className="editor-terrain-table-heading">
       <h3>{props.language === 'zh' ? '时序数据' : 'Time-series data'}</h3>
@@ -89,17 +87,21 @@ export function BoundarySeriesValueView({ series, ...props }: EditorPageProps & 
     {series.tableId ? <>
       <ModelDataTable tableID={series.tableId} rows={rows} columns={series.columns} canEdit={props.snapshot.canEdit} onCellChange={props.onRowCellChange} language={props.language} />
       {stations.length > 0 && <ModelDataTable tableID={`${series.pageId}/Stations`} rows={stations} columns={[{ id: 'Station', title: props.language === 'zh' ? '测站位置' : 'Station location', sourceType: 'double' }]} canEdit={props.snapshot.canEdit} onCellChange={props.onRowCellChange} language={props.language} />}
-    </> : <ScalarSamplesTable series={series} samples={samples} {...props} />}
-    {(appendSupported || removeSupported) && <div className="editor-workbench-actions">
-      {appendSupported && <button type="button" className="editor-button" disabled={!props.snapshot.canEdit || !props.canTransformSeries || !props.onSeriesTransform} onClick={() => { void props.onSeriesTransform?.(series.pageId, 'appendRow'); }}>{props.language === 'zh' ? '追加时序行' : 'Append time-series row'}</button>}
-      {removeSupported && <button type="button" className="editor-button" disabled={!props.snapshot.canEdit || !props.canTransformSeries || !props.onSeriesTransform || samples.length === 0} onClick={() => { void props.onSeriesTransform?.(series.pageId, 'removeLastRow'); }}>{props.language === 'zh' ? '移除末行' : 'Remove last row'}</button>}
+    </> : <TimeSeriesPayloadTable series={series} samples={samples} {...props} />}
+    {actionableOperations.length > 0 && <div className="editor-workbench-actions">
+      {series.operations.includes('clear') && <button type="button" className="editor-button" disabled={!props.snapshot.canEdit || !props.canTransformSeries || !props.onSeriesTransform} onClick={() => { void props.onSeriesTransform?.(series.pageId, 'clear'); }}>{props.language === 'zh' ? '清空数值' : 'Clear values'}</button>}
+      {series.operations.includes('interpolate') && <button type="button" className="editor-button" disabled={!props.snapshot.canEdit || !props.canTransformSeries || !props.onSeriesTransform} onClick={() => { void props.onSeriesTransform?.(series.pageId, 'interpolate'); }}>{props.language === 'zh' ? '插值补齐' : 'Interpolate values'}</button>}
+      {series.operations.includes('appendRow') && <button type="button" className="editor-button" disabled={!props.snapshot.canEdit || !props.canTransformSeries || !props.onSeriesTransform} onClick={() => { void props.onSeriesTransform?.(series.pageId, 'appendRow'); }}>{props.language === 'zh' ? '追加时序行' : 'Append time-series row'}</button>}
+      {series.operations.includes('removeLastRow') && <button type="button" className="editor-button" disabled={!props.snapshot.canEdit || !props.canTransformSeries || !props.onSeriesTransform || samples.length === 0} onClick={() => { void props.onSeriesTransform?.(series.pageId, 'removeLastRow'); }}>{props.language === 'zh' ? '移除末行' : 'Remove last row'}</button>}
     </div>}
-    {transformUnavailable && <p className="editor-field-muted">{props.language === 'zh' ? '此服务端尚未提供时序行调整回调。' : 'This server has not exposed a time-series row transform callback.'}</p>}
+    {transformUnavailable && <p className="editor-field-muted">{props.language === 'zh' ? '当前工作台未接入时序变换，相关操作已停用。' : 'Time-series transforms are disabled because the workbench has not connected them.'}</p>}
+    {actionableOperations.length > 0 && props.onSeriesTransform && !props.canTransformSeries && <p className="editor-field-muted">{props.language === 'zh' ? '请先修正当前草稿的无效字段，再执行时序变换。' : 'Correct invalid draft fields before transforming this time series.'}</p>}
     <p className="editor-field-muted">{props.language === 'zh' ? '行号、样本编号和表格列沿用后端快照身份；更改只进入父级草稿，保存回执后才确认。' : 'Row, sample, and column identities come from the backend snapshot. Edits stay in the parent draft until a save receipt confirms them.'}</p>
   </>;
 }
 
-function ScalarSamplesTable({ series, samples, ...props }: EditorPageProps & { series: BoundarySeries; samples: ModelSample[] }) {
+/** Source TimeSeriesPayloadTable: stable sample IDs with editable time/value cells. */
+export function TimeSeriesPayloadTable({ series, samples, ...props }: EditorPageProps & { series: BoundarySeries; samples: ModelSample[] }) {
   const canEdit = props.snapshot.canEdit;
   return <div className="editor-table-scroll">
     <table className="editor-data-table">

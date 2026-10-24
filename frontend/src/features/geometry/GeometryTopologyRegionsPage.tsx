@@ -1,10 +1,10 @@
 import type { GeometryTopologyTablePageProps } from './GeometryTopologyTablePage';
-import { ConceptualMeshControlPointEditor } from './ConceptualMeshControlPointEditor';
+import { TopologyRegionsEditor } from './TopologyRegionsEditor';
 
 export type GeometryTopologyRegionsPageProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
 
 export function GeometryTopologyRegionsPage(props: GeometryTopologyRegionsPageProps) {
-  return <ConceptualMeshControlPointEditor {...props} />;
+  return <TopologyRegionsEditor {...props} />;
 }
 
 export default GeometryTopologyRegionsPage;

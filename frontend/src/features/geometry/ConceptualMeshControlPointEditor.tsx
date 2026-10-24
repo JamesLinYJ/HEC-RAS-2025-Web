@@ -1,18 +1,19 @@
 import type { GeometryTopologyTablePageProps } from './GeometryTopologyTablePage';
 import { GeometryFeatureDetailEditor } from './GeometryFeatureDetailEditor';
+import type { GeometryRow } from './geometryTypes';
 
 export type ConceptualMeshControlPointEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'> & {
   onCommand?: (row: Parameters<GeometryTopologyTablePageProps['onChange']>[0], field: Parameters<GeometryTopologyTablePageProps['onChange']>[1], command: string, value?: string) => void;
+  onSelectionChange?: (rows: GeometryRow[]) => void;
 };
 
 const controlPointFieldOrder = [
   'PatchType', 'ConstantSize', 'SecondaryConstantSize', 'RotationDegrees', 'BiasInternal',
-  'Multipoint', 'TinResolution', 'SizeTolerance', 'Recipe',
+  'Multipoint', 'TinResolution', 'SizeTolerance',
 ];
 const controlPointForceSetCommands = {
   PatchType: 'forceSetPatchType',
   Multipoint: 'forceSetRegionMultipoint',
-  Recipe: 'applyRecipe',
 };
 const controlPointClearCommands = {
   ConstantSize: 'setRegionInput',
@@ -23,7 +24,7 @@ const controlPointClearCommands = {
   SizeTolerance: 'setRegionInput',
 };
 
-export function ConceptualMeshControlPointEditor({ onCommand, canEdit, ...props }: ConceptualMeshControlPointEditorProps) {
+export function ConceptualMeshControlPointEditor({ onCommand, onSelectionChange, canEdit, ...props }: ConceptualMeshControlPointEditorProps) {
   return (
     <GeometryFeatureDetailEditor
       {...props}
@@ -35,6 +36,7 @@ export function ConceptualMeshControlPointEditor({ onCommand, canEdit, ...props 
       forceSetCommands={controlPointForceSetCommands}
       allowLocalAdd
       onCommand={onCommand}
+      onSelectionChange={onSelectionChange}
     />
   );
 }

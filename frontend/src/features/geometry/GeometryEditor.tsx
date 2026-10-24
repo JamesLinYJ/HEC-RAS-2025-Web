@@ -100,6 +100,19 @@ export default function GeometryPage(props: FeaturePageProps) {
     busy,
     onChange: (row: GeometryRow, field: Parameters<typeof workspace.onTopologyChange>[2], value: string, isLocal: boolean) => workspace.onTopologyChange(kind, row, field, value, isLocal),
     onCommand: (row: GeometryRow, field: Parameters<typeof workspace.onTopologyChange>[2], command: string, value?: string) => workspace.onTopologyCommand(kind, row, field, command, value),
+    topologySnapshot: workspace.topology,
+    canLoadArcPoints: workspace.canLoadArcPoints,
+    canLoadRecipe: workspace.canLoadRecipe,
+    onLoadArcPoints: workspace.loadArcPoints,
+    onLoadRecipe: workspace.loadRecipe,
+    onTopologyTagChange: workspace.editTopologyTag,
+    onTopologyTagCreate: workspace.createTopologyTag,
+    onArcPointCoordinateChange: workspace.editArcPointCoordinate,
+    onApplyRecipe: workspace.applyTopologyRecipe,
+    onTopologyResize: (featureKind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => {
+      void workspace.resizeTopology(featureKind, row, operation, axis)
+        .catch((error: unknown) => workspace.setError('topology', geometryDiagnosticMessage(error)));
+    },
     onDelete: (rows: GeometryRow[]) => workspace.onTopologyDelete(kind, rows),
     onLocalAdd: () => workspace.addLocalRow(kind, workspace.wrappedTopologyTable(kind)),
   });

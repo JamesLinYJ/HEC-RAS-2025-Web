@@ -3967,11 +3967,12 @@ public static partial class MapTreeService
         {
             if (savedTarget is null || !ReadBool(savedTarget, "IsChecked")) return false;
             savedTarget.Attribute("IsChecked")?.Remove();
-            // Result membership can be explicit even when all display options
+            // Source membership can be explicit even when all display options
             // are defaults. RasTreeBase.SerializeDefault keeps Type/Name for
-            // unchecked Result and MultiResult rows; deleting either row here
-            // would remove the result from the map instead of hiding it.
-            if (locator.NodeType is not ("Result" or "MultiResult") && !savedTarget.Elements("Node").Any() &&
+            // unchecked Result, MultiResult, Terrain, NValue and Classification
+            // rows; deleting one here removes it from the map instead of hiding it.
+            if (locator.NodeType is not ("Result" or "MultiResult" or "Terrain" or "NValue" or "Classification") &&
+                !savedTarget.Elements("Node").Any() &&
                 savedTarget.Attributes().All(attribute => attribute.Name == "Type" || attribute.Name == "Name"))
                 savedTarget.Remove();
             return true;

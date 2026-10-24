@@ -200,7 +200,7 @@ type PendingSourceChange =
   | { kind: 'remove'; nodeKey: string; selectionIndex: number; profileIndex: number | null };
 
 interface RememberedSourceSelection {
-  inputKey: string;
+  ownerKey: string;
   overrides: Record<string, unknown>[];
 }
 
@@ -558,6 +558,14 @@ export function useMapResultFrames({ backend, context, document, language, viewp
   const projectXml = context.projectXml;
   const projectRevision = context.projectRevision;
   const projectSessionID = context.projectSessionID;
+  // A .vis save invalidates rendered frames, but does not change the owner of
+  // this session's explicit Result comparisons. The server revalidates every
+  // locator, source path and SHA against the new visualization revision.
+  const selectionOwnerKey = JSON.stringify([
+    projectSessionID, projectPath, projectRevision, projectXml,
+    document?.id, document?.mapID, document?.mapIndex, document?.name,
+    document?.mapType, backendRevision,
+  ]);
   const mapInputKey = JSON.stringify([
     projectSessionID, projectPath, projectRevision, projectXml,
     document?.id, document?.mapID, document?.mapIndex, document?.name,
@@ -587,7 +595,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
   useEffect(() => {
     const generation = ++sourceGenerationRef.current;
     const abortController = new AbortController();
-    if (rememberedSourceSelectionRef.current?.inputKey !== mapInputKey) {
+    if (rememberedSourceSelectionRef.current?.ownerKey !== selectionOwnerKey) {
       rememberedSourceSelectionRef.current = null;
     }
     const rememberedSelectionOverrides = rememberedSourceSelectionRef.current?.overrides ?? null;
@@ -656,7 +664,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
       }
     })();
     return () => abortController.abort();
-  }, [backend, backendRevision, document, language, mapInputKey, projectPath, projectRevision, projectSessionID, projectXml, refreshSequence]);
+  }, [backend, backendRevision, document, language, mapInputKey, selectionOwnerKey, projectPath, projectRevision, projectSessionID, projectXml, refreshSequence]);
 
   const activeNodeOptions = useMemo<MapResultFrameNodeOption[]>(() => loaded ? buildNodeOptions(loaded.catalog) : [], [loaded]);
   const selectedNodeKey = activeNodeKey && activeNodeOptions.some((item) => item.key === activeNodeKey)
@@ -774,7 +782,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
             throw new Error('The project or saved map changed while its Result source was being changed.');
           }
           rememberedSourceSelectionRef.current = {
-            inputKey: mapInputKey,
+            ownerKey: selectionOwnerKey,
             overrides: mapResultSelectionOverridesFromCatalog(catalog),
           };
           setLoaded({ ...loaded, catalog });
@@ -931,7 +939,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
       abortController.abort();
       if (renderGenerationRef.current === generation) renderGenerationRef.current++;
     };
-  }, [activeNode, backend, language, loaded, mapInputKey, pendingSourceChange, renderFrameKey, renderSourceIdentity, requestedViewport, requestedViewportKey, selectedProfileIndex]);
+  }, [activeNode, backend, language, loaded, mapInputKey, selectionOwnerKey, pendingSourceChange, renderFrameKey, renderSourceIdentity, requestedViewport, requestedViewportKey, selectedProfileIndex]);
 
   const selectNode = useCallback((key: string) => {
     if (!activeNodeOptions.some((option) => option.key === key)) return;

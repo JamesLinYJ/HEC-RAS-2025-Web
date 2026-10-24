@@ -1,0 +1,196 @@
+.raster-symbology-editor {
+  display: grid;
+  gap: 14px;
+  color: var(--text-primary, #202124);
+  font-size: 13px;
+}
+
+.raster-symbology-header,
+.raster-symbology-section-title,
+.raster-symbology-fill-title,
+.raster-symbology-fill-range,
+.raster-symbology-histogram-row,
+.raster-symbology-actions,
+.raster-symbology-palette,
+.raster-symbology-plot-option,
+.raster-symbology-save-palette {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.raster-symbology-header {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--border-subtle, #d7dce2);
+  padding-bottom: 12px;
+}
+
+.raster-symbology-header h3,
+.raster-symbology-section-title h4,
+.raster-symbology-fill-title strong {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.raster-symbology-eyebrow {
+  margin: 0 0 3px;
+  color: var(--text-secondary, #5f6772);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.raster-symbology-source,
+.raster-symbology-muted,
+.raster-symbology-note,
+.raster-symbology-lock-note {
+  margin: 5px 0 0;
+  color: var(--text-secondary, #5f6772);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.raster-symbology-header-status {
+  color: var(--text-secondary, #5f6772);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.raster-symbology-loading,
+.raster-symbology-busy,
+.raster-symbology-error-panel,
+.raster-symbology-success,
+.raster-symbology-fill-summary,
+.raster-symbology-settings,
+.raster-symbology-colors,
+.raster-symbology-palettes {
+  border: 1px solid var(--border-subtle, #d7dce2);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-secondary, #f7f8fa);
+}
+
+.raster-symbology-error-panel {
+  border-color: var(--status-danger-border, #d98b89);
+  background: var(--status-danger-surface, #fff5f4);
+  color: var(--status-danger-text, #8d2623);
+}
+
+.raster-symbology-error-panel p { margin: 0 0 8px; }
+.raster-symbology-error-panel pre { max-height: 240px; overflow: auto; white-space: pre-wrap; }
+.raster-symbology-error-panel details { color: var(--text-primary, #202124); }
+
+.raster-symbology-success {
+  margin: 0;
+  color: var(--status-success-text, #246b3d);
+  border-color: var(--status-success-border, #93c3a2);
+}
+
+.raster-symbology-section-title { margin-bottom: 10px; }
+.raster-symbology-section-title > span { color: var(--text-secondary, #5f6772); font-variant-numeric: tabular-nums; }
+
+.raster-symbology-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+  color: var(--text-secondary, #5f6772);
+  font-size: 12px;
+}
+
+.raster-symbology-field input,
+.raster-symbology-field select,
+.raster-symbology-field textarea,
+.raster-symbology-value-field input,
+.raster-symbology-plot-option select {
+  min-width: 0;
+  border: 1px solid var(--border-control, #b9c0ca);
+  border-radius: 5px;
+  padding: 6px 8px;
+  color: var(--text-primary, #202124);
+  background: var(--surface-primary, #fff);
+  font: inherit;
+}
+
+.raster-symbology-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
+.raster-symbology-picker-preview { display: flex; height: 28px; min-width: 94px; overflow: hidden; border-radius: 5px; }
+.raster-symbology-picker-preview span { flex: 1; }
+
+.raster-symbology-fill-title { justify-content: flex-start; }
+.raster-symbology-fill-title > span { color: var(--text-secondary, #5f6772); font-size: 11px; }
+.raster-symbology-fill-ramp { position: relative; height: 15px; margin: 12px 4px 5px; border-radius: 5px; background: linear-gradient(90deg, #111, #eee); }
+.raster-symbology-fill-ramp i { position: absolute; top: -3px; width: 8px; height: 21px; border: 1px solid var(--surface-primary, white); border-radius: 3px; transform: translateX(-50%); box-shadow: 0 0 0 1px #4b5563; }
+.raster-symbology-fill-range { color: var(--text-secondary, #5f6772); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.raster-symbology-check { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.raster-symbology-check input { accent-color: var(--accent, #2864b4); }
+.raster-symbology-plot-options { margin-top: 10px; border-top: 1px solid var(--border-subtle, #d7dce2); padding-top: 9px; }
+.raster-symbology-plot-options summary { cursor: pointer; color: var(--text-secondary, #5f6772); }
+.raster-symbology-plot-option-list { display: grid; gap: 7px; margin-top: 9px; }
+.raster-symbology-plot-option { justify-content: flex-start; color: var(--text-secondary, #5f6772); }
+.raster-symbology-plot-option output { margin-left: auto; color: var(--text-primary, #202124); font-family: ui-monospace, monospace; }
+
+.raster-symbology-colors { display: grid; gap: 8px; }
+.raster-symbology-histogram-row { align-items: end; }
+.raster-symbology-button,
+.raster-symbology-apply,
+.raster-symbology-text-button,
+.raster-symbology-icon-button {
+  border: 1px solid var(--border-control, #b9c0ca);
+  border-radius: 5px;
+  padding: 6px 10px;
+  color: var(--text-primary, #202124);
+  background: var(--surface-primary, #fff);
+  font: inherit;
+  cursor: pointer;
+}
+
+.raster-symbology-button:hover:not(:disabled),
+.raster-symbology-text-button:hover:not(:disabled),
+.raster-symbology-icon-button:hover:not(:disabled) { background: var(--surface-hover, #eef2f6); }
+.raster-symbology-text-button { padding: 4px 7px; font-size: 12px; }
+.raster-symbology-button:disabled,
+.raster-symbology-apply:disabled,
+.raster-symbology-text-button:disabled,
+.raster-symbology-icon-button:disabled { opacity: .48; cursor: not-allowed; }
+.raster-symbology-stop-list { display: grid; gap: 5px; }
+.raster-symbology-stop-row { display: grid; grid-template-columns: 28px 40px minmax(80px, 1fr) auto 32px 32px; align-items: center; gap: 7px; }
+.raster-symbology-stop-index { color: var(--text-secondary, #5f6772); font-variant-numeric: tabular-nums; text-align: right; }
+.raster-symbology-color-field input { display: block; width: 36px; height: 30px; padding: 2px; border: 1px solid var(--border-control, #b9c0ca); border-radius: 5px; background: var(--surface-primary, #fff); }
+.raster-symbology-value-field input { width: 100%; font-variant-numeric: tabular-nums; }
+.raster-symbology-value-field input[aria-invalid="true"] { border-color: var(--status-danger-border, #d98b89); }
+.raster-symbology-lock-note { margin: 0; font-size: 11px; }
+.raster-symbology-icon-button { min-width: 30px; padding: 4px 6px; }
+.raster-symbology-icon-button.is-danger { color: var(--status-danger-text, #8d2623); }
+.raster-symbology-delete-actions { display: flex; gap: 5px; }
+.raster-symbology-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.raster-symbology-palette-list { display: grid; gap: 12px; }
+.raster-symbology-palette-list section h4 { margin: 0 0 7px; font-size: 12px; }
+.raster-symbology-palette-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 5px; }
+.raster-symbology-palette { min-width: 0; padding: 4px; border: 1px solid transparent; border-radius: 6px; }
+.raster-symbology-palette.is-selected { border-color: var(--accent, #2864b4); background: var(--surface-primary, white); }
+.raster-symbology-palette-pick { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; border: 0; padding: 3px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.raster-symbology-palette-pick:disabled { cursor: not-allowed; }
+.raster-symbology-palette-ramp { display: flex; flex: 0 0 58px; height: 18px; overflow: hidden; border-radius: 3px; }
+.raster-symbology-palette-ramp i { flex: 1; }
+.raster-symbology-palette-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.raster-symbology-save-palette { align-items: end; margin-top: 10px; }
+.raster-symbology-save-palette .raster-symbology-note { flex-basis: 100%; }
+.raster-symbology-actions { border-top: 1px solid var(--border-subtle, #d7dce2); padding-top: 11px; }
+.raster-symbology-actions > span { font-size: 12px; }
+.raster-symbology-actions .is-valid { color: var(--status-success-text, #246b3d); }
+.raster-symbology-actions .is-invalid { color: var(--status-danger-text, #8d2623); }
+.raster-symbology-apply { border-color: var(--accent, #2864b4); color: white; background: var(--accent, #2864b4); font-weight: 600; }
+.raster-symbology-apply:hover:not(:disabled) { filter: brightness(.94); }
+
+@media (max-width: 520px) {
+  .raster-symbology-picker { grid-template-columns: 1fr; }
+  .raster-symbology-picker-preview { height: 20px; }
+  .raster-symbology-histogram-row { align-items: stretch; flex-direction: column; }
+  .raster-symbology-stop-row { grid-template-columns: 22px 34px minmax(55px, 1fr) auto 28px 28px; gap: 4px; }
+  .raster-symbology-actions { align-items: flex-start; flex-direction: column; }
+  .raster-symbology-actions .raster-symbology-apply { width: 100%; }
+}

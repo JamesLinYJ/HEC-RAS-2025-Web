@@ -1,0 +1,228 @@
+.hydraulics-workspace {
+  --hydraulic-border: rgba(142, 158, 178, 0.28);
+  --hydraulic-muted: #9ca9b9;
+  display: grid;
+  gap: 18px;
+  color: var(--tools-text, #edf2f8);
+}
+
+.hydraulics-header,
+.hydraulics-section-title,
+.hydraulics-header-actions,
+.hydraulics-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.hydraulics-header {
+  align-items: flex-start;
+  padding: 20px;
+  border: 1px solid var(--hydraulic-border);
+  border-radius: 14px;
+  background: rgba(19, 30, 44, 0.82);
+}
+
+.hydraulics-header h2 { margin: 5px 0 7px; font-size: 1.45rem; }
+.hydraulics-header p,
+.hydraulics-section-title p { margin: 0; color: var(--hydraulic-muted); }
+.hydraulics-header-actions { flex-wrap: wrap; justify-content: flex-end; }
+
+.hydraulics-runtime,
+.hydraulics-stale-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 9px;
+  border: 1px solid var(--hydraulic-border);
+  border-radius: 999px;
+  color: var(--hydraulic-muted);
+  font-size: 0.78rem;
+}
+
+.hydraulics-runtime.is-connected { color: #a6e1be; border-color: rgba(89, 185, 129, 0.55); }
+.hydraulics-stale-tag { color: #f3d18a; border-color: rgba(228, 181, 84, 0.5); }
+
+.hydraulics-tabs {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hydraulic-border);
+  overflow-x: auto;
+}
+
+.hydraulics-tab,
+.hydraulics-chart-tab {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: transparent;
+  color: var(--hydraulic-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.hydraulics-tab.is-active,
+.hydraulics-chart-tab.is-active {
+  color: #fff;
+  border-color: var(--hydraulic-border);
+  background: rgba(80, 127, 172, 0.2);
+}
+
+.hydraulics-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(310px, 0.85fr); gap: 16px; align-items: start; }
+.hydraulics-input-column,
+.hydraulics-output-column { display: grid; gap: 14px; min-width: 0; }
+
+.hydraulics-source-control,
+.hydraulics-section,
+.hydraulics-results,
+.hydraulics-unit-card,
+.hydraulics-conversion-result {
+  min-width: 0;
+  padding: 17px;
+  border: 1px solid var(--hydraulic-border);
+  border-radius: 12px;
+  background: rgba(15, 26, 39, 0.78);
+}
+
+.hydraulics-section h3,
+.hydraulics-results h3 { margin: 0 0 12px; font-size: 1.05rem; }
+.hydraulics-section-title { margin-bottom: 12px; align-items: flex-start; }
+.hydraulics-section-title h3 { margin: 0 0 5px; }
+.hydraulics-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 11px; margin: 12px 0; }
+
+.hydraulics-field { display: grid; gap: 6px; min-width: 0; color: #d9e3ef; }
+.hydraulics-field > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; font-size: 0.88rem; }
+.hydraulics-field code,
+.hydraulics-toggle code,
+.hydraulics-array-editor code,
+.hydraulics-matrix-editor code,
+.hydraulics-table code,
+.hydraulics-result-table code,
+.hydraulics-direction code {
+  color: #92a8c0;
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
+.hydraulics-field input,
+.hydraulics-field select,
+.hydraulics-array-grid input,
+.hydraulics-table input {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  border: 1px solid rgba(145, 163, 184, 0.35);
+  border-radius: 7px;
+  padding: 8px 9px;
+  background: #0b1521;
+  color: #eef3f8;
+  font: inherit;
+}
+
+.hydraulics-field input:disabled,
+.hydraulics-field select:disabled,
+.hydraulics-table input:disabled { opacity: 0.55; }
+.hydraulics-toggle { display: flex; gap: 16px; align-items: center; justify-content: space-between; margin: 12px 0; padding: 11px; border: 1px solid var(--hydraulic-border); border-radius: 8px; }
+.hydraulics-toggle span { display: flex; gap: 8px; align-items: baseline; }
+.hydraulics-toggle input { width: 17px; height: 17px; }
+
+.hydraulics-array-editor,
+.hydraulics-matrix-editor,
+.hydraulics-direction { min-width: 0; margin: 12px 0 0; padding: 11px; border: 1px solid var(--hydraulic-border); border-radius: 9px; }
+.hydraulics-array-editor legend,
+.hydraulics-matrix-editor legend,
+.hydraulics-direction legend { padding: 0 6px; color: #d9e3ef; }
+.hydraulics-array-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 7px; }
+.hydraulics-array-grid label { display: grid; grid-template-columns: 25px minmax(0, 1fr); align-items: center; gap: 5px; color: var(--hydraulic-muted); font-size: 0.8rem; }
+.hydraulics-array-grid input { padding: 6px; font-size: 0.83rem; }
+.hydraulics-table-scroll { max-width: 100%; overflow: auto; }
+.hydraulics-table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+.hydraulics-table th,
+.hydraulics-table td { border-bottom: 1px solid rgba(142, 158, 178, 0.18); padding: 7px 8px; text-align: left; vertical-align: middle; }
+.hydraulics-table th { color: #c7d5e5; font-weight: 550; white-space: nowrap; }
+.hydraulics-table td { color: #e6edf5; }
+.hydraulics-table input { min-width: 76px; padding: 5px 6px; font-size: 0.8rem; }
+.hydraulics-case-table tr.is-selected { background: rgba(80, 127, 172, 0.11); }
+.hydraulics-row-select,
+.hydraulics-link-button { padding: 0; border: 0; background: none; color: #a9d4f8; font: inherit; cursor: pointer; }
+.hydraulics-link-button:disabled { color: #798697; cursor: default; }
+
+.hydraulics-button {
+  border: 1px solid var(--hydraulic-border);
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: rgba(41, 57, 75, 0.7);
+  color: #ecf3fb;
+  cursor: pointer;
+}
+
+.hydraulics-button:disabled { opacity: 0.5; cursor: default; }
+.hydraulics-button-primary { border-color: rgba(84, 161, 215, 0.6); background: rgba(41, 119, 174, 0.35); }
+.hydraulics-button-danger { border-color: rgba(218, 94, 94, 0.5); color: #ffb9b9; }
+.hydraulics-import-case { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; padding: 12px; border: 1px dashed var(--hydraulic-border); border-radius: 9px; }
+.hydraulics-import-case p { flex: 1 1 260px; margin: 0; color: var(--hydraulic-muted); }
+.hydraulics-confirmation { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 13px; border: 1px solid rgba(229, 183, 86, 0.5); border-radius: 10px; background: rgba(104, 77, 24, 0.18); }
+.hydraulics-confirmation p { flex: 1 1 100%; margin: 0; color: #f4db9f; }
+.hydraulics-chart-picker { display: flex; gap: 5px; overflow-x: auto; padding: 10px 0; }
+.hydraulics-chart-tab { padding: 7px 9px; border-color: var(--hydraulic-border); font-size: 0.77rem; }
+
+.hydraulics-results { display: grid; gap: 11px; }
+.hydraulics-results .hydraulics-section-title { margin: 0; }
+.hydraulics-results .hydraulics-section-title p { font-size: 0.78rem; }
+.hydraulics-result-table { border: 1px solid var(--hydraulic-border); border-radius: 8px; overflow: hidden; }
+.hydraulics-result-table > summary { display: flex; justify-content: space-between; gap: 8px; padding: 9px; cursor: pointer; background: rgba(52, 69, 88, 0.28); }
+.hydraulics-result-table .hydraulics-table-scroll { max-height: 300px; }
+.hydraulics-raw-draft,
+.hydraulics-raw-receipt { border: 1px solid var(--hydraulic-border); border-radius: 8px; padding: 10px 12px; background: rgba(10, 18, 28, 0.5); }
+.hydraulics-raw-draft > summary,
+.hydraulics-raw-receipt > summary { cursor: pointer; color: #c3d1e0; }
+.hydraulics-raw-draft pre,
+.hydraulics-raw-receipt pre { max-height: 420px; overflow: auto; margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #b4c2d2; font-size: 0.75rem; }
+.hydraulics-chart { margin: 0; padding: 10px; border: 1px solid var(--hydraulic-border); border-radius: 9px; }
+.hydraulics-chart figcaption { display: flex; flex-wrap: wrap; gap: 7px; justify-content: space-between; margin-bottom: 8px; }
+.hydraulics-chart figcaption small { color: var(--hydraulic-muted); }
+.hydraulics-chart-scroll { width: 100%; overflow-x: auto; }
+.hydraulics-chart svg { min-width: 420px; width: 100%; height: auto; }
+.hydraulics-chart-axis { stroke: #71849a; stroke-width: 1; }
+.hydraulics-chart-label { fill: #b8c5d4; font-size: 11px; }
+.hydraulics-chart-legend { display: flex; flex-wrap: wrap; gap: 7px 12px; margin: 7px 0 0; padding: 0; list-style: none; color: #bdc9d7; font-size: 0.74rem; }
+.hydraulics-chart-legend li { display: inline-flex; align-items: center; gap: 5px; }
+.hydraulics-chart-legend li span { width: 9px; height: 9px; border-radius: 50%; }
+
+.hydraulics-warning,
+.hydraulics-error,
+.hydraulics-status,
+.hydraulics-success,
+.hydraulics-muted,
+.hydraulics-empty { margin: 0; padding: 10px 12px; border-radius: 8px; line-height: 1.45; }
+.hydraulics-warning { color: #f3d38c; background: rgba(129, 91, 24, 0.2); }
+.hydraulics-error { color: #ffb4b4; background: rgba(129, 37, 37, 0.22); }
+.hydraulics-status { color: #b4d9f4; background: rgba(42, 91, 124, 0.2); }
+.hydraulics-success { color: #ade3be; background: rgba(39, 109, 65, 0.2); }
+.hydraulics-muted,
+.hydraulics-empty { color: var(--hydraulic-muted); background: rgba(44, 59, 75, 0.18); }
+
+.hydraulics-unit-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.hydraulics-unit-card > .hydraulics-muted,
+.hydraulics-unit-card > .hydraulics-button { grid-column: 1 / -1; }
+.hydraulics-direction { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.hydraulics-direction label { display: inline-flex; align-items: center; gap: 6px; color: #d8e2ed; }
+.hydraulics-direction input { accent-color: #58a7d7; }
+.hydraulics-conversion-result { display: grid; gap: 7px; }
+.hydraulics-conversion-result span,
+.hydraulics-conversion-result small { color: var(--hydraulic-muted); }
+.hydraulics-conversion-result strong { font-size: 1.45rem; overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .hydraulics-layout { grid-template-columns: minmax(0, 1fr); }
+  .hydraulics-header { flex-direction: column; }
+  .hydraulics-header-actions { justify-content: flex-start; }
+}
+
+@media (max-width: 560px) {
+  .hydraulics-unit-card { grid-template-columns: minmax(0, 1fr); }
+  .hydraulics-unit-card > .hydraulics-muted,
+  .hydraulics-unit-card > .hydraulics-button { grid-column: auto; }
+  .hydraulics-section-title { flex-direction: column; }
+}

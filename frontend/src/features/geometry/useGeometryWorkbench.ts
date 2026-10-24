@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetReference, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { BackendOperationUnavailableError } from '../../shared/workbench';
-import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologySnapshot } from './geometryTypes';
+import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
 import { geometryDiagnosticMessage } from './geometryErrors';
 
 interface OwnerValue<T> { owner: string; value: T }
@@ -261,6 +261,120 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     if (result.revision !== snapshot.revision) throw new Error('The topology response revision does not match the captured source revision.');
     setTopology(result); setError('topology');
     return result;
+  });
+
+  const loadArcPoints = async (arcFID: number): Promise<GeometryTopologyArcPointsSnapshot> => {
+    const current = topologyRef.current;
+    if (!model || !current || current.owner !== sourceOwner || !supports('topology.arcPoints'))
+      throw new BackendOperationUnavailableError('topology.arcPoints');
+    if (!Number.isInteger(arcFID) || arcFID < 0) throw new Error('A source arc FID is required.');
+    const captured = current.value;
+    const result = await send<GeometryTopologyArcPointsSnapshot>('topology.arcPoints', {
+      model, revision: captured.revision, draftState: captured.draftState, arcFID,
+    }, current.owner);
+    const latest = topologyRef.current;
+    if (latest?.owner !== current.owner || latest.value.revision !== captured.revision || latest.value.draftState !== captured.draftState)
+      throw new DOMException('The arc-point response belongs to an earlier topology draft.', 'AbortError');
+    if (result.revision !== captured.revision || result.arcFID !== arcFID)
+      throw new Error('The arc-point response does not match the selected arc and source revision.');
+    if (captured.completion?.draftIdentity && result.draftIdentity !== captured.completion.draftIdentity)
+      throw new DOMException('The arc-point response belongs to a different topology draft identity.', 'AbortError');
+    return result;
+  };
+
+  const loadRecipe = async (controlPointFIDs: number[], recipeText?: string): Promise<GeometryTopologyRecipeSnapshot> => {
+    const current = topologyRef.current;
+    if (!model || !current || current.owner !== sourceOwner || !supports('topology.recipe'))
+      throw new BackendOperationUnavailableError('topology.recipe');
+    if (!controlPointFIDs.length || controlPointFIDs.some((fid) => !Number.isInteger(fid) || fid < 0)
+      || new Set(controlPointFIDs).size !== controlPointFIDs.length)
+      throw new Error('Recipe inspection requires distinct source control-point FIDs.');
+    const captured = current.value;
+    const result = await send<GeometryTopologyRecipeSnapshot>('topology.recipe', {
+      model, revision: captured.revision, draftState: captured.draftState, controlPointFIDs,
+      ...(recipeText !== undefined ? { recipeText } : {}),
+    }, current.owner);
+    const latest = topologyRef.current;
+    if (latest?.owner !== current.owner || latest.value.revision !== captured.revision || latest.value.draftState !== captured.draftState)
+      throw new DOMException('The recipe response belongs to an earlier topology draft.', 'AbortError');
+    if (result.revision !== captured.revision || result.controlPointFIDs.length !== controlPointFIDs.length
+      || result.controlPointFIDs.some((fid, index) => fid !== controlPointFIDs[index]))
+      throw new Error('The recipe response does not match the selected control points and source revision.');
+    if (captured.completion?.draftIdentity && result.draftIdentity !== captured.completion.draftIdentity)
+      throw new DOMException('The recipe response belongs to a different topology draft identity.', 'AbortError');
+    return result;
+  };
+
+  const resizeTopology = (kind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest'): Promise<void> => {
+    if (row.fid == null || row.fid < 0) return Promise.reject(new Error('Quick sizing requires a source feature.'));
+    if (kind === 'arc' && axis !== undefined) return Promise.reject(new Error('Arc quick sizing does not accept an axis.'));
+    if (kind === 'region' && axis !== undefined && axis !== 'NorthSouth' && axis !== 'EastWest')
+      return Promise.reject(new Error('Quad quick sizing requires a supported source axis.'));
+    if (!topology?.canEdit || !supports('topology.edit')) return Promise.reject(new BackendOperationUnavailableError('topology.edit'));
+    return editTopology({ operation, featureKind: kind, featureIDs: [row.fid], ...(axis ? { fieldID: axis } : {}) }).then(() => undefined);
+  };
+
+  const editTopologyTag = (kind: 'arc' | 'region', rows: GeometryRow[], tagName: string, value: string | null): Promise<void> => {
+    const fids = rows.map((row) => row.fid);
+    if (!tagName.trim() || !fids.length || fids.some((fid) => fid == null || fid < 0)
+      || new Set(fids).size !== fids.length) return Promise.reject(new Error('Tag changes require selected source features and a tag definition.'));
+    if (!topology?.canEdit || !supports('topology.edit')) return Promise.reject(new BackendOperationUnavailableError('topology.edit'));
+    return editTopology({ operation: value === null ? 'removeTag' : 'setTag', featureKind: kind, featureIDs: fids,
+      tagName, ...(value !== null ? { tagValue: value } : {}) }).then(() => undefined);
+  };
+
+  const createTopologyTag = (kind: 'arc' | 'region', tagName: string, tagType: string): Promise<void> => {
+    if (!tagName.trim()) return Promise.reject(new Error('A tag name is required.'));
+    if (!['String', 'Integer', 'Numeric', 'Boolean'].includes(tagType)) return Promise.reject(new Error('The tag type is not defined by the source editor.'));
+    if (!topology?.canEdit || !supports('topology.edit')) return Promise.reject(new BackendOperationUnavailableError('topology.edit'));
+    return editTopology({ operation: 'createTag', featureKind: kind, featureIDs: [], tagName, tagType }).then(() => undefined);
+  };
+
+  const editArcPointCoordinate = (arcFID: number, point: GeometryTopologyArcPointsSnapshot['rows'][number], axis: 'X' | 'Y', value: string,
+    expected: { revision: string; draftState: string; draftIdentity: string }): Promise<void> => enqueue(topologyQueue, async () => {
+    const current = topologyRef.current;
+    if (!model || !current || current.owner !== sourceOwner) throw new Error('Topology draft is not loaded for this asset.');
+    const snapshot = current.value;
+    if (!Number.isInteger(arcFID) || arcFID < 0) throw new Error('A source arc FID is required.');
+    if (!['start', 'internal', 'end'].includes(point.pointKind)) throw new Error('The selected source arc point kind is invalid.');
+    if ((point.pointKind === 'internal' && (point.internalPointIndex == null || point.internalPointIndex < 0))
+      || (point.pointKind !== 'internal' && (point.endpointNodeIndex == null || point.endpointNodeIndex < 0)))
+      throw new Error('The selected source arc point identity is incomplete.');
+    if (!snapshot.canEdit || !supports('topology.edit')) throw new BackendOperationUnavailableError('topology.edit');
+    if (snapshot.revision !== expected.revision || snapshot.draftState !== expected.draftState
+      || (snapshot.completion?.draftIdentity && snapshot.completion.draftIdentity !== expected.draftIdentity))
+      throw new DOMException('The arc-point edit belongs to an earlier topology draft.', 'AbortError');
+    try {
+      const result = await send<GeometryTopologySnapshot>('topology.edit', {
+        model, revision: snapshot.revision, draftState: snapshot.draftState,
+        mutation: { operation: 'setArcPointCoordinate', featureKind: 'arc', featureIDs: [arcFID], pointKind: point.pointKind,
+          internalPointIndex: point.internalPointIndex ?? null, endpointNodeIndex: point.endpointNodeIndex ?? null, axis, rawValue: value },
+      }, current.owner);
+      if (result.revision !== snapshot.revision) throw new Error('The topology response revision does not match the captured source revision.');
+      setTopology(result); setError('topology');
+    } catch (error) { setError('topology', geometryDiagnosticMessage(error)); throw error; }
+  });
+
+  const applyTopologyRecipe = (controlPointFIDs: number[], recipeText: string, forceSet: boolean,
+    expected: { revision: string; draftState: string; draftIdentity: string }): Promise<void> => enqueue(topologyQueue, async () => {
+    const current = topologyRef.current;
+    if (!model || !current || current.owner !== sourceOwner) throw new Error('Topology draft is not loaded for this asset.');
+    const snapshot = current.value;
+    if (!snapshot.canEdit || !supports('topology.edit')) throw new BackendOperationUnavailableError('topology.edit');
+    if (snapshot.revision !== expected.revision || snapshot.draftState !== expected.draftState
+      || (snapshot.completion?.draftIdentity && snapshot.completion.draftIdentity !== expected.draftIdentity))
+      throw new DOMException('The recipe was inspected against an earlier topology draft. Inspect it again before applying.', 'AbortError');
+    if (!controlPointFIDs.length || controlPointFIDs.some((fid) => !Number.isInteger(fid) || fid < 0)
+      || new Set(controlPointFIDs).size !== controlPointFIDs.length)
+      throw new Error('Recipe application requires distinct source control-point FIDs.');
+    try {
+      const result = await send<GeometryTopologySnapshot>('topology.edit', {
+        model, revision: snapshot.revision, draftState: snapshot.draftState,
+        mutation: { operation: 'applyRecipe', featureKind: 'region', featureIDs: [], controlPointFeatureIDs: controlPointFIDs, recipeText, forceSet },
+      }, current.owner);
+      if (result.revision !== snapshot.revision) throw new Error('The topology response revision does not match the captured source revision.');
+      setTopology(result); setError('topology');
+    } catch (error) { setError('topology', geometryDiagnosticMessage(error)); throw error; }
   });
 
   const onTopologyChange = (kind: 'node' | 'arc' | 'region', row: GeometryRow, field: GeometryField, value: string, isLocal: boolean): void => {
@@ -564,11 +678,13 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     asset, ownerKey: sourceOwner, model, parent, topology, mesh, culverts, draft, loading, errors, busyOperation, savedNotice,
     topologyDirty, meshDirty, culvertDirty, localOnly, dirty, revision, dirtyOwner,
     supports, localRows, addLocalRow, onTopologyChange, onTopologyCommand, onTopologyDelete, undoTopology, redoTopology,
+    loadArcPoints, loadRecipe, resizeTopology, editTopologyTag, createTopologyTag, editArcPointCoordinate, applyTopologyRecipe,
     onFlowAreaChange, onRegionSelection, prepareMesh, generateMesh, degreeScan, propertyTables, undoMesh, redoMesh,
     onCulvertChange, onCulvertCommand, onCulvertDelete, addCulvertBarrel, addCulvertPropertySet, undoCulverts,
     resetDrafts, save, wrappedTopologyTable, wrappedCulvertTable, wrappedMeshRegions,
     reload: () => setRefreshToken((value) => value + 1), setError,
-    canLoadTopology: supports('topology.load'), canLoadMesh: supports('geometry.mesh.load'), canLoadCulverts: supports('geometry.culverts.load'),
+    canLoadTopology: supports('topology.load'), canLoadArcPoints: supports('topology.arcPoints'), canLoadRecipe: supports('topology.recipe'),
+    canLoadMesh: supports('geometry.mesh.load'), canLoadCulverts: supports('geometry.culverts.load'),
     canLoadParent: supports('model.load'), canSave: supports('model.save') && !!parent && !!context.projectPath && !!revision && dirty && !localOnly,
     canGenerate: supports('geometry.mesh.generate'), canPrepare: supports('geometry.mesh.edit'), canDegreeScan: supports('geometry.mesh.degreeErrors'), canPropertyTables: supports('geometry.mesh.computePropertyTables'),
     canUndoTopology: !!topology?.canUndo && supports('topology.edit'), canRedoTopology: !!topology?.canRedo && supports('topology.edit'),

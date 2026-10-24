@@ -151,10 +151,17 @@ internal static partial class ServerAcceptance
         if (mapType != "Plan") throw new InvalidDataException("The Terrain fixture must use its saved Plan map.");
         string mapID = Guid.NewGuid().ToString("D");
         string planName = Path.GetFileNameWithoutExtension(copiedFixture.PlanPath);
+        ResultHoverCaseManifest hdfReferenceCase = resultHover.Cases.Single(item => item.Id == "multi-A1-to-B0");
+        ResultHoverSourceSelection selectedReferenceSource = hdfReferenceCase.SelectedSources
+            .Single(item => item.SelectionIndex == 0);
+        ResultHoverSourceManifest originalSource = resultHover.Sources.Single(item =>
+            item.SelectionIndex == selectedReferenceSource.SelectionIndex &&
+            PathEquals(item.ResultPath, selectedReferenceSource.ResultPath) &&
+            string.Equals(item.Revision, selectedReferenceSource.Revision, StringComparison.OrdinalIgnoreCase));
         MapTreeResultSelectionOverride[] treeSelections =
         [
-            new(copiedFixture.PlanPath, planName, Rebase(resultHover.Sources[0].ResultPath),
-                resultHover.Sources[0].Revision)
+            new(copiedFixture.PlanPath, planName, Rebase(originalSource.ResultPath),
+                originalSource.Revision)
         ];
         MapTreeRequest MapRequest(string revision, bool useResultSelection = true) => new(
             projectPath, projectXml, projectXmlSHA, mapID, resultHover.Map.MapIndex,
@@ -174,9 +181,9 @@ internal static partial class ServerAcceptance
         _ = FlattenMapNodes(initialRoots).Single(node => node.Locator is { } locator &&
             TerrainLocatorEqual(JsonSerializer.SerializeToElement(locator, JsonOptions), multiResultLocator));
         CatalogTreeNodeLocator planLocator = FindPlanOwner(initialRoots, multiResultLocator).Locator!;
-        ResultHoverSourceManifest source = resultHover.Sources[0] with
+        ResultHoverSourceManifest source = originalSource with
         {
-            ResultPath = Rebase(resultHover.Sources[0].ResultPath)
+            ResultPath = Rebase(originalSource.ResultPath)
         };
         if (!FileSha256(source.ResultPath).Equals(source.Revision, StringComparison.OrdinalIgnoreCase))
             throw new SourceFileChangedException();
@@ -543,9 +550,12 @@ internal static partial class ServerAcceptance
         ResultHoverCaseManifest sampleCase = manifest.Cases.Single(item => item.Id == "multi-A1-to-B0");
         if (sampleCase.Point.X != knownWorldPoint.X || sampleCase.Point.Y != knownWorldPoint.Y)
             throw new InvalidDataException("The direct C# HDF baseline must use the same known world point as Terrain.");
+        ResultHoverSourceSelection selectedSource = sampleCase.SelectedSources.Single(item => item.SelectionIndex == 0);
         ResultHoverExpectedEntry entry = sampleCase.Entries.Single(item => item.SelectionIndex == 0);
-        if (!PathEquals(entry.ResultPath, copiedSource.ResultPath) ||
-            !string.Equals(entry.Revision, copiedSource.Revision, StringComparison.OrdinalIgnoreCase))
+        if (!PathEquals(rebase(selectedSource.ResultPath), copiedSource.ResultPath) ||
+            !string.Equals(selectedSource.Revision, copiedSource.Revision, StringComparison.OrdinalIgnoreCase) ||
+            !PathEquals(entry.ResultPath, selectedSource.ResultPath) ||
+            !string.Equals(entry.Revision, selectedSource.Revision, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The direct C# HDF sample must belong to the selected exact Result source.");
         return new
         {

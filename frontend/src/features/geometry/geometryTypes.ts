@@ -59,10 +59,54 @@ export interface GeometryTopologySnapshot {
     sourceRevision: string;
     draftIdentity: string;
     isComplete: boolean;
-    messages: Array<{ id: string; code: string; severity: string; text: string }>;
+    messages: GeometryTopologyCompletionMessage[];
   } | null;
   canUndo?: boolean;
   canRedo?: boolean;
+}
+
+export interface GeometryTopologyCompletionMessage {
+  id: string;
+  code: string;
+  severity: string;
+  regionCompletionSeverity?: string | null;
+  text: string;
+  logData?: Array<{ key: string; value: string; valueType: string; integerValue?: number | null }>;
+  targets?: Array<{ featureKind: string; fid: number; tableRowID: string; mapFeatureIDs: string[] }>;
+}
+
+export interface GeometryTopologyArcPointsSnapshot {
+  revision: string;
+  draftIdentity: string;
+  arcFID: number;
+  rows: Array<{
+    rowIndex: number;
+    pointKind: 'start' | 'internal' | 'end' | string;
+    internalPointIndex?: number | null;
+    endpointNodeIndex?: number | null;
+    x: number;
+    y: number;
+  }>;
+}
+
+export interface GeometryTopologyRecipeSnapshot {
+  revision: string;
+  draftIdentity: string;
+  controlPointFIDs: number[];
+  hasSelection: boolean;
+  hasMismatch: boolean;
+  commonRecipe?: string | null;
+  rawText: string;
+  isValid: boolean;
+  parseIssue?: string | null;
+  steps: Array<{ name: string; parameters: Record<string, string> }>;
+  stepSchema: Array<{
+    name: string;
+    aliases: string[];
+    parameters: Array<{ name: string; sourceType: string; defaultValue: string }>;
+  }>;
+  selectedRecipes: Array<{ fid: number; recipe: string }>;
+  selectedPatchTypes?: string[] | null;
 }
 
 export interface GeometryMeshFlowArea {

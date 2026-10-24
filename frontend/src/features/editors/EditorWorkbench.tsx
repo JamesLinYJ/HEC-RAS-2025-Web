@@ -5,9 +5,9 @@ import { BoundaryConditionEditor, BOUNDARY_EDITOR_PAGE_IDS } from './BoundaryCon
 import { ClassificationEditor } from './ClassificationEditor';
 import { EditorCatalogBrowser } from './EditorCatalogBrowser';
 import { NValueEditor } from './NValueEditor';
-import type { EditorPageProps, EditorSchema, EditorPageProps as PageProps, ModelDraft, ModelSnapshot } from './model';
+import type { EditorPageProps, EditorSchema, EditorPageProps as PageProps, ModelDraft, ModelSnapshot, SeriesTransformOperation } from './model';
 import { pageTitle, schemaForAsset, snapshotRows } from './model';
-import { changedModelCells, createModelDraft, isModelDraftDirty, samplesForModelRequest, updateModelSample, validateChangedSamples } from './modelDraft';
+import { changedModelCells, createModelDraft, isModelDraftDirty, updateModelSample, validateChangedSamples } from './modelDraft';
 import { validateChangedTableCells, validateModelDraft } from './SchemaFieldRenderer';
 import { loadEditorCatalog } from './schemaCatalog';
 import { editorAssetKind, editorValueLabel } from './editorLocalization';
@@ -212,22 +212,29 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       setSaveMessage(text(language, '当前草稿有无效值；修正后才能调整时序行。', 'Correct invalid draft values before changing time-series rows.'));
       return;
     }
-    const currentRowCount = series.tableId
-      ? (draft.rows[series.tableId]?.length ?? series.rows.length)
-      : (draft.samples[pageID]?.length ?? series.samples.length);
+    const currentRows = series.tableId ? (draft.rows[series.tableId] ?? series.rows) : null;
+    const currentSamples = draft.samples[pageID] ?? series.samples;
+    const currentRowCount = currentRows?.length ?? currentSamples.length;
     if (operation === 'removeLastRow' && currentRowCount === 0) return;
-    const currentRowIDs = series.tableId
-      ? (draft.rows[series.tableId] ?? series.rows).map((row) => row.id)
-      : (draft.samples[pageID] ?? series.samples).map((sample) => sample.id);
-    if (new Set(currentRowIDs).size !== currentRowIDs.length || currentRowIDs.some((id) => !id)) {
+    const currentRowIDs = currentRows?.map((row) => row.id) ?? currentSamples.map(sampleIdentityKey);
+    const currentStationRows = series.tableId
+      ? draft.rows[`${pageID}/Stations`] ?? series.stations
+      : [];
+    const currentStationIDs = currentStationRows.map((row) => row.id);
+    if (new Set(currentRowIDs).size !== currentRowIDs.length || currentRowIDs.some((id) => !id)
+      || currentSamples.some((sample) => !sample.id)
+      || new Set(currentStationIDs).size !== currentStationIDs.length || currentStationIDs.some((id) => !id)) {
       setSaveMessage(text(language, '当前时序行身份不唯一，无法调整结构。', 'The current time-series row identities are not unique, so the structure cannot be changed.'));
       return;
     }
 
     const requestState = { owner: source.owner, controller: new AbortController() };
+    const requestGeneration = generation.current;
     activeSave.current = requestState;
     const isCurrentRequest = () => activeSave.current === requestState
-      && activeOwner.current === requestState.owner && !requestState.controller.signal.aborted;
+      && activeOwner.current === requestState.owner
+      && generation.current === requestGeneration
+      && !requestState.controller.signal.aborted;
     setBusy(true);
     setSaveMessage('');
     setSaveErrors([]);
@@ -242,7 +249,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
         ? draft.sourceState
         : snapshot.sourceState ?? sourceStateFor(asset) ?? null,
       rows: draft.rows,
-      samples: samplesForModelRequest(snapshot, draft),
+      samples: samplesForBoundaryDraft(snapshot, draft),
       changedCells: changedModelCells(draft, snapshotRows(snapshot)),
     };
     try {
@@ -252,22 +259,96 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       if (result.revision !== snapshot.revision) throw new Error('The series transform returned a different source revision.');
       const transformedSeries = result.boundary?.series[pageID];
       if (!transformedSeries) throw new Error('The backend did not return the transformed time series.');
+      if (transformedSeries.pageId !== series.pageId || transformedSeries.scope !== series.scope
+        || transformedSeries.schemaId !== series.schemaId || transformedSeries.tableId !== series.tableId) {
+        throw new Error('The backend returned a different time-series identity.');
+      }
       const transformedRowCount = transformedSeries.tableId ? transformedSeries.rows.length : transformedSeries.samples.length;
-      const expectedRowCount = currentRowCount + (operation === 'appendRow' ? 1 : -1);
+      const rowDelta = operation === 'appendRow' ? 1 : operation === 'removeLastRow' ? -1 : 0;
+      const expectedRowCount = currentRowCount + rowDelta;
       if (transformedRowCount !== expectedRowCount) throw new Error('The backend time-series row count did not match the requested operation.');
       const transformedRowIDs = transformedSeries.tableId
         ? transformedSeries.rows.map((row) => row.id)
-        : transformedSeries.samples.map((sample) => sample.id);
-      const retainedRowIDs = operation === 'appendRow' ? currentRowIDs : currentRowIDs.slice(0, -1);
+        : transformedSeries.samples.map(sampleIdentityKey);
+      const retainedRowIDs = operation === 'removeLastRow' ? currentRowIDs.slice(0, -1) : currentRowIDs;
       if (new Set(transformedRowIDs).size !== transformedRowIDs.length
         || transformedRowIDs.some((id) => !id)
         || retainedRowIDs.some((id, index) => transformedRowIDs[index] !== id)
         || (operation === 'appendRow' && currentRowIDs.includes(transformedRowIDs[transformedRowIDs.length - 1]))) {
         throw new Error('The backend time-series transform did not preserve stable row identities.');
       }
+      const currentSampleIDs = currentSamples.map(sampleIdentityKey);
+      const transformedSampleIDs = transformedSeries.samples.map(sampleIdentityKey);
+      if (new Set(transformedSampleIDs).size !== transformedSampleIDs.length || transformedSampleIDs.some((id) => !id)
+        || transformedSeries.samples.some((sample) => !sample.id)) {
+        throw new Error('The backend time-series transform returned duplicate sample identities.');
+      }
+      const currentSampleSet = new Set(currentSampleIDs);
+      const survivingSamples = transformedSampleIDs.filter((id) => currentSampleSet.has(id));
+      const lastRowID = currentRowIDs[currentRowIDs.length - 1];
+      const expectedSamples = operation === 'removeLastRow'
+        ? series.tableId
+          ? currentSampleIDs.filter((id) => !id.startsWith(`${lastRowID}\u0000`))
+          : currentSampleIDs.slice(0, -1)
+        : currentSampleIDs;
+      if (survivingSamples.length !== expectedSamples.length || expectedSamples.some((id, index) => survivingSamples[index] !== id)) {
+        throw new Error('The backend time-series transform did not preserve stable sample identities.');
+      }
+      const sampleDelta = series.tableId ? series.columns.filter((column) => column.id !== 'Time').length : 1;
+      const expectedSampleCount = operation === 'appendRow' ? currentSampleIDs.length + sampleDelta
+        : operation === 'removeLastRow' ? Math.max(0, currentSampleIDs.length - sampleDelta)
+          : currentSampleIDs.length;
+      if (operation === 'addStation' ? transformedSampleIDs.length < currentSampleIDs.length
+        : transformedSampleIDs.length !== expectedSampleCount) {
+        throw new Error('The backend changed the number of samples outside the requested operation.');
+      }
+      if (currentRows && transformedSeries.tableId && ['appendRow', 'removeLastRow', 'addStation'].includes(operation)) {
+        const retainedRows = operation === 'removeLastRow' ? currentRows.slice(0, -1) : currentRows;
+        if (retainedRows.some((row, index) => {
+          const transformed = transformedSeries.rows[index];
+          return !transformed || series.columns.some((column) => !equivalentCellValue(row.values[column.id] ?? '', transformed.values[column.id] ?? '', column.sourceType));
+        })) {
+          throw new Error('The backend did not preserve edited time-series cells while changing its structure.');
+        }
+      } else if (!currentRows && ['appendRow', 'removeLastRow'].includes(operation)) {
+        const retainedSamples = operation === 'removeLastRow' ? currentSamples.slice(0, -1) : currentSamples;
+        const transformedByID = new Map(transformedSeries.samples.map((sample) => [sampleIdentityKey(sample), sample]));
+        if (retainedSamples.some((sample) => {
+          const transformed = transformedByID.get(sampleIdentityKey(sample));
+          return !transformed || transformed.x !== sample.x || transformed.y !== sample.y || transformed.series !== sample.series;
+        })) {
+          throw new Error('The backend did not preserve edited time-series samples while changing its structure.');
+        }
+      }
+      if (operation === 'addStation') {
+        const transformedStationIDs = transformedSeries.stations.map((row) => row.id);
+        const transformedColumnIDs = transformedSeries.columns.map((column) => column.id);
+        const newStationID = `station/${currentStationIDs.length}`;
+        if (!series.tableId || transformedStationIDs.length !== currentStationIDs.length + 1
+          || currentStationIDs.some((id, index) => transformedStationIDs[index] !== id)
+          || transformedStationIDs[transformedStationIDs.length - 1] !== newStationID
+          || transformedColumnIDs.length !== series.columns.length + 1
+          || series.columns.some((column, index) => transformedColumnIDs[index] !== column.id)
+          || transformedColumnIDs[transformedColumnIDs.length - 1] !== newStationID) {
+          throw new Error('The backend did not preserve station identities while adding a station.');
+        }
+        if (currentStationRows.some((row, index) => {
+          const transformed = transformedSeries.stations[index];
+          return !transformed || !equivalentCellValue(row.values.Station ?? '', transformed.values.Station ?? '', 'double');
+        })) {
+          throw new Error('The backend did not preserve edited station positions while adding a station.');
+        }
+        const payloadID = /\/Payload\/([0-9a-f]{32})$/i.exec(series.scope)?.[1];
+        const addedSamples = transformedSeries.samples.filter((sample) => !currentSampleSet.has(sampleIdentityKey(sample)));
+        const addedSampleIDs = addedSamples.map((sample) => sample.id);
+        if (!payloadID || addedSamples.some((sample) => sample.datasetId !== `${payloadID}/${newStationID}`)
+          || !addedSampleIDs.every((id, index) => id === String(index))) {
+          throw new Error('The backend did not bind new station samples to the payload and stable time-row identities.');
+        }
+      }
       const transformedDraft = createModelDraft(result);
       setDraft((current) => {
-        if (!current || activeOwner.current !== requestState.owner) return current;
+        if (!current || activeOwner.current !== requestState.owner || generation.current !== requestGeneration) return current;
         const next = {
           ...current,
           sourceState: transformedDraft.sourceState,
@@ -281,9 +362,14 @@ export default function EditorWorkbench(props: FeaturePageProps) {
         };
         return { ...next, changedCells: changedModelCells(next, snapshotRows(snapshot)) };
       });
-      setSaveMessage(operation === 'appendRow'
-        ? text(language, '已在草稿中追加时序末行；点击“保存”后才会写入模型文件。', 'The last time-series row was added to the draft. Save to write it to the model file.')
-        : text(language, '已在草稿中移除时序末行；点击“保存”后才会写入模型文件。', 'The last time-series row was removed from the draft. Save to write it to the model file.'));
+      const messages: Record<SeriesTransformOperation, [string, string]> = {
+        appendRow: ['已在草稿中追加时序末行；点击“保存”后才会写入模型文件。', 'The last time-series row was added to the draft. Save to write it to the model file.'],
+        removeLastRow: ['已在草稿中移除时序末行；点击“保存”后才会写入模型文件。', 'The last time-series row was removed from the draft. Save to write it to the model file.'],
+        clear: ['已清空草稿中的时序数值；点击“保存”后才会写入模型文件。', 'Time-series values were cleared in the draft. Save to write the change to the model file.'],
+        interpolate: ['已在草稿中完成时序插值；点击“保存”后才会写入模型文件。', 'Time-series values were interpolated in the draft. Save to write the change to the model file.'],
+        addStation: ['已在草稿中添加测站；点击“保存”后才会写入模型文件。', 'A station was added to the draft. Save to write the change to the model file.'],
+      };
+      setSaveMessage(text(language, messages[operation][0], messages[operation][1]));
     } catch (error) {
       if (isCurrentRequest()) {
         setSaveMessage(text(language, '时序行调整失败。', 'The time-series row could not be changed.'));
@@ -338,7 +424,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       images: {},
       sourceState: previousSourceState,
       rows: draft.rows,
-      samples: samplesForModelRequest(snapshot, draft),
+      samples: samplesForBoundaryDraft(snapshot, draft),
       changedCells: changedModelCells(draft, snapshotRows(snapshot)),
     };
     try {
@@ -475,7 +561,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
           ? draft.sourceState
           : snapshot.sourceState ?? sourceStateFor(asset) ?? null,
         rows: draft.rows,
-        samples: samplesForModelRequest(snapshot, draft),
+        samples: samplesForBoundaryDraft(snapshot, draft),
         planTimeWindowEdits: planTimeWindowEdits ?? null,
         tableSelections,
         changedCells: changedModelCells(draft, snapshotRows(snapshot)),
@@ -710,6 +796,34 @@ function requestIdentity(): string {
 
 function emptyDraft(): ModelDraft {
   return { sourceState: null, fields: {}, images: {}, rows: {}, samples: {}, sampleText: {}, changedCells: {} };
+}
+
+/** Rows are authoritative for every table-backed series present in either the baseline or the draft projection. */
+function samplesForBoundaryDraft(snapshot: ModelSnapshot, draft: ModelDraft): ModelDraft['samples'] {
+  const tablePages = new Set([
+    ...Object.values(snapshot.boundary?.series ?? {}),
+    ...Object.values(draft.boundaryView?.series ?? {}),
+  ].filter((series) => !!series.tableId).map((series) => series.pageId));
+  return Object.fromEntries(Object.entries(draft.samples).filter(([pageID]) => !tablePages.has(pageID)));
+}
+
+function sampleIdentityKey(sample: { id: string; datasetId?: string | null }): string {
+  return `${sample.id}\u0000${sample.datasetId ?? ''}`;
+}
+
+function equivalentCellValue(left: string, right: string, sourceType: string): boolean {
+  if (left === right) return true;
+  if (sourceType === 'DateTime') {
+    const leftTime = Date.parse(left);
+    const rightTime = Date.parse(right);
+    return Number.isFinite(leftTime) && leftTime === rightTime;
+  }
+  if (sourceType === 'double' || sourceType === 'float' || sourceType === 'int') {
+    if (left.trim() === '' || right.trim() === '') return left.trim() === right.trim();
+    const leftNumber = Number(left);
+    return Number.isFinite(leftNumber) && leftNumber === Number(right);
+  }
+  return false;
 }
 
 import { SchemaPage } from './SchemaFieldRenderer';

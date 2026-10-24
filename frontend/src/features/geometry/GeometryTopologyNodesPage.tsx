@@ -1,9 +1,10 @@
-import { GeometryTopologyTablePage, type GeometryTopologyTablePageProps } from './GeometryTopologyTablePage';
+import type { GeometryTopologyTablePageProps } from './GeometryTopologyTablePage';
+import { TopologyNodesEditor } from './TopologyNodesEditor';
 
 export type GeometryTopologyNodesPageProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
 
 export function GeometryTopologyNodesPage(props: GeometryTopologyNodesPageProps) {
-  return <GeometryTopologyTablePage {...props} kind="node" />;
+  return <TopologyNodesEditor {...props} />;
 }
 
 export default GeometryTopologyNodesPage;

@@ -6,8 +6,10 @@ import { ImportExportToolControl } from './ImportExportToolControl';
 import { RasterCalculatorEditor } from './RasterCalculatorEditor';
 import { SelectProjectionPage } from './SelectProjectionPage';
 import { SourceManagerControl } from './SourceManagerControl';
+import { WilcockMainControl } from './hydraulics/WilcockMainControl';
+import { UnitCalculatorPage } from './hydraulics/UnitCalculatorPage';
 
-type ToolsPage = 'geoprocessing' | 'import-export' | 'raster-calculator' | 'projection' | 'sources';
+type ToolsPage = 'geoprocessing' | 'import-export' | 'raster-calculator' | 'projection' | 'sources' | 'wilcock' | 'unit-calculator';
 
 const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
   { id: 'geoprocessing', zh: '地理处理', en: 'Geoprocessing', mark: '⌁' },
@@ -15,11 +17,14 @@ const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
   { id: 'raster-calculator', zh: '栅格计算器', en: 'Raster calculator', mark: '▦' },
   { id: 'projection', zh: '投影', en: 'Projection', mark: '◎' },
   { id: 'sources', zh: '数据源', en: 'Data sources', mark: '▤' },
+  { id: 'wilcock', zh: 'Wilcock 输沙', en: 'Wilcock transport', mark: '≈' },
+  { id: 'unit-calculator', zh: '单位计算器', en: 'Unit calculator', mark: '↔' },
 ];
 
 /** Web and Electron entry point for the tools workspace. */
 export default function ToolsPageView(props: FeaturePageProps) {
   const [active, setActive] = useState<ToolsPage>('geoprocessing');
+  const [mountedPages, setMountedPages] = useState<Set<ToolsPage>>(() => new Set(['geoprocessing', 'import-export', 'raster-calculator', 'projection', 'sources']));
   const zh = props.language === 'zh';
 
   return (
@@ -45,7 +50,10 @@ export default function ToolsPageView(props: FeaturePageProps) {
             id={`tools-tab-${page.id}`}
             className={active === page.id ? styles.toolsWorkspaceTabActive : styles.toolsWorkspaceTab}
             key={page.id}
-            onClick={() => setActive(page.id)}
+            onClick={() => {
+              setActive(page.id);
+              setMountedPages(current => current.has(page.id) ? current : new Set(current).add(page.id));
+            }}
           >
             <span aria-hidden="true">{page.mark}</span>{zh ? page.zh : page.en}
           </button>
@@ -67,6 +75,12 @@ export default function ToolsPageView(props: FeaturePageProps) {
         </section>
         <section id="tools-panel-sources" role="tabpanel" aria-labelledby="tools-tab-sources" hidden={active !== 'sources'}>
           <SourceManagerControl {...props} />
+        </section>
+        <section id="tools-panel-wilcock" role="tabpanel" aria-labelledby="tools-tab-wilcock" hidden={active !== 'wilcock'}>
+          {mountedPages.has('wilcock') && <WilcockMainControl {...props} />}
+        </section>
+        <section id="tools-panel-unit-calculator" role="tabpanel" aria-labelledby="tools-tab-unit-calculator" hidden={active !== 'unit-calculator'}>
+          {mountedPages.has('unit-calculator') && <UnitCalculatorPage {...props} />}
         </section>
       </div>
     </div>

@@ -106,6 +106,38 @@
 .geometry-report-item > summary { cursor: pointer; }
 .geometry-inline-help ul { margin: 8px 0; padding-left: 21px; }
 .geometry-inline-help li { margin: 4px 0; overflow-wrap: anywhere; }
+.geometry-recipe-builder { display: grid; gap: 11px; padding: 12px 15px; }
+.geometry-recipe-add { align-items: flex-end; }
+.geometry-recipe-steps { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.geometry-recipe-step { min-width: 0; border: 1px solid var(--geo-line); border-radius: 9px; background: rgba(7, 26, 38, .72); padding: 10px 12px; }
+.geometry-recipe-step > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; color: var(--geo-text); font-size: 11px; }
+.geometry-recipe-parameters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.geometry-recipe-raw { padding: 12px 15px; }
+.geometry-recipe-raw textarea { min-height: 180px; font: 11px 'DM Mono', ui-monospace, monospace; }
+.geometry-recipe-parse-error { display: block; white-space: normal; padding: 12px 15px; }
+.geometry-recipe-parse-error pre { overflow: auto; white-space: pre-wrap; color: #ffc1bc; font: 10px/1.5 'DM Mono', ui-monospace, monospace; }
+.geometry-recipe-apply { display: grid; gap: 9px; padding: 12px 15px; border-top: 1px solid var(--geo-line); }
+.geometry-recipe-apply details { min-width: 0; color: var(--geo-muted); font-size: 10px; }
+.geometry-recipe-apply summary { cursor: pointer; }
+.geometry-recipe-apply pre { max-height: 180px; overflow: auto; padding: 9px; border-radius: 7px; background: rgba(4, 20, 29, .72); color: var(--geo-text); font: 10px/1.5 'DM Mono', ui-monospace, monospace; white-space: pre-wrap; }
+.geometry-topology-log-data { display: grid; gap: 3px; margin: 8px 0 0; font: 10px/1.45 'DM Mono', ui-monospace, monospace; }
+.geometry-topology-log-data > div { display: grid; grid-template-columns: minmax(100px, .35fr) minmax(0, 1fr); gap: 8px; }
+.geometry-topology-log-data dt { color: var(--geo-muted); }
+.geometry-topology-log-data dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.geometry-arc-tags { display: grid; gap: 1px; background: var(--geo-line); }
+.geometry-arc-tag { display: grid; grid-template-columns: minmax(140px, .35fr) minmax(180px, 1fr) minmax(180px, .8fr); align-items: center; gap: 10px; padding: 10px 13px; background: rgba(7, 26, 38, .76); }
+.geometry-arc-tag-heading { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11px; }
+.geometry-arc-tag-heading strong { overflow-wrap: anywhere; color: var(--geo-text); }
+.geometry-arc-tag-heading span { color: var(--geo-muted); font-size: 10px; }
+.geometry-tag-mixed { color: #f0c782 !important; }
+.geometry-arc-tag > input, .geometry-arc-tag > select { min-width: 0; min-height: 33px; padding: 6px 9px; color: var(--geo-text); background: rgba(4, 20, 29, .72); border: 1px solid rgba(155, 189, 205, .16); border-radius: 7px; font: inherit; }
+.geometry-arc-tag-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.geometry-arc-tag-create { display: flex; align-items: flex-end; gap: 9px; flex-wrap: wrap; padding: 12px 15px; border-top: 1px solid var(--geo-line); }
+.geometry-arc-tag-create input, .geometry-arc-tag-create select { min-width: 130px; }
+.geometry-arc-points-dialog { width: min(100%, 900px); max-height: min(90vh, 780px); display: flex; flex-direction: column; }
+.geometry-arc-points-dialog .geometry-table-wrap { max-height: 55vh; }
+.geometry-arc-points-dialog .geometry-table { min-width: 580px; }
+.geometry-arc-points-dialog .geometry-table input[type='number'] { width: 100%; min-width: 130px; }
 @keyframes geometry-spin { to { transform: rotate(360deg); } }
 @media (max-width: 1050px) { .geometry-summary-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .geometry-page { padding: 14px 14px 26px; }.geometry-header { flex-direction: column; }.geometry-header-actions { justify-content: flex-start; }.geometry-grid.two, .geometry-grid.three, .geometry-kv-grid, .geometry-detail-fields { grid-template-columns: 1fr; }.geometry-summary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }.geometry-kv { grid-template-columns: 110px minmax(0,1fr); } }
+@media (max-width: 760px) { .geometry-page { padding: 14px 14px 26px; }.geometry-header { flex-direction: column; }.geometry-header-actions { justify-content: flex-start; }.geometry-grid.two, .geometry-grid.three, .geometry-kv-grid, .geometry-detail-fields, .geometry-recipe-parameters { grid-template-columns: 1fr; }.geometry-summary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }.geometry-kv { grid-template-columns: 110px minmax(0,1fr); }.geometry-recipe-step > header { align-items: flex-start; flex-direction: column; }.geometry-arc-tag { grid-template-columns: 1fr; }.geometry-arc-points-dialog { padding: 0; } }
