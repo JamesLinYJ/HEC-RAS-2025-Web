@@ -7,6 +7,7 @@ import type { MapDocumentTab } from '../map/mapTypes';
 import { rgbaFrameImage } from '../map/mapImages';
 import { RasterCalculatorConstantRecipe } from './RasterCalculatorConstantRecipe';
 import { RasterCalculatorInputRecipe } from './RasterCalculatorInputRecipe';
+import { calculatorRecipeDraft } from '../../shared/rasterCalculatorSession';
 import {
   buildRasterCalculatorMapRequest,
   calculatorSourceExtent,
@@ -26,17 +27,35 @@ import type {
   RasterCalculatorMapCapture,
   RasterMapViewExtent,
 } from './RasterCalculatorRecipe';
+import type { RasterCalculatorSessionLayer, RasterCalculatorSessionRequest } from '../../shared/rasterCalculatorSession';
 
 type Props = FeaturePageProps;
-type Operation = 'maps' | 'inspect' | 'evaluate' | null;
+type Operation = 'maps' | 'inspect' | 'evaluate' | 'edit' | null;
 type ViewportMode = 'source' | 'explicit';
 type BoundsDraft = { minX: string; minY: string; maxX: string; maxY: string };
+type CalculatorEditTarget = { layerID: string; revision: string };
 
 const supportedMapTypes = new Set(['Project', 'Buildable', 'Geometry', 'Plan']);
 const defaultPixelSize = '256';
 
 function mapKey(map: MapDocumentTab): string {
   return JSON.stringify([map.mapIndex, map.name, map.mapType]);
+}
+
+function sameMapIdentity(document: MapDocumentTab, capture: RasterCalculatorMapCapture): boolean {
+  return document.mapID === capture.mapID && document.mapIndex === capture.mapIndex &&
+    document.name === capture.mapName && document.mapType === capture.mapType;
+}
+
+function verifyEditSourcesUnchanged(target: RasterCalculatorSessionLayer, capture: RasterCalculatorMapCapture): void {
+  for (const input of target.recipe.inputs) {
+    const original = target.capture.sources.find(source => source.id === input.sourceID);
+    const current = capture.sources.find(source => source.id === input.sourceID);
+    if (!original || original.revision !== input.sourceRevision || !current || current.revision !== input.sourceRevision ||
+        original.kind !== current.kind || original.assetPath !== current.assetPath) {
+      throw new Error(`输入“${input.variableName}”的来源 ID 或修订已变化；为避免静默重新绑定，请重新创建或手动重新绑定配方。`);
+    }
+  }
 }
 
 function showRawError(caught: unknown): string {
@@ -90,13 +109,19 @@ function RasterCalculatorCanvas({ result, language }: { result: RasterCalculator
     style={{ display: 'block', width: '100%', maxHeight: '560px', objectFit: 'contain', imageRendering: 'pixelated' }} />;
 }
 
-export function RasterCalculatorEditor({ language, context, backend, onDirtyStateChange }: Props) {
+export function RasterCalculatorEditor({ language, context, backend, onDirtyStateChange, calculatorSessions }: Props) {
   const label = (zhText: string, enText: string): string => text(language, zhText, enText);
   const defaultLayerName = label('栅格计算器预览', 'Raster calculator preview');
   const owner = rasterCalculatorOwner(context);
   const ownerRef = useRef(owner); ownerRef.current = owner;
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
+  const sessionsRef = useRef(calculatorSessions); sessionsRef.current = calculatorSessions;
+  const editRequest = calculatorSessions?.editRequest ?? null;
+  const editRequestRef = useRef(editRequest); editRequestRef.current = editRequest;
+  const handledEditRequestID = useRef<string | null>(null);
+  const pendingPublishedTarget = useRef<CalculatorEditTarget | null>(null);
+  const loadEditRequestRef = useRef<(request: RasterCalculatorSessionRequest) => Promise<void>>(async () => {});
   const previousDefaultLayerName = useRef(defaultLayerName);
   const [mapCatalog, setMapCatalog] = useState<LoadedMapDocumentCatalog | null>(null);
   const [selectedMapKey, setSelectedMapKey] = useState('');
@@ -116,6 +141,10 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
   const [error, setError] = useState<string>();
   const [diagnostic, setDiagnostic] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [editTarget, setEditTarget] = useState<CalculatorEditTarget | null>(null);
+  const [editPrompt, setEditPrompt] = useState<RasterCalculatorSessionRequest | null>(null);
+  const [deferredEditRequest, setDeferredEditRequest] = useState<RasterCalculatorSessionRequest | null>(null);
+  const deferredEditRequestRef = useRef(deferredEditRequest); deferredEditRequestRef.current = deferredEditRequest;
   const hasProject = Boolean(context.projectPath && context.projectRevision && context.projectXml?.trim() && context.projectSessionID);
   const inspectAvailable = backend.supports('raster.calculator.inspect');
   const evaluateAvailable = backend.supports('raster.calculator.evaluate');
@@ -129,6 +158,22 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
   const dirty = expression !== '' || inputs.length > 0 || constants.length > 0 ||
     (capture ? noDataBehavior !== capture.defaultNoDataBehavior : noDataBehavior !== 'WriteNDV') ||
     layerName !== defaultLayerName || viewportMode === 'explicit' || pixelWidth !== defaultPixelSize || pixelHeight !== defaultPixelSize;
+  const editTargetLayer = editTarget ? calculatorSessions?.layers.find(layer => layer.id === editTarget.layerID) ?? null : null;
+  const editTargetCurrent = Boolean(editTarget && editTargetLayer && editTargetLayer.revision === editTarget.revision);
+  const previewMatchesCapture = Boolean(preview && capture && capture.owner === owner &&
+    preview.projectPath === capture.projectPath && preview.projectRevision.toUpperCase() === capture.projectRevision.toUpperCase() &&
+    preview.projectXmlSHA.toUpperCase() === capture.projectXmlSHA.toUpperCase() &&
+    preview.visualizationRevision.toUpperCase() === capture.visualizationRevision.toUpperCase() &&
+    preview.mapID === capture.mapID && preview.mapIndex === capture.mapIndex &&
+    preview.mapName === capture.mapName && preview.mapType === capture.mapType &&
+    preview.contextToken.toUpperCase() === capture.contextToken.toUpperCase());
+  const canPublishPreview = Boolean(calculatorSessions && preview && capture && previewMatchesCapture && !operation);
+  const canReplaceTarget = Boolean(canPublishPreview && editTargetCurrent && editTargetLayer && capture &&
+    editTargetLayer.capture.projectPath === capture.projectPath &&
+    editTargetLayer.capture.map.projectSessionID === capture.map.projectSessionID &&
+    editTargetLayer.capture.mapID === capture.mapID &&
+    editTargetLayer.capture.mapIndex === capture.mapIndex && editTargetLayer.capture.mapName === capture.mapName &&
+    editTargetLayer.capture.mapType === capture.mapType && editTargetLayer.isDynamic === preview?.isDynamic);
   const canEvaluate = Boolean(capture && capture.owner === owner && evaluateAvailable && !operation && !recipeValidation.error &&
     viewportValidation.viewport && layerNameValid && selectedMap && mapKey(selectedMap) === selectedMapKey &&
     selectedMap.visualizationRevision?.toUpperCase() === capture.visualizationRevision.toUpperCase() &&
@@ -147,6 +192,8 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
     setExpression(''); setNoDataBehavior('WriteNDV'); setLayerName(defaultLayerName);
     setViewportMode('source'); setBounds({ minX: '', minY: '', maxX: '', maxY: '' });
     setPixelWidth(defaultPixelSize); setPixelHeight(defaultPixelSize); setProfileIndex(0); setPreview(null);
+    setEditTarget(null); setEditPrompt(null); setDeferredEditRequest(null);
+    handledEditRequestID.current = null; pendingPublishedTarget.current = null;
     setOperation(null); setError(undefined); setDiagnostic(undefined); setNotice(undefined);
   }, [owner]);
 
@@ -160,7 +207,16 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
     controller.current?.abort(); controller.current = null;
   }, []);
 
+  const deferInterruptedEditRequest = (): void => {
+    if (operation !== 'edit' || !editRequestRef.current) return;
+    setDeferredEditRequest(editRequestRef.current);
+    sessionsRef.current?.finishEditRequest(editRequestRef.current.requestID);
+    setNotice(label('载入被当前编辑动作中断；目标请求已暂缓，当前配方仍保留。',
+      'Loading was interrupted by an edit. The target request is deferred and the current recipe is kept.'));
+  };
+
   const cancelCurrent = (): void => {
+    deferInterruptedEditRequest();
     generation.current += 1;
     controller.current?.abort(); controller.current = null;
     setOperation(null);
@@ -169,6 +225,7 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
   };
 
   const invalidatePreview = (): void => {
+    deferInterruptedEditRequest();
     if (controller.current) {
       generation.current += 1;
       controller.current.abort(); controller.current = null;
@@ -207,8 +264,9 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
         result.documents.find(document => supportedMapTypes.has(document.mapType));
       const nextKey = next ? mapKey(next) : '';
       setSelectedMapKey(nextKey);
-      if (previousKey && nextKey && previousKey !== nextKey) {
-        setInputs([]); setPreview(null); setProfileIndex(0);
+      if (previousKey !== nextKey) {
+        if (previousKey) { setInputs([]); setPreview(null); setProfileIndex(0); }
+        setEditTarget(null);
       }
       if (!next) setError(label('当前工程没有可供栅格计算器读取的保存地图。', 'The project has no saved map supported by the raster calculator.'));
       else if (!supportedMapTypes.has(next.mapType)) setError(label('栅格计算器只支持 Project、Buildable、Geometry 或 Plan 保存地图。', 'The raster calculator supports Project, Buildable, Geometry, or Plan maps only.'));
@@ -328,6 +386,167 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
     }
   };
 
+  const loadEditRequest = async (request: RasterCalculatorSessionRequest): Promise<void> => {
+    const requestOwner = owner;
+    const matchesRequest = (candidate: RasterCalculatorSessionRequest | null): boolean => Boolean(candidate &&
+      candidate.requestID === request.requestID && candidate.layerID === request.layerID && candidate.revision === request.revision);
+    const requestIsCurrent = (requestGeneration: number, aborter: AbortController): boolean => {
+      const latestPending = editRequestRef.current;
+      const latestIsPending = matchesRequest(latestPending);
+      const latestIsDeferred = latestPending === null && matchesRequest(deferredEditRequestRef.current);
+      return !aborter.signal.aborted && generation.current === requestGeneration && ownerRef.current === requestOwner &&
+        (latestIsPending || latestIsDeferred);
+    };
+    const initialTarget = sessionsRef.current?.layers.find(layer => layer.id === request.layerID);
+    if (!initialTarget || initialTarget.revision !== request.revision) {
+      sessionsRef.current?.finishEditRequest(request.requestID);
+      setError(label('要编辑的临时计算图层已删除或修订已变化；请从地图中的当前图层重新打开编辑。',
+        'The temporary calculator layer was removed or changed. Reopen the current layer from the map.'));
+      return;
+    }
+    if (initialTarget.capture.projectPath !== context.projectPath || initialTarget.capture.map.projectPath !== context.projectPath ||
+        initialTarget.capture.map.projectSessionID !== context.projectSessionID) {
+      sessionsRef.current?.finishEditRequest(request.requestID);
+      setError(label('该计算图层属于其他工程会话或旧工程修订，不能载入当前编辑器。',
+        'This calculator layer belongs to another project session or project path.'));
+      return;
+    }
+    if (!backend.supports('raster.calculator.inspect') || !backend.supports('map.document.list') || !backend.supports('map.tree.load')) {
+      setDeferredEditRequest(request);
+      sessionsRef.current?.finishEditRequest(request.requestID);
+      setError(label('当前服务未开放重新检查地图和栅格来源；无法安全载入此配方。',
+        'The service cannot re-inspect the saved map and raster sources, so this recipe cannot be loaded safely.'));
+      return;
+    }
+
+    generation.current += 1;
+    controller.current?.abort();
+    const requestGeneration = ++generation.current;
+    const aborter = new AbortController();
+    controller.current = aborter;
+    setOperation('edit'); setError(undefined); setDiagnostic(undefined); setNotice(undefined);
+    try {
+      const catalog = await loadMapDocumentCatalog(backend, context, { signal: aborter.signal });
+      if (!requestIsCurrent(requestGeneration, aborter)) return;
+      if (catalog.projectRevision.toUpperCase() !== context.projectRevision?.toUpperCase()) {
+        throw new Error('保存地图目录与当前工程修订不一致。');
+      }
+      const matches = catalog.documents.filter(document => sameMapIdentity(document, initialTarget.capture));
+      if (matches.length !== 1) throw new Error('无法在当前保存地图目录中唯一定位该计算图层原来的地图身份。');
+      const targetMap = matches[0];
+      if (!isSha256(targetMap.visualizationRevision)) throw new Error('目标保存地图缺少有效的 .vis 修订。');
+      const xmlSHA = await projectXmlSha(context.projectXml);
+      if (!xmlSHA) throw new Error('当前工程 XML 快照缺失，不能检查目标栅格来源。');
+      const map = buildRasterCalculatorMapRequest(context, targetMap, xmlSHA);
+      const raw: unknown = await backend.request('raster.calculator.inspect', { map }, { signal: aborter.signal });
+      if (!requestIsCurrent(requestGeneration, aborter)) return;
+      if (!isRecord(raw)) throw new Error('栅格计算器来源检查回执格式无效。');
+      const freshCapture = parseRasterCalculatorInspection(raw, { context, map: targetMap, projectXmlSHA: xmlSHA });
+      verifyEditSourcesUnchanged(initialTarget, freshCapture);
+      const draft = calculatorRecipeDraft(initialTarget.recipe);
+      const validation = validateRasterCalculatorRecipe(draft, freshCapture, language);
+      if (validation.error || !validation.recipe || JSON.stringify(validation.recipe) !== JSON.stringify(initialTarget.recipe)) {
+        throw new Error(validation.error ?? '保存的计算配方与重新检查后的来源身份不一致。');
+      }
+      const latestTarget = sessionsRef.current?.layers.find(layer => layer.id === request.layerID);
+      if (!latestTarget || latestTarget.revision !== request.revision) {
+        throw new Error('载入期间目标计算图层已被替换或移除；请重新打开当前图层。');
+      }
+      if (!Number.isInteger(latestTarget.profileIndex) || latestTarget.profileIndex < 0 || latestTarget.profileIndex >= latestTarget.profileCount) {
+        throw new Error('目标计算图层保存的结果时刻无效。');
+      }
+      if (!requestIsCurrent(requestGeneration, aborter)) return;
+
+      sessionsRef.current?.finishEditRequest(request.requestID);
+
+      setMapCatalog(catalog); setSelectedMapKey(mapKey(targetMap)); setCapture(freshCapture);
+      setInputs(draft.inputs); setConstants(draft.constants); setExpression(draft.expression);
+      setNoDataBehavior(draft.noDataBehavior); setLayerName(latestTarget.name);
+      setViewportMode('explicit');
+      setBounds({ minX: String(latestTarget.extent.minX), minY: String(latestTarget.extent.minY),
+        maxX: String(latestTarget.extent.maxX), maxY: String(latestTarget.extent.maxY) });
+      setPixelWidth(defaultPixelSize); setPixelHeight(defaultPixelSize); setProfileIndex(latestTarget.profileIndex);
+      setPreview(null); setEditTarget({ layerID: latestTarget.id, revision: latestTarget.revision });
+      setEditPrompt(null); setDeferredEditRequest(null); setError(undefined); setDiagnostic(undefined);
+      setNotice(label(`已载入“${latestTarget.name}”的配方，并重新检查了同一保存地图及来源修订。请重新计算后再选择替换或另加图层。`,
+        `Loaded “${latestTarget.name}” and re-inspected the same saved map and source revisions. Evaluate again before replacing or adding a layer.`));
+    } catch (caught) {
+      if (requestIsCurrent(requestGeneration, aborter)) {
+        setError(label('载入栅格计算配方失败；当前草稿保持不变。', 'Could not load the raster calculator recipe; the current draft was kept.'));
+        setDiagnostic(showRawError(caught));
+        setDeferredEditRequest(request);
+        sessionsRef.current?.finishEditRequest(request.requestID);
+      }
+    } finally {
+      if (generation.current === requestGeneration) {
+        setOperation(null);
+        if (controller.current === aborter) controller.current = null;
+      }
+    }
+  };
+  loadEditRequestRef.current = loadEditRequest;
+
+  const publishPreview = (replaceExisting: boolean): void => {
+    const sessions = sessionsRef.current;
+    if (!sessions || !capture || !preview || !previewMatchesCapture) {
+      setError(label('当前预览已失效；请按当前配方重新计算后再应用。', 'The preview is stale. Re-evaluate the current recipe before applying it.'));
+      return;
+    }
+    try {
+      if (replaceExisting) {
+        if (!editTarget) throw new Error('请先从地图中的当前计算图层打开编辑。');
+        const target = sessions.layers.find(layer => layer.id === editTarget.layerID);
+        if (!target || target.revision !== editTarget.revision) {
+          throw new Error('目标计算图层已变化；旧图层保持不变，请从地图重新打开编辑。');
+        }
+        if (target.capture.projectPath !== capture.projectPath || target.capture.map.projectSessionID !== capture.map.projectSessionID ||
+            target.capture.mapID !== capture.mapID || target.capture.mapIndex !== capture.mapIndex ||
+            target.capture.mapName !== capture.mapName || target.capture.mapType !== capture.mapType) {
+          throw new Error('目标计算图层与当前工程会话或精确地图身份不一致。');
+        }
+        if (target.isDynamic !== preview.isDynamic) {
+          throw new Error(target.isDynamic
+            ? '新预览是静态栅格，不能替换当前动态结果图层；原图层已保留，可选择另加图层。'
+            : '新预览是动态结果栅格，不能替换当前静态图层；原图层已保留，可选择另加图层。');
+        }
+        const returnedLayerID = sessions.publish({ capture, evaluation: preview }, { layerID: target.id, revision: target.revision });
+        if (returnedLayerID !== target.id) throw new Error('替换回执图层 ID 与目标身份不一致。');
+        pendingPublishedTarget.current = { layerID: target.id, revision: target.revision };
+        setNotice(label(`已在当前工作会话中替换“${target.name}”；原图层名称和 ID 保持不变，会话目录正在更新修订。`,
+          `Replaced “${target.name}” in the current work session, keeping its name and ID. The session catalog is updating its revision.`));
+      } else {
+        const returnedLayerID = sessions.publish({ capture, evaluation: preview });
+        if (!returnedLayerID) throw new Error('新建计算图层未返回有效的会话身份。');
+        setNotice(label(`已将“${preview.layerName}”加入当前工作会话；此图层不会写入 .ras 或 .vis。`,
+          `Added “${preview.layerName}” to the current work session. This layer is not written to .ras or .vis.`));
+      }
+      setError(undefined); setDiagnostic(undefined);
+    } catch (caught) {
+      setError(label('应用计算图层失败；已有会话图层保持不变。', 'Could not apply the calculator layer; existing session layers were kept.'));
+      setDiagnostic(showRawError(caught));
+    }
+  };
+
+  useEffect(() => {
+    const request = editRequest;
+    if (!request || handledEditRequestID.current === request.requestID) return;
+    handledEditRequestID.current = request.requestID;
+    setDeferredEditRequest(null);
+    if (dirty) setEditPrompt(request);
+    else void loadEditRequestRef.current(request);
+  }, [editRequest?.requestID, owner, dirty]);
+
+  useEffect(() => {
+    const pending = pendingPublishedTarget.current;
+    if (!pending) return;
+    const updated = calculatorSessions?.layers.find(layer => layer.id === pending.layerID);
+    if (!updated || updated.revision === pending.revision) return;
+    pendingPublishedTarget.current = null;
+    setEditTarget({ layerID: updated.id, revision: updated.revision });
+    setNotice(text(language, `已更新计算图层“${updated.name}”。`,
+      `Updated calculator layer “${updated.name}”.`));
+  }, [calculatorSessions?.layers, language]);
+
   const addInput = (): void => {
     invalidatePreview();
     setInputs(current => normalizeRasterCalculatorKeyFrame([...current, {
@@ -371,6 +590,52 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
       </span>
     </section>
 
+    {editPrompt && <section className="tools-notice" role="alert" data-testid="raster-calculator-edit-dirty-prompt">
+      <strong>{label('当前栅格计算配方尚未完成；要如何处理新编辑请求？', 'The current raster calculator recipe has not been discarded. How should the new edit request be handled?')}</strong>
+      <span>{label(`目标图层：${calculatorSessions?.layers.find(layer => layer.id === editPrompt.layerID)?.name ?? "图层已失效"}`, `Target layer: ${editPrompt.layerID}`)}</span>
+      <div className="tools-actions">
+        <button className="tools-button tools-button-secondary" type="button" data-testid="raster-calculator-edit-cancel-request"
+          onClick={() => { const request = editPrompt; setEditPrompt(null); sessionsRef.current?.finishEditRequest(request.requestID);
+            setNotice(label('已取消载入请求；当前配方保持不变。', 'Load request cancelled; the current recipe was kept.')); }}>
+          {label('取消此请求', 'Cancel request')}
+        </button>
+        <button className="tools-button tools-button-secondary" type="button" data-testid="raster-calculator-edit-stay"
+          onClick={() => { const request = editPrompt; setDeferredEditRequest(request); setEditPrompt(null);
+            sessionsRef.current?.finishEditRequest(request.requestID);
+            setNotice(label('继续保留当前配方；稍后可从待处理请求中载入目标图层。', 'Keeping the current recipe. You can load the target layer later from the deferred request.')); }}>
+          {label('留在当前配方', 'Stay with current recipe')}
+        </button>
+        <button className="tools-button tools-button-primary" type="button" data-testid="raster-calculator-edit-discard-load"
+          disabled={operation !== null} onClick={() => { const request = editPrompt; setEditPrompt(null); void loadEditRequest(request); }}>
+          {label('放弃当前配方并载入', 'Discard current recipe and load')}
+        </button>
+      </div>
+    </section>}
+
+    {deferredEditRequest && <section className="tools-callout" data-testid="raster-calculator-edit-deferred">
+      <strong>{label('有一个待处理的图层编辑请求。', 'A layer edit request is waiting.')}</strong>
+      <span> {label(`目标图层：${calculatorSessions?.layers.find(layer => layer.id === deferredEditRequest.layerID)?.name ?? "图层已失效"}`, `Target layer: ${deferredEditRequest.layerID}`)}</span>
+      <div className="tools-actions">
+        <button className="tools-button tools-button-primary" type="button" data-testid="raster-calculator-edit-resume"
+          disabled={operation !== null} onClick={() => void loadEditRequest(deferredEditRequest)}>
+          {label('载入并放弃当前草稿', 'Load and discard current draft')}
+        </button>
+        <button className="tools-button tools-button-secondary" type="button" data-testid="raster-calculator-edit-dismiss"
+          onClick={() => { setDeferredEditRequest(null); setNotice(label('已取消待处理请求；当前配方保持不变。', 'Deferred request cancelled; the current recipe was kept.')); }}>
+          {label('取消待处理请求', 'Cancel deferred request')}
+        </button>
+      </div>
+    </section>}
+
+    {editTarget && <section className="tools-context-card" data-testid="raster-calculator-edit-target">
+      <span className={`tools-state-dot ${editTargetCurrent ? 'is-ready' : ''}`} /><div>
+        <strong>{label(`正在编辑会话图层：${editTargetLayer?.name ?? editTarget.layerID}`, `Editing session layer: ${editTargetLayer?.name ?? editTarget.layerID}`)}</strong>
+        <details><summary>{label('图层身份详情', 'Layer identity details')}</summary><small>{label('目标 ID', 'Target ID')}: <code>{editTarget.layerID}</code> · {label('目标修订', 'Target revision')}: <code>{editTarget.revision}</code></small></details>
+        {!editTargetCurrent && <small>{label('目标已变化；请从地图重新打开当前图层后再替换。', 'The target changed. Reopen the current layer from the map before replacing it.')}</small>}
+        <small>{label('替换现有图层会保留原名称；名称输入只用于“添加到地图”。', 'Replacing an existing layer keeps its name. The name field is used only for “Add to Map”.')}</small>
+      </div>
+    </section>}
+
     <section className="tools-subpanel tools-raster-source-capture">
       <div className="tools-subpanel-heading"><div><span className="tools-kicker">01 / {label('保存地图与来源快照', 'SAVED MAP AND SOURCE CAPTURE')}</span>
         <h3>{label('明确选择地图并检查栅格目录', 'Choose a saved map and inspect its raster catalog')}</h3></div>
@@ -391,6 +656,7 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
             onChange={event => {
               const key = event.target.value;
               setSelectedMapKey(key); setCapture(null); setPreview(null); setInputs([]); setProfileIndex(0);
+              setEditTarget(null);
               setError(undefined); setDiagnostic(undefined); setNotice(undefined);
             }}>
             <option value="">{label('请选择已保存地图', 'Choose a saved map')}</option>
@@ -460,8 +726,9 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
               </option>)}
             </select>
           </label>
-          <label className="tools-field"><span>{label('预览图层名称', 'Preview layer name')}</span>
+          <label className="tools-field"><span>{label('新图层名称', 'New layer name')}</span>
             <input value={layerName} onChange={event => { invalidatePreview(); setLayerName(event.target.value); }} />
+            {editTarget && <small className="tools-field-help">{label('仅用于“添加到地图”；替换现有图层会保留原名称。', 'Used only for “Add to Map”; replacing an existing layer keeps its name.')}</small>}
           </label>
         </div>
         {capture && recipeValidation.error && <div className="tools-notice" role="status">{recipeValidation.error}</div>}
@@ -495,7 +762,7 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
         {viewportValidation.error && <div className="tools-notice" role="status">{viewportValidation.error}</div>}
         <div className="tools-actions">
           <button className="tools-button tools-button-primary" type="button" data-testid="raster-calculator-evaluate"
-            disabled={!canEvaluate} onClick={() => void evaluate(0)}>
+            disabled={!canEvaluate} onClick={() => void evaluate(profileIndex)}>
             {operation === 'evaluate' ? label('Host 计算中…', 'Evaluating on Host…') : label('计算并生成临时预览', 'Evaluate and preview')}
           </button>
           {operation === 'evaluate' && <button className="tools-button tools-button-secondary" type="button" onClick={cancelCurrent}>{label('取消计算', 'Cancel evaluation')}</button>}
@@ -530,8 +797,24 @@ export function RasterCalculatorEditor({ language, context, backend, onDirtyStat
           {(preview.layer.width * preview.layer.height * 4).toLocaleString()} {label('像素字节', 'pixel bytes')}</small>
       </div></div>
       <RasterCalculatorCanvas result={preview} language={language} />
-      <div className="tools-callout">{label('此图像由 Host RasterRenderer 返回并仅在本面板显示。当前 MapView 没有接收此计算临时图层的父级 API；RasterCalculator Host inspect/evaluate 也不写工程或 .vis，因此不提供添加到地图或保存按钮。',
-        'This image is returned by the Host RasterRenderer and displayed only in this panel. MapView exposes no parent API for this transient layer, and the RasterCalculator Host inspect/evaluate operations do not write the project or .vis, so this editor has no add-to-map or save action.')}</div>
+      <div className="tools-actions">
+        <button className="tools-button tools-button-primary" type="button" data-testid="raster-calculator-add-to-map"
+          disabled={!canPublishPreview} onClick={() => publishPreview(false)}>
+          {label('添加到地图', 'Add to Map')}
+        </button>
+        {editTarget && <button className="tools-button tools-button-secondary" type="button" data-testid="raster-calculator-save-existing"
+          disabled={!canReplaceTarget} onClick={() => publishPreview(true)}>
+          {label('保存到现有图层', 'Save to Existing')}
+        </button>}
+      </div>
+      {!calculatorSessions && <div className="tools-notice" role="status">{label('当前工作区没有提供栅格计算图层会话；不能将预览加入地图。', 'The current workbench does not expose calculator layer sessions, so this preview cannot be added to the map.')}</div>}
+      {editTarget && !editTargetCurrent && <div className="tools-notice" role="status">{label('目标图层修订已变化，不能覆盖旧图层；请从地图重新发起编辑。', 'The target layer revision changed. The old layer cannot be replaced; reopen editing from the map.')}</div>}
+      {editTarget && editTargetCurrent && preview && previewMatchesCapture && editTargetLayer && editTargetLayer.isDynamic !== preview.isDynamic &&
+        <div className="tools-notice" role="status">{editTargetLayer.isDynamic
+          ? label('新预览为静态栅格，与现有动态图层不兼容。原图层会保留；可另加新图层。', 'The new preview is static and cannot replace the existing dynamic layer. The existing layer stays; add this as a new layer instead.')
+          : label('新预览为动态结果栅格，与现有静态图层不兼容。原图层会保留；可另加新图层。', 'The new preview is dynamic and cannot replace the existing static layer. The existing layer stays; add this as a new layer instead.')}</div>}
+      <div className="tools-callout">{label('添加与替换只作用于当前工作会话中的临时计算图层；不会保存像元数据，也不会写入 .ras 或 .vis。更改配方或来源后必须重新计算，旧预览不会被发布。',
+        'Add and replace affect temporary calculator layers in the current work session only. They do not save raster values or write .ras/.vis. Re-evaluate after changing the recipe or sources; stale previews cannot be published.')}</div>
       <details><summary>{label('来源和地图修订', 'Source and map revisions')}</summary>
         <dl className="tools-source-details"><div><dt>{label('工程 SHA', 'Project SHA')}</dt><dd><code>{preview.projectXmlSHA}</code></dd></div>
           <div><dt>{label('.vis 修订', '.vis revision')}</dt><dd><code>{preview.visualizationRevision}</code></dd></div>

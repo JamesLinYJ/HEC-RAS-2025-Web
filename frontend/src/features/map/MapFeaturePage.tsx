@@ -61,7 +61,12 @@ import { ZoomToPointDialog } from './ZoomToPointDialog';
 import { navigationViewport } from './mapNavigation';
 import type { CatalogTreeNode, GeoFeature, GeoGeometry, GeoJsonLayer, MapDocumentTab, MapImageLayer, XY } from './mapTypes';
 import type { MapFeaturePageProps } from './mapTypes';
+import { calculatorLayerMatchesMap } from '../../shared/rasterCalculatorSession';
+import type { RasterCalculatorSessionLayer } from '../../shared/rasterCalculatorSession';
+import { rasterCalculatorOwner } from '../tools/RasterCalculatorRecipe';
 import { RasLayerPropertiesPane } from './RasLayerPropertiesPane';
+import { CalculatorProfileStateSlider } from './RasProfileStateSlider';
+import { useRasterCalculatorSessionLayers } from './useRasterCalculatorSessionLayers';
 import { RasContextualActionsBar } from './RasContextualActionsBar';
 import { mapCRS, mapDocumentKind, mapError } from './mapText';
 import './map.css';
@@ -87,6 +92,14 @@ interface FeatureContextMenu {
   layer: GeoJsonLayer;
   feature: GeoFeature;
 }
+
+interface PendingCalculatorMapFocus {
+  requestID: string;
+  layerID: string;
+  documentID: string;
+}
+
+const EMPTY_CALCULATOR_SESSION_LAYERS: readonly RasterCalculatorSessionLayer[] = [];
 
 function catalogHasNodeType(nodes: readonly CatalogTreeNode[], nodeID: string, nodeType: string): boolean {
   for (const node of nodes) {
@@ -246,6 +259,7 @@ function MapPage(props: MapFeaturePageProps) {
   const legendScopeRef = useRef('');
   const [selectedFeature, setSelectedFeature] = useState<SelectedFeature>(null);
   const [selectedBackendNode, setSelectedBackendNode] = useState<{ owner: string; node: GeoFeature | null; nodeID: string; name: string; sourceClass: string; diagnostic?: string } | null>(null);
+  const [pendingCalculatorMapFocus, setPendingCalculatorMapFocus] = useState<PendingCalculatorMapFocus | null>(null);
   const [selectedMeshHit, setSelectedMeshHit] = useState<MapMeshElementHit | null>(null);
   const [meshAnalysisOpen, setMeshAnalysisOpen] = useState(false);
   const [culvertAnalysisOpen, setCulvertAnalysisOpen] = useState(false);
@@ -268,6 +282,8 @@ function MapPage(props: MapFeaturePageProps) {
   const requestGenerationRef = useRef(0);
   const mapCatalogGenerationRef = useRef(0);
   const activeOwnerRef = useRef<string | null>(null);
+  const handledCalculatorFocusRequestRef = useRef<string | null>(null);
+  const preparedCalculatorFocusRequestRef = useRef<string | null>(null);
   const projectContextKey = JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml]);
   const projectContextKeyRef = useRef(projectContextKey);
   projectContextKeyRef.current = projectContextKey;
@@ -311,6 +327,68 @@ function MapPage(props: MapFeaturePageProps) {
   const persistedGdb = usePersistedGdbLayers({ backend, context, document: activeDocument, language });
   const persistedRasters = usePersistedRasterLayers({ backend, context, document: activeDocument, language });
   const resultViewport = useMemo(() => mapRasterViewportFromCamera(viewport, size), [viewport, size]);
+  const calculatorSessions = props.calculatorSessions;
+  const calculatorSessionLayers = calculatorSessions?.layers ?? EMPTY_CALCULATOR_SESSION_LAYERS;
+  const calculatorFrames = useRasterCalculatorSessionLayers({ backend, context, document: activeDocument,
+    layers: calculatorSessionLayers, viewport: activeDocument ? resultViewport : null, language,
+    backendRevision: backendRevision ?? 0 });
+  const currentCalculatorSessionLayers = useMemo(() => calculatorSessionLayers.filter(layer =>
+    calculatorLayerMatchesMap(layer, context, activeDocument)),
+  [activeDocument, calculatorSessionLayers, context]);
+  const selectedCalculatorLayer = calculatorSessions?.selectedLayerID
+    ? currentCalculatorSessionLayers.find(layer => layer.id === calculatorSessions.selectedLayerID) ?? null : null;
+  const calculatorReadyImages = useMemo<MapImageLayer[]>(() => {
+    const byID = new Map(currentCalculatorSessionLayers.map(layer => [layer.id, layer]));
+    return calculatorFrames.images.flatMap(image => {
+      const layer = byID.get(image.id);
+      return layer?.visible && calculatorFrames.states[layer.id]?.status === 'ready'
+        ? [{ ...image, sourceKind: 'calculator' as const, opacity: layer.opacity }]
+        : [];
+    });
+  }, [calculatorFrames.images, calculatorFrames.states, currentCalculatorSessionLayers]);
+  useEffect(() => {
+    const request = calculatorSessions?.focusRequest;
+    if (!request || request.requestID === handledCalculatorFocusRequestRef.current ||
+        request.requestID === preparedCalculatorFocusRequestRef.current) return;
+    const layer = calculatorSessionLayers.find(candidate => candidate.id === request.layerID);
+    if (!layer || layer.capture.owner !== rasterCalculatorOwner(context) ||
+        layer.capture.projectPath !== context.projectPath || layer.capture.projectRevision !== context.projectRevision) return;
+    const target = documents.find(document => document.mapID === layer.capture.mapID &&
+      document.mapIndex === layer.capture.mapIndex && document.name === layer.capture.mapName &&
+      document.mapType === layer.capture.mapType);
+    if (!target) return;
+    preparedCalculatorFocusRequestRef.current = request.requestID;
+    setPendingCalculatorMapFocus({ requestID: request.requestID, layerID: layer.id, documentID: target.id });
+    calculatorSessions.select(layer.id);
+    setSelectedFeature(null);
+    setSelectedBackendNode(null);
+    setActiveDocumentID(target.id);
+  }, [calculatorSessionLayers, calculatorSessions, context, documents]);
+  useEffect(() => {
+    if (!pendingCalculatorMapFocus) return;
+    const request = calculatorSessions?.focusRequest;
+    if (request && request.requestID !== pendingCalculatorMapFocus.requestID) {
+      preparedCalculatorFocusRequestRef.current = null;
+      setPendingCalculatorMapFocus(null);
+      return;
+    }
+    if (activeDocument?.id !== pendingCalculatorMapFocus.documentID) return;
+    const layer = calculatorSessionLayers.find(candidate => candidate.id === pendingCalculatorMapFocus.layerID);
+    if (!layer || layer.capture.owner !== rasterCalculatorOwner(context) ||
+        !calculatorLayerMatchesMap(layer, context, activeDocument)) {
+      preparedCalculatorFocusRequestRef.current = null;
+      setPendingCalculatorMapFocus(null);
+      return;
+    }
+    const bounds = viewportRef.current?.getBoundingClientRect();
+    // The retained map page may still have the 1×1 size measured while hidden.
+    // Consume focus only once the visible viewport can provide its real size.
+    if (!bounds || bounds.width <= 1 || bounds.height <= 1) return;
+    setUserViewport(fitExtent(layer.extent, { width: bounds.width, height: bounds.height }, 72));
+    handledCalculatorFocusRequestRef.current = pendingCalculatorMapFocus.requestID;
+    preparedCalculatorFocusRequestRef.current = null;
+    setPendingCalculatorMapFocus(null);
+  }, [activeDocument, calculatorSessionLayers, calculatorSessions?.focusRequest, context, pendingCalculatorMapFocus, size]);
   const vectorCandidates = useMemo(() => {
     if (!activeDocument || !context.projectPath || !context.projectRevision || !context.projectXml) return [];
     const matching = (map: typeof persistedVectors.captures[number]['source']['map']) =>
@@ -583,7 +661,8 @@ function MapPage(props: MapFeaturePageProps) {
     ...persistedRasters.layers.map((layer) => ({ ...layer, sourceKind: 'raster' as const,
       sampling: layer.hoverCapture.mapType === 'DiscreteRasterMapLayer' ? 'nearest' as const : undefined })),
     ...resultImages.layers,
-  ], [associatedLayers.layers, persistedRasters.layers, resultImages.layers]);
+    ...calculatorReadyImages,
+  ], [associatedLayers.layers, calculatorReadyImages, persistedRasters.layers, resultImages.layers]);
   const visibleLayers = allMapLayers.filter((layer) => layer.visible);
   const mapImagesVisible = visibleLayers.length === 0 || visibleLayers[visibleLayers.length - 1]?.coordinateSpace === 'project';
   const currentHoverPointer = hoverPointer && hoverPointer.screen[0] >= 0 && hoverPointer.screen[0] <= size.width &&
@@ -1028,6 +1107,7 @@ function MapPage(props: MapFeaturePageProps) {
     if (activeTool === 'select') {
       setSelectedFeature(null);
       setSelectedBackendNode(null);
+      calculatorSessions?.select(null);
       return;
     }
     if (activeTool === 'pan') return;
@@ -1081,7 +1161,8 @@ function MapPage(props: MapFeaturePageProps) {
     event.preventDefault();
     setHoverPointer(null);
     const factor = Math.exp(-event.deltaY * 0.0015);
-    setUserViewport((current) => zoomAt(current, pointFromEvent(event), factor));
+    const screenPoint = pointFromEvent(event);
+    setUserViewport((current) => zoomAt(current, screenPoint, factor));
   };
 
   const handleCanvasKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1334,9 +1415,15 @@ function MapPage(props: MapFeaturePageProps) {
         onSelect={(id) => {
           if (sourceImportBusy || mapMetadataCommitBusy) return;
           requestGenerationRef.current += 1;
+          if (calculatorSessions?.focusRequest) {
+            handledCalculatorFocusRequestRef.current = calculatorSessions.focusRequest.requestID;
+          }
           setActiveDocumentID(id);
           setSelectedFeature(null);
           setSelectedBackendNode(null);
+          calculatorSessions?.select(null);
+          setPendingCalculatorMapFocus(null);
+          preparedCalculatorFocusRequestRef.current = null;
           setContextMenu(null);
         }}
         onCreated={handleCreateDocument}
@@ -1401,15 +1488,41 @@ function MapPage(props: MapFeaturePageProps) {
           localLayers={activeLayers}
           selectedLocalLayerID={selectedLocalLayerID}
           selectedBackendNodeID={selectedBackend?.nodeID ?? null}
+          calculatorLayers={currentCalculatorSessionLayers}
+          selectedCalculatorLayerID={selectedCalculatorLayer?.id ?? null}
+          calculatorStates={calculatorFrames.states}
+          onSelectCalculatorLayer={(id) => {
+            calculatorSessions?.select(id);
+            setSelectedFeature(null);
+            setSelectedBackendNode(null);
+          }}
+          onZoomCalculatorLayer={(layer) => setUserViewport(fitExtent(layer.extent, size, 72))}
+          onToggleCalculatorLayer={(id, visible) => {
+            calculatorSessions?.setVisible(id, visible);
+            if (!visible && calculatorSessions?.selectedLayerID === id) calculatorSessions.select(null);
+          }}
+          onChangeCalculatorOpacity={(id, opacity) => calculatorSessions?.setOpacity(id, opacity)}
+          onEditCalculatorLayer={(id) => {
+            calculatorSessions?.select(id);
+            setSelectedFeature(null);
+            setSelectedBackendNode(null);
+            calculatorSessions?.edit(id);
+          }}
+          onRemoveCalculatorLayer={(id) => {
+            if (calculatorSessions?.selectedLayerID === id) calculatorSessions.select(null);
+            calculatorSessions?.remove(id);
+          }}
           busyNodeID={busyNodeID}
           onSelectLocalLayer={(id) => {
             setSelectedFeature(null);
             setSelectedBackendNode(null);
+            calculatorSessions?.select(null);
             const layer = activeLayers.find((item) => item.id === id);
             if (layer) setUserViewport(fitExtent(layer.extent, size, 72));
           }}
           onSelectBackendNode={(node) => {
             setSelectedFeature(null);
+            calculatorSessions?.select(null);
             setSelectedBackendNode({ owner, node: null, nodeID: node.id, name: node.name, sourceClass: node.sourceClass, diagnostic: node.diagnosticReadError ?? undefined });
           }}
           onZoomBackendNode={(node) => zoomToLoadedLayer(node.id)}
@@ -1459,6 +1572,7 @@ function MapPage(props: MapFeaturePageProps) {
               onFeatureSelect={(layer, feature) => {
                 setSelectedFeature({ owner, layerID: layer.id, featureID: feature.id });
                 setSelectedBackendNode(null);
+                calculatorSessions?.select(null);
                 setContextMenu(null);
               }}
               onFeatureContext={showFeatureContext}
@@ -1486,6 +1600,9 @@ function MapPage(props: MapFeaturePageProps) {
             <span>{copy.features}: {featureCount}</span>
           </div>
           <MapTimeAxis language={language} controller={resultFrames} />
+          {selectedCalculatorLayer && calculatorSessions && <CalculatorProfileStateSlider language={language}
+            layer={selectedCalculatorLayer}
+            onSelectProfile={profileIndex => calculatorSessions.setProfile(selectedCalculatorLayer.id, profileIndex)} />}
         </section>
 
         <aside className="map-inspector-pane" aria-label={copy.inspector}>

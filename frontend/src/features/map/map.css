@@ -1209,6 +1209,50 @@
   background: #c7d4dc;
 }
 
+.map-calculator-profile-track {
+  height: 26px;
+  margin: 3px 2px 5px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+}
+
+.map-calculator-profile-track input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 80px;
+}
+
+.map-calculator-profile-track .map-time-current {
+  position: static;
+  width: auto;
+  height: auto;
+  flex: 0 0 auto;
+  border-radius: 0;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.map-calculator-session-diagnostic {
+  margin: 5px 0 0 25px;
+  color: #8d564f;
+  font-size: 9px;
+}
+
+.map-calculator-session-diagnostic pre {
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.map-calculator-layer-color {
+  border-color: #7356a5;
+  background: #b8a2de;
+}
+
 .map-time-caption {
   display: flex;
   justify-content: space-between;

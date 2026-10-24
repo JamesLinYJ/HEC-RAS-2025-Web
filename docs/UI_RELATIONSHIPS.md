@@ -48,7 +48,7 @@ HTTP 操作的受理 ID、传输状态、求解器进度与终态分别管理。
 | `SourceManagerControl` | 核心图层、Terrain 和 Classification 导入器 | 来源检查与写入分别执行，保留工程会话、规范路径、来源修订及保存回执 |
 | `ImportExportToolControl` | `PlanExporterControl`、`RasterImporter`、`DepthShapeExporterDialog`、`RgbTiffExporterDialog` | 计划与栅格工具沿各自事务运行；Depth/RGB 先检查和预览，点击后才让 Host 写服务器输出路径 |
 | `GeoprocessingToolControl` | `ReprojectionToolControl`、栅格属性摘要、`GeoprocessingVectorSourcePicker`、`GeoprocessingPointSourcePicker`、`GeoprocessingPolylineExecutionDetails` 与 `geoprocessingMapLayerWorkflow` | 已保存地图来源按地图树 locator、工程/地图/`.vis` 修订、完整来源身份捕获；折线支持 GeoJSON 与完整文件族的 Shapefile，多边形仅支持 GeoJSON。原 C# `DefaultOutputHandlers.MapLayerOutput` 对应的地图输出现接入可捕获精确地图且实际生成 Shapefile 的 Point/Polyline/Polygon 向量分支；Raster/TIN 仍禁用。此处记录源码接线，不代表运行验收 |
-| `ToolsPageView → tools-tab-raster-calculator → RasterCalculatorEditor` | 当前保存地图与 Host 检查所得的 Terrain/Result 输入、表达式配方、NoData、范围/分辨率、输出名称和 profile 均由计算器页持有；草稿以 `tools.raster-calculator` 参与工程上下文保护。 | `raster.calculator.inspect` 捕获实际来源和文件修订，`raster.calculator.evaluate` 对捕获来源重新校验并返回仅在面板显示的 Host RGBA 帧。选择 Result profile 会重新求值。当前没有向 MapView 注册临时层的父 API，inspect/evaluate 不写 `.ras`、`.vis`、模型 HDF 或来源栅格，故没有 Add to Map / Save Existing 按钮。记录源码接线，不代表构建或运行验收。 |
+| `ToolsPageView → tools-tab-raster-calculator → RasterCalculatorEditor` | 计算器页拥有配方草稿、保存地图/来源捕获与预览；`useRasterCalculatorSessions` 在当前工程会话登记临时计算图层，`MapFeaturePage → MapLayerTree` 展示图层控制，动态层时刻由 `CalculatorProfileStateSlider` 控制。 | Host `inspect/evaluate` 按真实来源修订计算 RGBA 帧；Add to Map 与 Save to Existing 只更新工程会话内存图层。替换按 layer ID/revision、精确地图身份和静态/动态类型校验，保留现有 ID、名称、显隐与透明度。帧按真实地图视口与 profile 重算；C# `RasterDefinition` 以正方形像元按左上角对齐并可能扩展返回范围，前端校验该规范化范围并按回执实际范围绘图；隐藏、离开当前地图或身份失配会清除帧并取消过期请求。编辑请求带图层修订；计算器草稿未完成时由用户取消、暂缓或放弃草稿后载入，并消费对应请求。会话仅限当前打开的工程会话，不跨重启保存，也不写 `.ras`、`.vis`、模型 HDF、来源栅格或计算像元。记录源码接线，不代表构建或运行验收。 |
 
 控件拆分不自动提供原 UI 的全部命令。父级尚未提供的结构编辑、混合值重置、地图几何操作、结果捕获或会话引用事务，必须保持明确的能力边界，不能显示成功回执。`workspace.file.inspect` 为用户明确输入的服务端文件路径捕获规范路径和 SHA；核心图层检查与复制继续验证该捕获，不要求用户手填 SHA。
 
@@ -174,9 +174,15 @@ Add Map Layer 的文件面板允许多选，按用户选择顺序逐项调用原
 
 文件型 GDAL 栅格以规范化根路径和 GDAL 实际打开的本地文件清单为身份。清单按路径、长度和 SHA-256 确定修订，因此 VRT 的所有本地依赖都参与检查；无法按本地文件校验的 `/vsi*` 来源不导入。GDAL 元数据选择原有的 SingleBand、RGB Image 或离散栅格 renderer，预览和地图绘制调用相应保留的 renderer；`.vis` 只记录原来源及 MapType，不转换或快照化栅格。GDB 另有共享目录 manifest：父目录下的数据文件修订覆盖向量层与栅格子数据集，向量子项按真实层身份读取，栅格子项保留 GDAL 子数据集连接字符串并在数据集生命周期内读取。
 
-当前 React 栅格计算器挂在 `ToolsPageView → tools-tab-raster-calculator → RasterCalculatorEditor`。它先经 `map.document.list` / `map.tree.load` 读取保存地图，再对用户选中的支持地图调用 `raster.calculator.inspect`；Host 返回真实 Terrain 与地图输出 Result 来源、完整文件依赖修订、NoData 选项和绑定工程 XML、地图及 `.vis` 的 context token。表达式、输入、常量、NoData 行为、图层名、范围/分辨率和结果 profile 都是页面草稿。每次 `raster.calculator.evaluate` 都重新校验捕获上下文与来源，返回 Host `RasterRenderLayer` 的 RGBA 临时预览；动态 Result 切换 profile 会再次求值。输入范围可取所选来源的共同交集，或由用户输入有限的世界坐标范围；每边最多 1536 像元，总量最多 2,097,152。
+当前 React 栅格计算器挂在 `ToolsPageView → tools-tab-raster-calculator → RasterCalculatorEditor`。它经 `map.document.list` / `map.tree.load` 读取保存地图，再对选中的 Project、Buildable、Geometry 或 Plan 地图调用 `raster.calculator.inspect`。Host 返回 Terrain 与地图输出 Result 来源、来源文件依赖修订、NoData 选项、Profile 和按计算器来源求得的真实 `validExtent`，并绑定工程 XML、地图及 `.vis` 身份。表达式、输入、常量、NoData 行为、图层名、范围/分辨率和结果 profile 是编辑器草稿；默认预览范围是所选输入的有效范围交集，也可输入有限的世界坐标范围。每边最多 1536 像元，总量最多 2,097,152。
 
-该 Web 流程只在计算器面板显示预览，草稿以 `tools.raster-calculator` 参与工程切换保护。当前 MapView 没有接收临时计算图层的父级注册接口；`RasterCalculatorService.inspect/evaluate` 也不写 `.ras`、`.vis`、模型 HDF 或输入栅格，因此当前 UI 没有 Add to Map / Save Existing 操作。项目、来源或地图身份变化以及取消会废弃旧请求/预览。以上是当前源码接线及 Host 契约的说明，不代表已完成构建、服务、浏览器或 GUI 验收；下文迁移参考中的 Add/Save 要求仍描述保留来源能力，不是当前 React 已接行为。
+`raster.calculator.evaluate` 按当前配方和所选 profile 产生 Host `RasterRenderLayer` 的 RGBA 帧。`validExtent` 是计算来源的真实数据范围；计算器面板预览范围是用户给定的计算视口；地图上的帧范围则来自当前相机 viewport，随地图缩放、平移、尺寸或 profile 变化重新求值。Web 只接收用于绘制的 RGBA 像素，不提供数值像元采样或 Identify 值读取接口。
+
+`useRasterCalculatorSessions` 把 Add to Map 结果放进当前工程会话的内存 registry；`MapFeaturePage` 与 `MapLayerTree` 将其作为临时地图层显示，提供选择、缩放、显隐、透明度、动态 profile、编辑配方和移除。Save to Existing 按当前图层 ID/revision 与精确工程会话和地图身份进行比较更新，只允许静态替换静态、动态替换动态；更新后保留原图层 ID、名称、显隐和透明度。静态/动态不兼容时保留原层，用户可另加新层。Add/Replace、显隐、透明度、profile 和 Remove 都只改变会话内存状态，不写入保存地图、`.ras`、`.vis`、模型 HDF、输入栅格或输出像元；registry 以工程 `projectSessionID` 和路径为范围，切换会话时清空，浏览器/应用重启后不恢复。
+
+添加后的图层按当前地图与相机 viewport 重新调用 inspect/evaluate。若 Host 报告 `sourceChanged`，前端清掉旧帧、重新 inspect，再要求原配方仍精确匹配原 source ID 与 revision；不会自动以同名或新修订来源替换配方。若来源身份变化，图层不能继续发布，须用户重新创建或明确重绑配方。图层隐藏、被移除、当前地图/项目不再匹配或 owner/generation 改变时，前端清掉相应帧、来源 capture 和状态，并中止过期请求。
+
+从地图请求编辑携带临时图层 ID、revision 与 request ID。若编辑器已有未完成草稿，界面让用户取消请求、暂留当前配方并暂缓请求，或放弃草稿后载入；取消/暂缓/成功消费时通过 `finishEditRequest` 清除匹配请求，编辑动作中断时也将其暂缓，避免误覆盖草稿或丢失目标。配方继续以 `tools.raster-calculator` 参与工程上下文保护。该会话层对应原计算器 AddToMap / SaveExisting 的实时显示/更新意图；当前实现保留静态/动态类型兼容约束，但 Web 图层是会话对象，不是序列化进 `.ras` / `.vis` 的持久地图图层。以上是当前源码接线和 Host 契约的说明，不代表运行验收。
 
 ### 栅格来源的地理处理与范围选择
 

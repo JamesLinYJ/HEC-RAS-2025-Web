@@ -1288,7 +1288,7 @@
       },
       {
         "id": "raster-calculator-transient-preview",
-        "mount": "ToolsPageView → tools-tab-raster-calculator → RasterCalculatorEditor → RasterCalculatorInputRecipe / RasterCalculatorConstantRecipe",
+        "mount": "ToolsPageView → tools-tab-raster-calculator → RasterCalculatorEditor → RasterCalculatorInputRecipe / RasterCalculatorConstantRecipe; useRasterCalculatorSessions → MapFeaturePage → MapLayerTree / CalculatorProfileStateSlider",
         "source": [
           "frontend/src/features/tools/index.tsx",
           "frontend/src/features/tools/RasterCalculatorEditor.tsx",
@@ -1298,15 +1298,23 @@
           "frontend/src/features/map/ProjectTreeListener.ts",
           "backend/Host/RasterCalculatorService.cs",
           "backend/Host/RasterCalculatorContracts.cs",
-          "backend/Host/BackendWorker.cs"
+          "backend/Host/BackendWorker.cs",
+          "frontend/src/shared/rasterCalculatorSession.ts",
+          "frontend/src/shared/useRasterCalculatorSessions.ts",
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/MapLayerTree.tsx",
+          "frontend/src/features/map/RasProfileStateSlider.tsx",
+          "frontend/src/features/map/useRasterCalculatorSessionLayers.ts",
+          "frontend/src/interface/RasMainWindow.tsx"
         ],
-        "stateOwner": "RasterCalculatorEditor owns the project/session/core-reference owner, selected saved-map identity and inspected source capture, expression, input/constant recipes, NoData behavior, output label, preview extent/resolution, selected profile, request generation and temporary RGBA result. Recipe state is page-local and reported as the tools.raster-calculator dirty owner; changing project owner resets it.",
+        "stateOwner": "RasterCalculatorEditor owns the project/session/core-reference owner, selected saved-map identity and inspected source capture, expression, input/constant recipes, NoData behavior, output label, requested preview extent/resolution, selected profile, request generation and page-local RGBA result. useRasterCalculatorSessions owns in-memory session layers, selected layer, profile, visibility/opacity, edit/focus requests and revision. useRasterCalculatorSessionLayers owns only current viewport/profile frames, source captures, loading/error state and request generations; MapFeaturePage supplies the current document and camera viewport. Recipe state is reported as the tools.raster-calculator dirty owner; the registry is scoped to projectSessionID plus projectPath and resets on session change.",
         "readActions": [
           "map.document.list",
           "map.tree.load",
-          "raster.calculator.inspect"
+          "raster.calculator.inspect",
+          "raster.calculator.evaluate"
         ],
-        "writeBoundary": "The UI lists the current saved map catalog and explicitly inspects one supported map (Project, Buildable, Geometry or Plan). Host inspection returns actual Terrain and map-output Result sources, file dependencies/revisions, NoData choices and a context token bound to project/XML/map/.vis identities. The UI validates source IDs/revisions, Result map types/profile selection, expression/constants and either the intersection of selected-source extents or explicit finite world bounds; raster resolution is capped at 1536 per side and 2,097,152 pixels total. raster.calculator.evaluate rechecks the context and source files and returns a transient Host RasterRenderer RGBA frame; selecting another Result profile runs evaluation again. The preview remains inside this panel: the current parent MapView has no transient-layer registration callback, and neither inspect nor evaluate writes .ras, .vis, model HDF or input rasters. There are no Add to Map or Save Existing actions in this React flow. This is source-level wiring only; no build, service, browser or GUI acceptance is claimed."
+        "writeBoundary": "The UI lists saved maps and inspects one supported Project, Buildable, Geometry or Plan map. Host inspection returns actual Terrain/Result inputs, source file dependencies and revisions, NoData/profile data, and calculator validExtent bound to project/XML/map/.vis identities. The editor can use the intersection of selected input extents or explicit finite world bounds, capped at 1536 pixels per side and 2,097,152 total pixels. validExtent is the real calculator data extent; editor preview bounds are an explicit calculation viewport; map frames use the current camera viewport. Retained RasterDefinition uses square cells anchored at the upper left and may expand the returned extent; the UI validates that normalized extent and draws using the actual Host frame bounds. raster.calculator.evaluate returns RGBA for rendering only, not numeric pixel values or Identify sampling. Add to Map creates an in-memory session descriptor; Save to Existing replaces only a current layer with matching ID/revision and exact project/map identity and matching static/dynamic type, preserving its ID, name, visibility and opacity. Incompatible replacements leave the old layer intact and may be added separately. The map re-evaluates the current camera/profile; sourceChanged clears the stale frame, re-inspects, and accepts only the recipe's exact original source IDs/revisions, never silently rebinding to changed sources. Hidden, removed, off-map, stale-owner or stale-generation layers clear cached frames/captures and abort obsolete requests. Map layer selection, visibility, opacity, profile changes and removal are session-only; the registry resets on project session/path change and does not persist across restart. Edit requests carry layer ID/revision/request ID; if the current recipe is dirty, the editor offers cancel, defer/stay, or discard-and-load, consumes only the matching request through finishEditRequest, and defers interrupted loads. No action writes .ras, .vis, model HDF, source rasters or persistent output pixels. This reflects source-level wiring only; no build, service, browser or GUI acceptance is claimed."
       },
       {
         "id": "geometry-topology-map-canvas",

@@ -12,6 +12,7 @@ import { ConfirmActionControlDialog } from '../controls/ConfirmActionControlDial
 import { FramedContentDialog } from '../controls/FramedContentDialog';
 import { captureMapVisualizationLease, matchesMapVisualizationReceipt, type MapVisualizationLease } from '../shared/mapVisualizationMutation';
 import { captureProjectContextLease, matchesProjectContextCommit, type ProjectContextLease } from '../shared/projectContextMutation';
+import { useRasterCalculatorSessions } from '../shared/useRasterCalculatorSessions';
 
 const features: { id: FeatureId; zh: string; en: string }[] = [
   { id: 'project', zh: '工程', en: 'Project' },
@@ -105,6 +106,8 @@ export function RasMainWindow() {
     setActiveFeature(feature);
     window.history.replaceState(null, '', `#/${feature}`);
   }, []);
+  const calculatorSessions = useRasterCalculatorSessions(context, onNavigate,
+    referenceWriting || mapWriting || projectWriting || hasActiveMapWrite(dirtyOwners));
   const onProjectCommand = useCallback((kind: 'open' | 'new') => {
     if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
     setPendingProjectCommand({ id: crypto.randomUUID(), kind });
@@ -250,7 +253,7 @@ export function RasMainWindow() {
     catch (error) { setRuntimeState('failed'); setRuntimeError(message(error)); }
   }, [backend]);
   useEffect(() => { void connect(); }, [connect]);
-  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting || projectWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, onBeginProjectContextMutation, onCommitProjectContextMutation, onEndProjectContextMutation, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
+  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, calculatorSessions, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting || projectWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, onBeginProjectContextMutation, onCommitProjectContextMutation, onEndProjectContextMutation, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
   const title = context.selectedAsset?.name ?? context.projectPath?.split(/[\\/]/).at(-1) ?? t('尚未打开工程', 'No project open');
 
   return <main className="ras-main-window">

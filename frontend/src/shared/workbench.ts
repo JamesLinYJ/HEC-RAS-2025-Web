@@ -84,6 +84,8 @@ export interface MapVisualizationCommitReceipt {
   visualizationRevision: string;
 }
 export interface FeaturePageProps {
+  /** Live map calculator layers belong only to this open project session. */
+  calculatorSessions?: import('./rasterCalculatorSession').RasterCalculatorSessions;
   language: Language;
   /** User preference; system is resolved by the top-level window. */
   themeMode?: ThemeMode;

@@ -246,6 +246,7 @@ export function RasProjectMap({
         {visibleImages.map((image) => {
           const [x, y] = worldToScreen([image.extent.minX, image.extent.maxY], viewport);
           return <image key={image.id} data-testid="map-backend-image" data-source-kind={image.sourceKind}
+            data-calculator-session-id={image.sourceKind === 'calculator' ? image.id : undefined}
             data-source-revision={image.sourceRevision} data-tree-node-id={image.treeNodeID}
             data-association-context={image.associationContextToken}
             data-source-path={image.sourcePath} data-profile-index={image.profileIndex}

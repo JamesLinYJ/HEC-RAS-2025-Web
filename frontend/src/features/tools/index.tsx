@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { FeaturePageProps } from '../../shared/workbench';
 import styles from './tools.module.css';
 import { GeoprocessingToolControl } from './GeoprocessingToolControl';
@@ -27,7 +27,16 @@ const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
 export default function ToolsPageView(props: FeaturePageProps) {
   const [active, setActive] = useState<ToolsPage>('geoprocessing');
   const [mountedPages, setMountedPages] = useState<Set<ToolsPage>>(() => new Set(['geoprocessing', 'import-export', 'raster-calculator', 'projection']));
+  const handledCalculatorEditRequest = useRef<string | null>(null);
+  const calculatorEditRequestID = props.calculatorSessions?.editRequest?.requestID ?? null;
   const zh = props.language === 'zh';
+
+  useEffect(() => {
+    if (!calculatorEditRequestID || handledCalculatorEditRequest.current === calculatorEditRequestID) return;
+    handledCalculatorEditRequest.current = calculatorEditRequestID;
+    setMountedPages(current => current.has('raster-calculator') ? current : new Set(current).add('raster-calculator'));
+    setActive('raster-calculator');
+  }, [calculatorEditRequestID]);
 
   return (
     <div className={styles.toolsFeatureRoot}>

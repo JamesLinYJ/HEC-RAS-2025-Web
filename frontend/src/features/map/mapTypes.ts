@@ -32,7 +32,7 @@ export interface MapImageLayer {
   name: string;
   imageSrc: string;
   extent: MapExtent;
-  sourceKind: 'raster' | 'result' | 'terrain' | 'nvalue' | 'classification';
+  sourceKind: 'raster' | 'result' | 'terrain' | 'nvalue' | 'classification' | 'calculator';
   sourcePath?: string;
   sourceRevision?: string;
   treeNodeID?: string;
