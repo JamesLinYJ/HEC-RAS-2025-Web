@@ -7,11 +7,13 @@ import type {
   GeometryTopologyMapCommand,
   GeometryTopologyMap,
   GeometryTopologyMapTool,
+  GeometryTopologyMapCommandPreviewResponse,
   GeometryTopologyMarqueeHitMode,
   GeometryTopologySmartAddWindow,
   GeometryTopologySelectionMode,
   GeometryTopologySelectionScope,
 } from './geometryTypes';
+import type { PersistedVectorDeepConnectComponent, PersistedVectorDeepConnectSource } from './geometryVectorDeepConnect';
 import {
   classifyNodeHitExtent,
   isArcPointsSnapshotForPath,
@@ -33,22 +35,62 @@ export interface GeometryTopologyViewportCapture {
   columns: number;
 }
 export interface GeometryTopologySmartAddGesture {
-  coordinates: [GeometryTopologyCoordinate, GeometryTopologyCoordinate];
+  coordinates: GeometryTopologyCoordinate[];
   mapCellSize: number;
   window: GeometryTopologySmartAddWindow;
   startArcTarget?: GeometryTopologyArcSnapTarget;
   startNodeFID?: number;
   splitMode?: 'Anywhere';
+  expectedPathSHA256: string;
 }
 export interface GeometryTopologyDeepConnectGesture {
-  arcFID: number;
-  startAnchor: GeometryTopologyDeepConnectAnchor;
-  endAnchor: GeometryTopologyDeepConnectAnchor;
+  sourceKind: 'topology' | 'vector';
+  sourceKey: string;
+  sourceFID: number;
+  componentKey?: string;
+  anchors: GeometryTopologyDeepConnectAnchor[];
   mapCellSize: number;
+  expectedPathSHA256: string;
+}
+export type GeometryTopologyPathPreviewGesture =
+  | {
+      action: 'smartAdd';
+      coordinates: GeometryTopologyCoordinate[];
+      mapCellSize: number;
+      window: GeometryTopologySmartAddWindow;
+      startArcTarget?: GeometryTopologyArcSnapTarget;
+      startNodeFID?: number;
+      splitMode?: 'Anywhere';
+      pointer: GeometryTopologyCoordinate;
+    }
+  | {
+      action: 'deepConnect';
+      sourceKind: 'topology' | 'vector';
+      sourceKey: string;
+      sourceFID: number;
+      componentKey?: string;
+      anchors: GeometryTopologyDeepConnectAnchor[];
+      mapCellSize: number;
+      pointer: GeometryTopologyCoordinate;
+    };
+export type GeometryTopologyPathPreviewPriority = 'pointer' | 'waypoint' | 'final';
+export type GeometryTopologyPathPreviewState = 'idle' | 'loading' | 'ready' | 'unavailable' | 'failed';
+export interface GeometryTopologyPathPreview {
+  scopeKey: string;
+  response: GeometryTopologyMapCommandPreviewResponse;
 }
 export interface GeometryTopologyDeepConnectProgress {
-  arcFID: number;
-  anchorCount: 0 | 1;
+  sourceKey: string;
+  sourceKind: 'topology' | 'vector';
+  sourceFID: number;
+  sourceLabel: string;
+  anchorCount: number;
+}
+
+export interface GeometryTopologyVectorDeepConnectComponent {
+  key: string;
+  source: PersistedVectorDeepConnectSource;
+  component: PersistedVectorDeepConnectComponent;
 }
 export interface GeometryTopologySpatialSelection {
   gesture: 'Click' | 'Extent';
@@ -76,6 +118,11 @@ export interface GeometryTopologyCanvasProps {
   canSelect: boolean;
   canMoveNodes: boolean;
   canSmartAdd?: boolean;
+  previewScopeKey?: string;
+  previewAvailable?: boolean;
+  previewState?: GeometryTopologyPathPreviewState;
+  pathPreview?: GeometryTopologyPathPreview | null;
+  deepConnectVectorComponent?: GeometryTopologyVectorDeepConnectComponent | null;
   busy: boolean;
   mapCaptureReady: boolean;
   selectionScope?: GeometryTopologySelectionScope;
@@ -87,6 +134,9 @@ export interface GeometryTopologyCanvasProps {
   onMapCommand: (command: GeometryTopologyMapCommand) => void | Promise<void>;
   onSmartAdd?: (event: GeometryTopologySmartAddGesture) => void | Promise<void>;
   onDeepConnect?: (event: GeometryTopologyDeepConnectGesture) => void | Promise<void>;
+  onPathPreview?: (event: GeometryTopologyPathPreviewGesture,
+    priority: GeometryTopologyPathPreviewPriority) => Promise<GeometryTopologyMapCommandPreviewResponse | null>;
+  onCancelPathPreview?: () => void;
   onDeepConnectProgress?: (progress: GeometryTopologyDeepConnectProgress | null) => void;
 }
 
@@ -109,9 +159,12 @@ interface ArcDraft {
 
 interface DeepConnectDraft {
   ownerKey: string;
-  arcFID: number;
-  startAnchor: GeometryTopologyDeepConnectAnchor;
-  startPoint: GeometryTopologyCoordinate;
+  sourceKey: string;
+  sourceKind: 'topology' | 'vector';
+  sourceFID: number;
+  sourceLabel: string;
+  componentKey?: string;
+  anchors: Array<{ anchor: GeometryTopologyDeepConnectAnchor; point: GeometryTopologyCoordinate }>;
 }
 
 interface ArcPointPreview {
@@ -150,6 +203,11 @@ export function GeometryTopologyCanvas({
   canSelect,
   canMoveNodes,
   canSmartAdd = false,
+  previewScopeKey = '',
+  previewAvailable = false,
+  previewState = 'unavailable',
+  pathPreview = null,
+  deepConnectVectorComponent = null,
   busy,
   mapCaptureReady,
   selectionScope = 'All',
@@ -161,6 +219,8 @@ export function GeometryTopologyCanvas({
   onMapCommand,
   onSmartAdd,
   onDeepConnect,
+  onPathPreview,
+  onCancelPathPreview,
   onDeepConnectProgress,
 }: GeometryTopologyCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -168,9 +228,18 @@ export function GeometryTopologyCanvas({
   const dragRef = useRef<DragState | null>(null);
   const ownerKeyRef = useRef<string | null>(null);
   const pendingCommandRef = useRef(false);
+  const finalizingRef = useRef(false);
   const arcDraftRef = useRef<ArcDraft | null>(null);
   const deepConnectDraftRef = useRef<DeepConnectDraft | null>(null);
   const pendingArcClickRef = useRef<PendingArcClick | null>(null);
+  const pendingDeepConnectDoubleClickRef = useRef<{
+    ownerKey: string;
+    priorDraft: DeepConnectDraft | null;
+    clientX: number;
+    clientY: number;
+    timeStamp: number;
+  } | null>(null);
+  const previewRequestGenerationRef = useRef(0);
   const latestViewportRef = useRef('');
   const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 });
   const [cameraState, setCameraState] = useState<Camera | null>(null);
@@ -183,13 +252,27 @@ export function GeometryTopologyCanvas({
   const [arcPointPreview, setArcPointPreview] = useState<ArcPointPreview | null>(null);
   const [toolNotice, setToolNotice] = useState('');
 
-  const extent = map?.extent ?? null;
+  const topologyExtent = map?.extent ?? null;
+  const vectorExtent = useMemo(() => {
+    const points = deepConnectVectorComponent?.component.points ?? [];
+    if (!points.length || points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return null;
+    return points.reduce((bounds, point) => ({
+      minX: Math.min(bounds.minX, point.x), minY: Math.min(bounds.minY, point.y),
+      maxX: Math.max(bounds.maxX, point.x), maxY: Math.max(bounds.maxY, point.y),
+    }), { minX: points[0]!.x, minY: points[0]!.y, maxX: points[0]!.x, maxY: points[0]!.y });
+  }, [deepConnectVectorComponent]);
+  const extent = topologyExtent && vectorExtent ? {
+    minX: Math.min(topologyExtent.minX, vectorExtent.minX), minY: Math.min(topologyExtent.minY, vectorExtent.minY),
+    maxX: Math.max(topologyExtent.maxX, vectorExtent.maxX), maxY: Math.max(topologyExtent.maxY, vectorExtent.maxY),
+  } : vectorExtent ?? topologyExtent;
   const extentKey = extent
     ? `${extent.minX},${extent.minY},${extent.maxX},${extent.maxY}`
     : 'no-extent';
   const selectedArcFIDs = useMemo(() => [...new Set(selectedFIDByKind.arc
     .filter((fid) => Number.isSafeInteger(fid) && fid >= 0))].sort((left, right) => left - right), [selectedFIDByKind.arc]);
-  const interactionKey = JSON.stringify([sourceKey, tool, splitMode, currentDraftIdentity, selectedArcFIDs, mapCaptureReady, extentKey]);
+  const interactionKey = JSON.stringify([sourceKey, tool, splitMode, currentDraftIdentity, selectedArcFIDs,
+    deepConnectVectorComponent?.key ?? null, mapCaptureReady, extentKey]);
+  const previewKey = JSON.stringify([previewScopeKey, tool, currentDraftIdentity]);
   const activeArcPath = arcPoints
     ? resolveUniqueSelectedArcPath(map, selectedArcFIDs, arcPoints.arcFID)
     : null;
@@ -209,7 +292,10 @@ export function GeometryTopologyCanvas({
   const setDeepConnectDraft = useCallback((next: DeepConnectDraft | null) => {
     deepConnectDraftRef.current = next;
     setDeepConnectDraftState(next);
-    onDeepConnectProgress?.(next ? { arcFID: next.arcFID, anchorCount: 1 } : null);
+    onDeepConnectProgress?.(next ? {
+      sourceKey: next.sourceKey, sourceKind: next.sourceKind, sourceFID: next.sourceFID,
+      sourceLabel: next.sourceLabel, anchorCount: next.anchors.length,
+    } : null);
   }, [onDeepConnectProgress]);
 
   const storeCamera = useCallback((next: Camera | null) => {
@@ -220,12 +306,21 @@ export function GeometryTopologyCanvas({
   useEffect(() => {
     dragRef.current = null;
     pendingArcClickRef.current = null;
+    pendingDeepConnectDoubleClickRef.current = null;
+    finalizingRef.current = false;
+    previewRequestGenerationRef.current += 1;
+    onCancelPathPreview?.();
     setSelectionBox(null);
     setArcPointPreview(null);
     setArcDraft(null);
     setDeepConnectDraft(null);
     setToolNotice('');
-  }, [interactionKey, setArcDraft, setDeepConnectDraft]);
+  }, [interactionKey, onCancelPathPreview, setArcDraft, setDeepConnectDraft]);
+
+  useEffect(() => {
+    previewRequestGenerationRef.current += 1;
+    onCancelPathPreview?.();
+  }, [previewKey, onCancelPathPreview]);
 
   useEffect(() => {
     const target = containerRef.current;
@@ -301,7 +396,8 @@ export function GeometryTopologyCanvas({
         viewport.maxX <= viewport.minX || viewport.maxY <= viewport.minY) return null;
     return { extent: viewport, rows, columns };
   };
-  const canSmartAddMap = canEditMap && canSmartAdd && !!onSmartAdd && currentSmartAddWindow() !== null;
+  const canSmartAddMap = canEditMap && canSmartAdd && previewAvailable && !!onSmartAdd && !!onPathPreview &&
+    currentSmartAddWindow() !== null;
 
   function submitMapAction(
     action: () => void | Promise<void>,
@@ -332,23 +428,111 @@ export function GeometryTopologyCanvas({
     return submitMapAction(() => onMapCommand(command), onAccepted, onRejected);
   }
 
-  function submitSmartAdd(
-    gesture: GeometryTopologySmartAddGesture,
-    acceptedDraft: ArcDraft,
-  ): boolean {
-    if (!canSmartAddMap || !onSmartAdd) {
+  function cancelPathPreview(): void {
+    previewRequestGenerationRef.current += 1;
+    onCancelPathPreview?.();
+  }
+
+  function requestPathPreview(event: GeometryTopologyPathPreviewGesture,
+    priority: GeometryTopologyPathPreviewPriority): Promise<GeometryTopologyMapCommandPreviewResponse | null> {
+    if (!previewAvailable || !onPathPreview) return Promise.resolve(null);
+    const generation = ++previewRequestGenerationRef.current;
+    return onPathPreview(event, priority).then((result) =>
+      generation === previewRequestGenerationRef.current ? result : null).catch((caught: unknown) => {
+      if (generation === previewRequestGenerationRef.current &&
+          !(caught instanceof DOMException && caught.name === 'AbortError')) {
+        setToolNotice(caught instanceof Error ? caught.message : String(caught));
+      }
+      return null;
+    });
+  }
+
+  function smartAddPreviewGesture(draft: ArcDraft, coordinates: GeometryTopologyCoordinate[], pointer: GeometryTopologyCoordinate,
+    priority: GeometryTopologyPathPreviewPriority): Promise<GeometryTopologyMapCommandPreviewResponse | null> {
+    const window = currentSmartAddWindow();
+    if (!window || coordinates.length < 2) return Promise.resolve(null);
+    return requestPathPreview({
+      action: 'smartAdd', coordinates, mapCellSize, window, pointer,
+      ...(draft.startNodeFID !== undefined ? { startNodeFID: draft.startNodeFID } : {}),
+      ...(draft.startArcTarget ? { startArcTarget: draft.startArcTarget, splitMode: 'Anywhere' as const } : {}),
+    }, priority);
+  }
+
+  function appendSmartAddWaypoint(query: GeometryTopologyCoordinate, priority: 'waypoint' | 'pointer' = 'waypoint'): ArcDraft | null {
+    if (!canSmartAddMap || pendingCommandRef.current || finalizingRef.current || !isFiniteCoordinate(query)) {
       setToolNotice(language === 'zh'
-        ? 'SmartAdd 需要当前地图范围、精确关联地形和可编辑拓扑草稿；请检查捕获状态。'
-        : 'SmartAdd needs the current map window, its exact associated Terrain capture, and an editable topology draft.');
-      return false;
+        ? 'SmartAdd 暂不可用：需要当前地形、地图窗口、路径预览服务和可编辑草稿。'
+        : 'SmartAdd is unavailable without its current Terrain, map window, path-preview service, and editable draft.');
+      return null;
     }
-    return submitMapAction(
-      () => onSmartAdd(gesture),
-      () => { if (arcDraftRef.current === acceptedDraft) setArcDraft(null); },
-      () => setToolNotice(language === 'zh'
-        ? 'Host 未确认地形追踪弧段写入；两端点预览仍保留。'
-        : 'The Host did not confirm the terrain-traced arc edit; the endpoint preview remains available.'),
-    );
+    const current = arcDraftRef.current?.ownerKey === interactionKey ? arcDraftRef.current : null;
+    if (!current) {
+      appendArcDraftPoint(query);
+      return arcDraftRef.current?.ownerKey === interactionKey ? arcDraftRef.current : null;
+    }
+    const last = current.points[current.points.length - 1];
+    if (!last || Math.hypot(last.x - query.x, last.y - query.y) <= draftPathTolerance(mapCellSize)) return current;
+    const endNodeHit = classifyNodeHitExtent(map, query, mapCellSize * 6);
+    if (endNodeHit.kind === 'ambiguous') {
+      setToolNotice(language === 'zh'
+        ? '途经点范围内有多个源节点，无法确定连接对象；请移开后再添加。'
+        : 'Several source nodes fall in the waypoint hit window; move away before adding it.');
+      return current;
+    }
+    const next = { ...current, points: [...current.points, query] };
+    setArcDraft(next);
+    setToolNotice('');
+    void smartAddPreviewGesture(next, next.points, query, priority);
+    return next;
+  }
+
+  async function commitSmartAdd(): Promise<void> {
+    if (finalizingRef.current || pendingCommandRef.current) return;
+    const current = arcDraftRef.current;
+    if (!current || current.ownerKey !== interactionKey || !canSmartAddMap || !onSmartAdd) return;
+    const coordinates = dedupeConsecutiveCoordinates(current.points, draftPathTolerance(mapCellSize));
+    if (coordinates.length < 2) {
+      setToolNotice(language === 'zh' ? '至少添加两个不同的源坐标点，再完成地形追踪弧段。' : 'Add at least two distinct source-coordinate points before finishing the terrain-traced arc.');
+      return;
+    }
+    const endNodeHit = classifyNodeHitExtent(map, coordinates[coordinates.length - 1]!, mapCellSize * 6);
+    if (endNodeHit.kind === 'ambiguous') {
+      setToolNotice(language === 'zh' ? '终点范围内有多个源节点，无法确定连接对象；绘制输入已保留。' : 'Several source nodes fall in the end hit window; the input remains available.');
+      return;
+    }
+    const window = currentSmartAddWindow();
+    if (!window) {
+      setToolNotice(language === 'zh' ? '当前相机窗口没有有效的实测栅格尺寸。' : 'The current camera window has no valid measured raster dimensions.');
+      return;
+    }
+    finalizingRef.current = true;
+    setToolNotice('');
+    try {
+      const preview = await smartAddPreviewGesture(current, coordinates, coordinates[coordinates.length - 1]!, 'final');
+      if (!preview || current.ownerKey !== interactionKey || arcDraftRef.current !== current) {
+        setToolNotice(language === 'zh'
+          ? 'Host 尚未返回与当前途经点完全匹配的路径预览；输入仍保留，请稍后重试。'
+          : 'The Host has not returned a path preview for these exact waypoints; the input remains available to retry.');
+        return;
+      }
+      const gesture: GeometryTopologySmartAddGesture = {
+        coordinates,
+        mapCellSize,
+        window,
+        expectedPathSHA256: preview.pathSHA256,
+        ...(current.startNodeFID !== undefined ? { startNodeFID: current.startNodeFID } : {}),
+        ...(current.startArcTarget ? { startArcTarget: current.startArcTarget, splitMode: 'Anywhere' as const } : {}),
+      };
+      submitMapAction(
+        () => onSmartAdd(gesture),
+        () => { if (arcDraftRef.current === current) { setArcDraft(null); cancelPathPreview(); } },
+        () => setToolNotice(language === 'zh'
+          ? 'Host 未确认地形追踪弧段写入；所有途经点仍保留，可检查诊断后重试。'
+          : 'The Host did not confirm the terrain-traced arc edit; all waypoints remain available to retry.'),
+      );
+    } finally {
+      finalizingRef.current = false;
+    }
   }
 
   function appendArcDraftPoint(query: GeometryTopologyCoordinate): void {
@@ -398,6 +582,8 @@ export function GeometryTopologyCanvas({
   function cancelArcDraft(): void {
     if (pendingCommandRef.current) return;
     pendingArcClickRef.current = null;
+    finalizingRef.current = false;
+    cancelPathPreview();
     setArcDraft(null);
     setToolNotice(language === 'zh' ? '已取消尚未提交的弧段绘制。' : 'The unsubmitted arc drawing was cancelled.');
   }
@@ -431,105 +617,175 @@ export function GeometryTopologyCanvas({
     );
   }
 
-  function handleSmartAddClick(query: GeometryTopologyCoordinate): void {
-    if (!canSmartAddMap || pendingCommandRef.current || !isFiniteCoordinate(query)) {
-      setToolNotice(language === 'zh'
-        ? 'SmartAdd 暂不可用：需要精确关联地形、当前实测地图窗口和可编辑拓扑草稿。'
-        : 'SmartAdd is unavailable without its exact Terrain capture, measured map window, and editable topology draft.');
-      return;
+  function deepConnectAnchorAt(query: GeometryTopologyCoordinate): {
+    sourceKind: 'topology' | 'vector'; sourceKey: string; sourceFID: number; sourceLabel: string;
+    componentKey?: string; anchor: GeometryTopologyDeepConnectAnchor; point: GeometryTopologyCoordinate;
+  } | null {
+    const vector = deepConnectVectorComponent;
+    let path: readonly GeometryTopologyCoordinate[] | null = null;
+    let sourceKind: 'topology' | 'vector' = 'topology';
+    let sourceKey: string;
+    let sourceFID: number;
+    let sourceLabel: string;
+    let componentKey: string | undefined;
+    let segmentIndex: number;
+    let hitPoint: GeometryTopologyCoordinate;
+    let fraction: number;
+    if (vector) {
+      path = vector.component.points;
+      sourceKind = 'vector';
+      sourceKey = `vector:${vector.key}`;
+      sourceFID = vector.component.featureFID;
+      sourceLabel = `${vector.source.node.nodeName} · ${vector.component.componentIdentity}`;
+      componentKey = vector.key;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      let bestIndex = -1;
+      let bestPoint: GeometryTopologyCoordinate | null = null;
+      let bestFraction = 0;
+      let ambiguous = false;
+      for (let index = 0; index < path.length - 1; index += 1) {
+        const first = path[index];
+        const second = path[index + 1];
+        if (!first || !second || (first.x === second.x && first.y === second.y)) continue;
+        const projected = projectToSegment(query, first, second);
+        const distance = Math.hypot(projected.point.x - query.x, projected.point.y - query.y);
+        if (distance > mapCellSize * 12) continue;
+        if (distance < bestDistance - mapCellSize * 0.001) {
+          bestDistance = distance;
+          bestIndex = index;
+          bestPoint = projected.point;
+          bestFraction = projected.fraction;
+          ambiguous = false;
+        } else if (Math.abs(distance - bestDistance) <= mapCellSize * 0.001) {
+          const sameProjectedPoint = bestPoint &&
+            Math.hypot(bestPoint.x - projected.point.x, bestPoint.y - projected.point.y) <= mapCellSize * 0.001;
+          if (sameProjectedPoint) bestIndex = Math.min(bestIndex, index);
+          else ambiguous = true;
+        }
+      }
+      if (bestIndex < 0 || !bestPoint || ambiguous) return null;
+      segmentIndex = bestIndex;
+      hitPoint = bestPoint;
+      fraction = bestFraction;
+    } else {
+      const hit = nearestArcSegmentHit(map, query, mapCellSize * 12);
+      if (!hit) return null;
+      path = hit.feature.paths.length === 1 ? hit.feature.paths[0] : null;
+      if (!path) return null;
+      const first = path[hit.sourceSegmentIndex];
+      const second = path[hit.sourceSegmentIndex + 1];
+      if (!first || !second || !isFiniteCoordinate(first) || !isFiniteCoordinate(second)) return null;
+      const projected = projectToSegment(query, first, second);
+      sourceKey = `topology:arc:${hit.arcFID}`;
+      sourceFID = hit.arcFID;
+      sourceLabel = `弧段 ${hit.arcFID}`;
+      segmentIndex = hit.sourceSegmentIndex;
+      hitPoint = projected.point;
+      fraction = projected.fraction;
     }
-    const current = arcDraftRef.current?.ownerKey === interactionKey ? arcDraftRef.current : null;
-    if (!current) {
-      appendArcDraftPoint(query);
-      return;
-    }
-    if (current.points.length !== 1) {
-      setToolNotice(language === 'zh' ? 'SmartAdd 每次只接受一个起点和一个终点。' : 'Each SmartAdd operation takes exactly one start and one end point.');
-      return;
-    }
-    const start = current.points[0];
-    if (Math.hypot(start.x - query.x, start.y - query.y) <= draftPathTolerance(mapCellSize)) {
-      setToolNotice(language === 'zh' ? 'SmartAdd 起点与终点必须不同。' : 'SmartAdd start and end points must be different.');
-      return;
-    }
-    const endNodeHit = classifyNodeHitExtent(map, query, mapCellSize * 6);
-    if (endNodeHit.kind === 'ambiguous') {
-      setToolNotice(language === 'zh' ? '终点范围内有多个源节点，无法确定连接对象；两端点预览已保留。' : 'Several source nodes fall in the end hit window; the endpoint preview is retained.');
-      return;
-    }
-    const window = currentSmartAddWindow();
-    if (!window) {
-      setToolNotice(language === 'zh' ? '当前相机窗口没有有效的实测栅格尺寸。' : 'The current camera window has no valid measured raster dimensions.');
-      return;
-    }
-    const gesture: GeometryTopologySmartAddGesture = {
-      coordinates: [start, query],
-      mapCellSize,
-      window,
-      ...(current.startNodeFID !== undefined ? { startNodeFID: current.startNodeFID } : {}),
-      ...(current.startArcTarget ? { startArcTarget: current.startArcTarget, splitMode: 'Anywhere' as const } : {}),
-    };
-    const endpointsPreview = { ...current, points: [start, query] };
-    setArcDraft(endpointsPreview);
-    submitSmartAdd(gesture, endpointsPreview);
+    if (!path || !Number.isFinite(fraction) || !isFiniteCoordinate(hitPoint)) return null;
+    return { sourceKind, sourceKey, sourceFID, sourceLabel, ...(componentKey ? { componentKey } : {}),
+      anchor: { segmentIndex, fraction }, point: hitPoint };
   }
 
-  function handleDeepConnectClick(query: GeometryTopologyCoordinate): void {
-    if (!canEditMap || !onDeepConnect || pendingCommandRef.current || !isFiniteCoordinate(query)) {
-      setToolNotice(language === 'zh' ? 'DeepConnect 需要当前地图来源和可编辑拓扑草稿。' : 'DeepConnect needs the current map source and an editable topology draft.');
+  function deepConnectPreviewGesture(draft: DeepConnectDraft, anchors: GeometryTopologyDeepConnectAnchor[], pointer: GeometryTopologyCoordinate): GeometryTopologyPathPreviewGesture {
+    return { action: 'deepConnect', sourceKind: draft.sourceKind, sourceKey: draft.sourceKey, sourceFID: draft.sourceFID,
+      ...(draft.componentKey ? { componentKey: draft.componentKey } : {}), anchors, mapCellSize, pointer };
+  }
+
+  function handleDeepConnectClick(query: GeometryTopologyCoordinate, finishDoubleClick = false): void {
+    if (!canEditMap || !previewAvailable || !onDeepConnect || !onPathPreview || pendingCommandRef.current || finalizingRef.current || !isFiniteCoordinate(query)) {
+      setToolNotice(language === 'zh' ? 'DeepConnect 需要当前地图来源、路径预览服务和可编辑拓扑草稿。' : 'DeepConnect needs the current map source, path-preview service, and editable topology draft.');
       return;
     }
-    const hit = nearestArcSegmentHit(map, query, mapCellSize * 12);
+    const hit = deepConnectAnchorAt(query);
     if (!hit) {
       setToolNotice(language === 'zh'
-        ? '未命中唯一的拓扑弧段线段；请在同一条已保存拓扑弧段上选择两个锚点。'
-        : 'No unique topology arc segment was hit; choose two anchors on the same saved topology arc.');
+        ? (deepConnectVectorComponent
+          ? '未命中当前 Host 检查确认矢量组件的唯一线段；请在此组件内选择锚点。'
+          : '未命中唯一的拓扑弧段线段；请在同一条已保存拓扑弧段上选择锚点。')
+        : (deepConnectVectorComponent
+          ? 'No unique segment was hit on the current Host-inspected vector component; choose anchors on that component.'
+          : 'No unique topology arc segment was hit; choose anchors on one saved topology arc.'));
       return;
     }
-    const path = hit.feature.paths.length === 1 ? hit.feature.paths[0] : null;
-    const start = path?.[hit.sourceSegmentIndex];
-    const end = path?.[hit.sourceSegmentIndex + 1];
-    if (!start || !end || !isFiniteCoordinate(start) || !isFiniteCoordinate(end)) {
-      setToolNotice(language === 'zh' ? '当前弧段没有可用的唯一源折线。' : 'The arc has no unique usable source path.');
-      return;
-    }
-    const projected = projectToSegment(query, start, end);
-    if (!Number.isFinite(projected.fraction) || !isFiniteCoordinate(projected.point)) {
-      setToolNotice(language === 'zh' ? '无法从地图命中解析源弧段锚点。' : 'The map hit could not be resolved to a source-arc anchor.');
-      return;
-    }
-    const anchor = { segmentIndex: hit.sourceSegmentIndex, fraction: projected.fraction };
     const current = deepConnectDraftRef.current?.ownerKey === interactionKey ? deepConnectDraftRef.current : null;
     if (!current) {
-      setDeepConnectDraft({ ownerKey: interactionKey, arcFID: hit.arcFID, startAnchor: anchor, startPoint: projected.point });
+      const next: DeepConnectDraft = { ownerKey: interactionKey, sourceKey: hit.sourceKey, sourceKind: hit.sourceKind,
+        sourceFID: hit.sourceFID, sourceLabel: hit.sourceLabel, ...(hit.componentKey ? { componentKey: hit.componentKey } : {}),
+        anchors: [{ anchor: hit.anchor, point: hit.point }] };
+      setDeepConnectDraft(next);
       setToolNotice(language === 'zh'
-        ? `已捕获弧段 ${hit.arcFID} 的第一个源锚点；请在同一条弧段上选择第二个锚点。`
-        : `Captured the first source anchor on arc ${hit.arcFID}; choose the second anchor on the same arc.`);
+        ? `已捕获 ${hit.sourceLabel} 的第一个源锚点；请在同一来源组件上继续选择。`
+        : `Captured the first source anchor on ${hit.sourceLabel}; continue on the same source component.`);
       return;
     }
-    if (current.arcFID !== hit.arcFID) {
+    if (current.sourceKey !== hit.sourceKey || current.sourceKind !== hit.sourceKind || current.sourceFID !== hit.sourceFID ||
+        current.componentKey !== hit.componentKey) {
       setToolNotice(language === 'zh'
-        ? `第一个锚点属于弧段 ${current.arcFID}；第二个锚点也必须在这条弧段上。`
-        : `The first anchor belongs to arc ${current.arcFID}; the second must be on that same arc.`);
+        ? `当前锚点属于 ${current.sourceLabel}；所有锚点都必须来自同一个精确来源组件。`
+        : `The current anchors belong to ${current.sourceLabel}; all anchors must stay on that exact source component.`);
       return;
     }
-    if (current.startPoint.x === projected.point.x && current.startPoint.y === projected.point.y) {
-      setToolNotice(language === 'zh' ? 'DeepConnect 的两个源锚点必须不同。' : 'DeepConnect requires two distinct source anchors.');
+    const last = current.anchors[current.anchors.length - 1];
+    if (finishDoubleClick && last && Math.hypot(last.point.x - hit.point.x, last.point.y - hit.point.y) <= mapCellSize * 2) {
+      setToolNotice('');
       return;
     }
-    const gesture: GeometryTopologyDeepConnectGesture = {
-      arcFID: hit.arcFID,
-      startAnchor: current.startAnchor,
-      endAnchor: anchor,
-      mapCellSize,
-    };
-    submitMapAction(
-      () => onDeepConnect(gesture),
-      () => { if (deepConnectDraftRef.current === current) setDeepConnectDraft(null); },
-      () => setToolNotice(language === 'zh'
-        ? 'Host 未确认 DeepConnect 写入；第一个锚点仍保留，可调整第二个锚点后重试。'
-        : 'The Host did not confirm the DeepConnect edit; the first anchor remains available for another second-anchor attempt.'),
-    );
+    if (last && last.point.x === hit.point.x && last.point.y === hit.point.y) {
+      setToolNotice(language === 'zh' ? '相邻 DeepConnect 锚点不能重合。' : 'Adjacent DeepConnect anchors must be distinct.');
+      return;
+    }
+    const next: DeepConnectDraft = { ...current, anchors: [...current.anchors, { anchor: hit.anchor, point: hit.point }] };
+    setDeepConnectDraft(next);
+    setToolNotice('');
+    void requestPathPreview(deepConnectPreviewGesture(next, next.anchors.map((entry) => entry.anchor), hit.point), 'waypoint');
+  }
+
+  async function commitDeepConnect(): Promise<void> {
+    if (finalizingRef.current || pendingCommandRef.current) return;
+    const current = deepConnectDraftRef.current;
+    if (!current || current.ownerKey !== interactionKey || current.anchors.length < 2 || !canEditMap || !onDeepConnect) {
+      setToolNotice(language === 'zh' ? '至少需要在同一来源组件上捕获两个不同锚点。' : 'Capture at least two distinct anchors on the same source component.');
+      return;
+    }
+    const anchors = current.anchors.map((entry) => entry.anchor);
+    const hasAdjacentDuplicate = current.anchors.some((entry, index) => index > 0 &&
+      entry.point.x === current.anchors[index - 1]!.point.x && entry.point.y === current.anchors[index - 1]!.point.y);
+    if (hasAdjacentDuplicate) {
+      setToolNotice(language === 'zh' ? '相邻 DeepConnect 锚点不能重合。' : 'Adjacent DeepConnect anchors must be distinct.');
+      return;
+    }
+    finalizingRef.current = true;
+    setToolNotice('');
+    try {
+      const lastAnchor = current.anchors[current.anchors.length - 1]!;
+      const preview = await requestPathPreview(deepConnectPreviewGesture(current, anchors, lastAnchor.point), 'final');
+      if (!preview || current.ownerKey !== interactionKey || deepConnectDraftRef.current !== current) {
+        setToolNotice(language === 'zh'
+          ? 'Host 尚未返回与当前全部锚点匹配的路径预览；锚点仍保留，请稍后重试。'
+          : 'The Host has not returned a path preview for all current anchors; they remain available to retry.');
+        return;
+      }
+      const gesture: GeometryTopologyDeepConnectGesture = {
+        sourceKind: current.sourceKind,
+        sourceKey: current.sourceKey,
+        sourceFID: current.sourceFID,
+        ...(current.componentKey ? { componentKey: current.componentKey } : {}),
+        anchors,
+        mapCellSize,
+        expectedPathSHA256: preview.pathSHA256,
+      };
+      submitMapAction(
+        () => onDeepConnect(gesture),
+        () => { if (deepConnectDraftRef.current === current) { setDeepConnectDraft(null); cancelPathPreview(); } },
+        () => setToolNotice(language === 'zh'
+          ? 'Host 未确认 DeepConnect 写入；全部锚点仍保留，可检查诊断后重试。'
+          : 'The Host did not confirm DeepConnect; all anchors remain available to retry after reviewing diagnostics.'),
+      );
+    } finally {
+      finalizingRef.current = false;
+    }
   }
 
   function handleArcToolClick(activeTool: Exclude<GeometryTopologyMapTool, 'select'>, query: GeometryTopologyCoordinate): void {
@@ -539,7 +795,7 @@ export function GeometryTopologyCanvas({
       return;
     }
     if (activeTool === 'smartAdd') {
-      handleSmartAddClick(query);
+      appendSmartAddWaypoint(query);
       return;
     }
     if (activeTool === 'deepConnect') {
@@ -629,7 +885,7 @@ export function GeometryTopologyCanvas({
     const moved = distance >= DRAG_THRESHOLD_PX;
     if (drag.kind === 'arc-tool') {
       if (!moved && !busy) {
-        if (drag.tool === 'addArc' || drag.tool === 'smartAdd') {
+        if (drag.tool === 'addArc' || drag.tool === 'smartAdd' || drag.tool === 'deepConnect') {
           // Defer adding the point until click.detail is known. The second
           // pointerup of a double-click has detail=2 and must not add a short tail.
           pendingArcClickRef.current = {
@@ -704,7 +960,7 @@ export function GeometryTopologyCanvas({
     }
     if (tool !== 'select') {
       if (!canEditMap) return;
-      if (tool === 'addArc') event.currentTarget.focus();
+      if (tool === 'addArc' || tool === 'smartAdd' || tool === 'deepConnect') event.currentTarget.focus();
       if (tool === 'moveArcPoint') {
         const selectedArc = arcPointsValid && arcPoints
           ? resolveUniqueSelectedArcPath(map, selectedArcFIDs, arcPoints.arcFID)
@@ -757,6 +1013,31 @@ export function GeometryTopologyCanvas({
 
   function onPointerMove(event: ReactPointerEvent<SVGSVGElement>) {
     const drag = dragRef.current;
+    if ((!drag || drag.pointerId !== event.pointerId) && (tool === 'smartAdd' || tool === 'deepConnect')) {
+      const point = getWorldPoint(event);
+      if (point && canEditMap && !pendingCommandRef.current && !finalizingRef.current) {
+        if (tool === 'smartAdd') {
+          const current = arcDraftRef.current?.ownerKey === interactionKey ? arcDraftRef.current : null;
+          if (current?.points.length) {
+            const last = current.points[current.points.length - 1]!;
+            if (Math.hypot(last.x - point.x, last.y - point.y) > draftPathTolerance(mapCellSize)) {
+              void smartAddPreviewGesture(current, [...current.points, point], point, 'pointer');
+            }
+          }
+        } else {
+          const current = deepConnectDraftRef.current?.ownerKey === interactionKey ? deepConnectDraftRef.current : null;
+          const hit = current ? deepConnectAnchorAt(point) : null;
+          if (current && hit && hit.sourceKey === current.sourceKey && hit.sourceKind === current.sourceKind &&
+              hit.sourceFID === current.sourceFID && hit.componentKey === current.componentKey) {
+            const last = current.anchors[current.anchors.length - 1];
+            if (last && (last.point.x !== hit.point.x || last.point.y !== hit.point.y)) {
+              const anchors = [...current.anchors.map((entry) => entry.anchor), hit.anchor];
+              void requestPathPreview(deepConnectPreviewGesture(current, anchors, point), 'pointer');
+            }
+          }
+        }
+      }
+    }
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (drag.ownerKey !== interactionKey) {
       dragRef.current = null;
@@ -802,21 +1083,65 @@ export function GeometryTopologyCanvas({
   function onCanvasClick(event: ReactMouseEvent<SVGSVGElement>) {
     const pending = pendingArcClickRef.current;
     pendingArcClickRef.current = null;
-    if ((tool !== 'addArc' && tool !== 'smartAdd') || (tool === 'addArc' && event.detail !== 1) ||
+    if ((tool !== 'addArc' && tool !== 'smartAdd' && tool !== 'deepConnect') ||
         !pending || pending.ownerKey !== interactionKey) return;
     if (Math.hypot(event.clientX - pending.clientX, event.clientY - pending.clientY) > 4) return;
     if (event.timeStamp < pending.pointerUpTime || event.timeStamp - pending.pointerUpTime > 1000) return;
-    if (tool === 'addArc') appendArcDraftPoint(pending.world);
-    else handleSmartAddClick(pending.world);
+    if (event.detail === 1) {
+      if (tool === 'addArc') appendArcDraftPoint(pending.world);
+      else if (tool === 'smartAdd') appendSmartAddWaypoint(pending.world);
+      else {
+        const priorDraft = deepConnectDraftRef.current?.ownerKey === interactionKey
+          ? deepConnectDraftRef.current : null;
+        handleDeepConnectClick(pending.world);
+        pendingDeepConnectDoubleClickRef.current = {
+          ownerKey: interactionKey,
+          priorDraft,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          timeStamp: event.timeStamp,
+        };
+      }
+      return;
+    }
+    if (event.detail >= 2) {
+      if (tool === 'smartAdd') {
+        appendSmartAddWaypoint(pending.world);
+        void commitSmartAdd();
+      } else if (tool === 'deepConnect') {
+        const candidate = pendingDeepConnectDoubleClickRef.current;
+        pendingDeepConnectDoubleClickRef.current = null;
+        const priorDraft = candidate?.ownerKey === interactionKey ? candidate.priorDraft : null;
+        const currentDraft = deepConnectDraftRef.current?.ownerKey === interactionKey
+          ? deepConnectDraftRef.current : null;
+        const priorLast = priorDraft?.anchors[priorDraft.anchors.length - 1];
+        const currentLast = currentDraft?.anchors[currentDraft.anchors.length - 1];
+        const firstClickIsNearbyFinish = !!candidate && candidate.ownerKey === interactionKey &&
+          event.timeStamp >= candidate.timeStamp && event.timeStamp - candidate.timeStamp <= 500 &&
+          Math.hypot(event.clientX - candidate.clientX, event.clientY - candidate.clientY) <= 4 &&
+          !!priorDraft && !!currentDraft && !!priorLast && !!currentLast &&
+          currentDraft.sourceKey === priorDraft.sourceKey && currentDraft.sourceKind === priorDraft.sourceKind &&
+          currentDraft.sourceFID === priorDraft.sourceFID && currentDraft.componentKey === priorDraft.componentKey &&
+          currentDraft.anchors.length === priorDraft.anchors.length + 1 &&
+          Math.hypot(currentLast.point.x - priorLast.point.x, currentLast.point.y - priorLast.point.y) <= mapCellSize * 2;
+        if (firstClickIsNearbyFinish && priorDraft) {
+          setDeepConnectDraft(priorDraft);
+          cancelPathPreview();
+        } else {
+          handleDeepConnectClick(pending.world, true);
+        }
+        void commitDeepConnect();
+      } else commitArcDraft();
+    }
   }
 
   function onDoubleClick(event: ReactMouseEvent<SVGSVGElement>) {
     pendingArcClickRef.current = null;
-    if (tool !== 'addArc' || busy || !mapCaptureReady) return;
+    if ((tool !== 'addArc' && tool !== 'smartAdd' && tool !== 'deepConnect') || busy || !mapCaptureReady) return;
     event.preventDefault();
-    // The first click already added its point. The second click is intentionally ignored,
-    // so the double-click gesture only commits the existing source-coordinate path.
-    commitArcDraft();
+    if (tool === 'addArc') commitArcDraft();
+    else if (tool === 'smartAdd') void commitSmartAdd();
+    else void commitDeepConnect();
   }
 
   function onCanvasKeyDown(event: ReactKeyboardEvent<SVGSVGElement>) {
@@ -824,12 +1149,16 @@ export function GeometryTopologyCanvas({
     if (event.key === 'Escape') {
       event.preventDefault();
       if (tool === 'deepConnect') {
+        finalizingRef.current = false;
+        cancelPathPreview();
         setDeepConnectDraft(null);
         setToolNotice(language === 'zh' ? '已取消尚未提交的 DeepConnect 锚点。' : 'The unsubmitted DeepConnect anchor was cancelled.');
       } else cancelArcDraft();
-    } else if (event.key === 'Enter' && tool === 'addArc') {
+    } else if (event.key === 'Enter') {
       event.preventDefault();
-      commitArcDraft();
+      if (tool === 'addArc') commitArcDraft();
+      else if (tool === 'smartAdd') void commitSmartAdd();
+      else void commitDeepConnect();
     }
   }
 
@@ -884,9 +1213,12 @@ export function GeometryTopologyCanvas({
     path: feature.paths.map((points) => toSvgPath(points, feature.geometryType === 'polygon')).filter(Boolean).join(' '),
   })) ?? [], [map, selectedFIDByKind]);
 
-  const shownArcDraft = arcDraft?.ownerKey === interactionKey && (tool === 'addArc' || tool === 'smartAdd') ? arcDraft : null;
+  const shownArcDraft = arcDraft?.ownerKey === interactionKey && tool === 'addArc' ? arcDraft : null;
+  const shownSmartAddDraft = arcDraft?.ownerKey === interactionKey && tool === 'smartAdd' ? arcDraft : null;
   const shownArcDraftPath = shownArcDraft ? toSvgPath(shownArcDraft.points) : '';
   const shownDeepConnectDraft = deepConnectDraft?.ownerKey === interactionKey && tool === 'deepConnect' ? deepConnectDraft : null;
+  const shownPathPreview = pathPreview?.scopeKey === previewScopeKey && pathPreview.response.action === tool
+    && pathPreview.response.draftIdentity === currentDraftIdentity ? pathPreview.response : null;
   const showInternalArcPoints = tool === 'moveArcPoint' || tool === 'insertArcPoint' || tool === 'deleteArcPoint'
     || (tool === 'splitArc' && splitMode === 'AtVertex');
   const shownInternalArcPoints = showInternalArcPoints && arcPointsValid && arcPoints && activeArcPath
@@ -896,7 +1228,7 @@ export function GeometryTopologyCanvas({
     ? ({ select: '选择', addArc: '绘制弧段', smartAdd: '地形追踪', deepConnect: '深度连接', moveArcPoint: '移动内点', insertArcPoint: '插入点', deleteArcPoint: '删除点', splitArc: '分割弧段' } as const)[tool]
     : ({ select: 'Select', addArc: 'Draw arc', smartAdd: 'Terrain trace', deepConnect: 'Deep connect', moveArcPoint: 'Move internal point', insertArcPoint: 'Insert point', deleteArcPoint: 'Delete point', splitArc: 'Split arc' } as const)[tool];
 
-  const isEmptyMap = !map || !Array.isArray(map.features) || map.features.length === 0;
+  const isEmptyMap = (!map || !Array.isArray(map.features) || map.features.length === 0) && !deepConnectVectorComponent;
   const hasUsableExtent = !!extent && isValidExtent(extent) && Math.max(extent.maxX - extent.minX, extent.maxY - extent.minY) > 0;
   const viewBox = viewport && mapCellSize > 0 && hasUsableExtent
     ? `${viewport.minX} ${-viewport.maxY} ${viewport.maxX - viewport.minX} ${viewport.maxY - viewport.minY}`
@@ -914,26 +1246,39 @@ export function GeometryTopologyCanvas({
     : language === 'zh' ? ' · 当前地图拓扑上下文尚未就绪，地图选择和编辑已停用' : ' · The current map topology context is not ready; map selection and editing are disabled';
   const toolInstruction = language === 'zh'
     ? tool === 'addArc' ? '绘制弧段：逐点点击，按 Enter 或双击提交，按 Escape 取消。预览尚未写入几何草稿。'
-      : tool === 'smartAdd' ? '地形追踪：点击起点和终点提交一次地形追踪弧段。画布只显示两端点直线示意，实际地形路径由 Host 在提交时计算；按 Escape 取消。'
-        : tool === 'deepConnect' ? '深度连接：在同一条真实拓扑弧段上依次点击两个不同的源线段锚点；按 Escape 或取消按钮放弃第一个锚点。'
+      : tool === 'smartAdd' ? '地形追踪：点击添加起点和途经点，按 Enter 或双击完成一条弧段；按 Escape 取消。实际路径由 Host 只读预览。'
+        : tool === 'deepConnect' ? deepConnectVectorComponent
+          ? '深度连接：在当前 Host 检查确认的同一矢量组件上依次添加锚点，按 Enter 或双击完成一条弧段；按 Escape 取消。'
+          : '深度连接：在同一条真实拓扑弧段上依次添加锚点，按 Enter 或双击完成一条弧段；按 Escape 取消。'
           : tool === 'moveArcPoint' ? '移动内点：拖动当前唯一选中弧段的内部点；首尾端点不可移动。'
         : tool === 'insertArcPoint' ? '插入点：点击当前唯一选中弧段的线段内部；端点及现有顶点附近不会插入。'
           : tool === 'deleteArcPoint' ? '删除点：点击当前唯一选中弧段的内部点；首尾端点不可删除。'
             : tool === 'splitArc' ? `分割弧段：点击真实弧段线段；当前模式为${splitMode === 'AtVertex' ? '在内部顶点' : '任意位置'}。`
               : '点按要素执行 Host 空间选择；拖动空白处框选，拖动节点提交 Host 节点移动。'
     : tool === 'addArc' ? 'Draw an arc: click vertices, press Enter or double-click to submit, or Escape to cancel. The preview is not in the geometry draft.'
-      : tool === 'smartAdd' ? 'Terrain trace: click one start and one end point. The canvas shows only a straight endpoint guide; the Host computes the terrain path when the edit is submitted. Press Escape to cancel.'
-        : tool === 'deepConnect' ? 'Deep connect: click two distinct source-segment anchors on the same real topology arc; Escape or Cancel discards the first anchor.'
+      : tool === 'smartAdd' ? 'Terrain trace: click a start point and waypoints, then press Enter or double-click to finish one arc. Press Escape to cancel. The Host supplies the read-only path preview.'
+        : tool === 'deepConnect' ? deepConnectVectorComponent
+          ? 'Deep connect: add anchors on the same Host-inspected vector component, then press Enter or double-click to finish one arc. Press Escape to cancel.'
+          : 'Deep connect: add anchors on the same real topology arc, then press Enter or double-click to finish one arc. Press Escape to cancel.'
           : tool === 'moveArcPoint' ? 'Move internal point: drag a point on the uniquely selected arc; endpoints cannot move.'
         : tool === 'insertArcPoint' ? 'Insert point: click inside a segment of the uniquely selected arc; endpoints and nearby vertices are excluded.'
           : tool === 'deleteArcPoint' ? 'Delete point: click an internal point on the uniquely selected arc; endpoints cannot be deleted.'
             : tool === 'splitArc' ? `Split arc: click a real arc segment; mode is ${splitMode === 'AtVertex' ? 'at internal vertex' : 'anywhere'}.`
               : 'Click for Host spatial selection; drag empty space to select an extent, or drag a node for a Host node move.';
   const toolDisabledReason = tool === 'smartAdd' && !canSmartAddMap
-    ? language === 'zh' ? ' · 当前没有同一来源的有效地形捕获或实测地图窗口，SmartAdd 已停用。' : ' · SmartAdd is disabled without a current matching Terrain capture and measured map window.'
+    ? language === 'zh' ? ' · 当前没有有效地形捕获、实测窗口或 Host 路径预览，SmartAdd 已停用。' : ' · SmartAdd is disabled without a current Terrain capture, measured window, and Host path preview.'
     : tool !== 'select' && !canEditMap
     ? language === 'zh' ? ' · 需要有效地图捕获、可编辑草稿和正的源坐标比例。' : ' · A valid map capture, editable draft, and positive source-coordinate scale are required.'
     : '';
+  const previewStatusText = !previewAvailable || previewState === 'unavailable'
+    ? language === 'zh' ? 'Host 路径预览不可用，路径编辑已停用。' : 'The Host path preview is unavailable; path editing is disabled.'
+    : previewState === 'loading'
+      ? language === 'zh' ? '正在计算当前输入的 Host 只读路径预览…' : 'Computing the Host read-only path preview for the current input…'
+      : previewState === 'ready'
+        ? language === 'zh' ? '显示 Host 返回的只读路径；完成后才写入拓扑草稿。' : 'Showing the Host read-only path; it enters the topology draft only when completed.'
+        : previewState === 'failed'
+          ? language === 'zh' ? '当前 Host 路径预览失败；未提交输入仍保留。' : 'The current Host path preview failed; unsubmitted input is retained.'
+          : language === 'zh' ? '添加途经点或锚点后，Host 会计算只读路径预览。' : 'The Host calculates a read-only path preview after waypoints or anchors are added.';
 
   return <section className="editor-table-card" data-testid="geometry-topology-map-panel" aria-label={language === 'zh' ? '几何拓扑图' : 'Geometry topology map'}>
     <div className="editor-terrain-table-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
@@ -949,22 +1294,22 @@ export function GeometryTopologyCanvas({
       {statusText}{captureStatus}{busy ? (language === 'zh' ? ' · 正在等待拓扑回执' : ' · Waiting for topology receipt') : ''}
       {toolDisabledReason}
       <div data-testid="geometry-topology-tool-instruction">{toolInstruction}</div>
+      {(tool === 'smartAdd' || tool === 'deepConnect') && <div data-testid="geometry-topology-preview-status" role="status" aria-live="polite">{previewStatusText}</div>}
       {toolNotice && <div data-testid="geometry-topology-tool-notice" role="alert">{toolNotice}</div>}
       {shownArcDraft && <div data-testid="geometry-topology-arc-draft-status">{language === 'zh'
         ? pendingCommandRef.current
-          ? tool === 'smartAdd' ? '正在提交 SmartAdd 端点，等待 Host 计算并确认地形追踪路径。'
-            : `正在提交弧段预览，${shownArcDraft.points.length} 个源坐标点；等待 Host 确认。`
-          : tool === 'smartAdd' ? 'SmartAdd 两端点直线示意；实际地形路径尚未计算，也未提交。'
-            : `弧段绘制预览，${shownArcDraft.points.length} 个源坐标点；尚未提交。`
+          ? `正在提交绘制弧段，${shownArcDraft.points.length} 个源坐标点；等待 Host 确认。`
+          : `弧段绘制预览，${shownArcDraft.points.length} 个源坐标点；尚未提交。`
         : pendingCommandRef.current
-          ? tool === 'smartAdd' ? 'Submitting SmartAdd endpoints; waiting for the Host to calculate and confirm the terrain trace.'
-            : `Submitting arc preview with ${shownArcDraft.points.length} source-coordinate points; waiting for Host confirmation.`
-          : tool === 'smartAdd' ? 'SmartAdd straight endpoint guide only; the terrain path has not been calculated or submitted.'
-            : `Arc drawing preview, ${shownArcDraft.points.length} source-coordinate points; not submitted.`}</div>}
+          ? `Submitting an arc with ${shownArcDraft.points.length} source-coordinate points; waiting for Host confirmation.`
+          : `Arc drawing preview, ${shownArcDraft.points.length} source-coordinate points; not submitted.`}</div>}
+      {shownSmartAddDraft && <div data-testid="geometry-topology-smart-add-draft-status">{language === 'zh'
+        ? `SmartAdd 暂存 ${shownSmartAddDraft.points.length} 个途经点；服务路径预览单独显示，当前输入尚未提交。`
+        : `SmartAdd has ${shownSmartAddDraft.points.length} pending waypoints; the service path preview is shown separately and is not submitted.`}</div>}
       {shownDeepConnectDraft && <div data-testid="geometry-topology-deep-connect-draft-status">
         {language === 'zh'
-          ? `DeepConnect 暂存锚点：弧段 ${shownDeepConnectDraft.arcFID} · segment ${shownDeepConnectDraft.startAnchor.segmentIndex} · fraction ${shownDeepConnectDraft.startAnchor.fraction.toPrecision(5)}；仅本地图上暂存，未提交。`
-          : `DeepConnect pending anchor: arc ${shownDeepConnectDraft.arcFID}, segment ${shownDeepConnectDraft.startAnchor.segmentIndex}, fraction ${shownDeepConnectDraft.startAnchor.fraction.toPrecision(5)}; local preview only, not submitted.`}
+          ? `DeepConnect 暂存 ${shownDeepConnectDraft.anchors.length} 个锚点：${shownDeepConnectDraft.sourceLabel}；仅本地图上暂存，未提交。`
+          : `DeepConnect has ${shownDeepConnectDraft.anchors.length} pending anchors on ${shownDeepConnectDraft.sourceLabel}; local input only, not submitted.`}
       </div>}
     </div>
     <div
@@ -987,6 +1332,8 @@ export function GeometryTopologyCanvas({
         onPointerCancel={() => {
           dragRef.current = null;
           pendingArcClickRef.current = null;
+          finalizingRef.current = false;
+          cancelPathPreview();
           setSelectionBox(null);
           setArcPointPreview(null);
           setArcDraft(null);
@@ -1024,6 +1371,13 @@ export function GeometryTopologyCanvas({
             <path d={path} fill="transparent" stroke="transparent" strokeWidth={geometryType === 'point' ? 0 : 12} vectorEffect="non-scaling-stroke" pointerEvents={geometryType === 'point' ? 'none' : geometryType === 'polygon' ? 'fill' : 'stroke'} />
           </g>;
         })}
+        {deepConnectVectorComponent && <g data-testid="geometry-topology-vector-source"
+          data-component-key={deepConnectVectorComponent.key} data-feature-fid={deepConnectVectorComponent.component.featureFID}
+          data-source-revision={deepConnectVectorComponent.source.sourceSHA256 ?? undefined}
+          pointerEvents="none" aria-hidden="true">
+          <path d={toSvgPath(deepConnectVectorComponent.component.points)} fill="none" stroke="#008c95"
+            strokeWidth={3.2} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+        </g>}
         {shownInternalArcPoints.map((row) => <circle
           key={`arc-${arcPoints!.arcFID}-internal-${row.internalPointIndex}`}
           cx={row.x}
@@ -1044,16 +1398,35 @@ export function GeometryTopologyCanvas({
           <circle cx={arcPointPreview.end.x} cy={-arcPointPreview.end.y} r={mapCellSize * 5.5}
             fill="#f59e0b" stroke="#fff" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
         </g>}
+        {shownPathPreview && shownPathPreview.coordinates.length >= 2 && <polyline
+          data-testid="geometry-topology-path-preview"
+          data-action={shownPathPreview.action}
+          data-request-id={shownPathPreview.requestID}
+          data-source-revision={shownPathPreview.sourceRevision}
+          data-draft-identity={shownPathPreview.draftIdentity}
+          data-map-id={shownPathPreview.mapID}
+          data-context-token={shownPathPreview.contextToken}
+          data-path-sha256={shownPathPreview.pathSHA256}
+          data-source-coordinates={JSON.stringify(shownPathPreview.coordinates)}
+          points={shownPathPreview.coordinates.map((point) => `${point.x},${-point.y}`).join(' ')}
+          fill="none" stroke={shownPathPreview.action === 'smartAdd' ? '#d97706' : '#7c3aed'}
+          strokeWidth={3} strokeDasharray="7 4" vectorEffect="non-scaling-stroke" pointerEvents="none" />}
         {shownArcDraft && shownArcDraftPath && <g data-testid="geometry-topology-arc-draft" aria-label={language === 'zh'
-          ? tool === 'smartAdd' ? 'SmartAdd 起止端点直线示意；不是地形追踪路径' : '尚未提交的弧段绘制预览'
-          : tool === 'smartAdd' ? 'SmartAdd endpoint guide; not the terrain-traced path' : 'Unsubmitted arc drawing preview'} pointerEvents="none">
+          ? '尚未提交的弧段绘制预览'
+          : 'Unsubmitted arc drawing preview'} pointerEvents="none">
           <path d={shownArcDraftPath} fill="none" stroke="#d97706" strokeWidth={2.5} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
           {shownArcDraft.points.map((point, index) => <circle key={`arc-draft-point-${index}`} cx={point.x} cy={-point.y} r={mapCellSize * 3.5}
             fill={index === 0 ? '#b42318' : '#d97706'} stroke="#fff" strokeWidth={1.2} vectorEffect="non-scaling-stroke" />)}
         </g>}
-        {shownDeepConnectDraft && <g data-testid="geometry-topology-deep-connect-anchor" pointerEvents="none" aria-hidden="true">
-          <circle cx={shownDeepConnectDraft.startPoint.x} cy={-shownDeepConnectDraft.startPoint.y} r={mapCellSize * 6}
-            fill="#7c3aed" stroke="#fff" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+        {shownSmartAddDraft && <g data-testid="geometry-topology-smart-add-waypoints" pointerEvents="none" aria-hidden="true">
+          {shownSmartAddDraft.points.map((point, index) => <circle key={`smart-add-waypoint-${index}`}
+            cx={point.x} cy={-point.y} r={mapCellSize * 4.5} fill={index === 0 ? '#b42318' : '#d97706'}
+            stroke="#fff" strokeWidth={1.5} vectorEffect="non-scaling-stroke" data-waypoint-index={index} />)}
+        </g>}
+        {shownDeepConnectDraft && <g data-testid="geometry-topology-deep-connect-anchors" pointerEvents="none" aria-hidden="true">
+          {shownDeepConnectDraft.anchors.map(({ point }, index) => <circle key={`deep-connect-anchor-${index}`}
+            cx={point.x} cy={-point.y} r={mapCellSize * 6} fill="#7c3aed" stroke="#fff" strokeWidth={2}
+            vectorEffect="non-scaling-stroke" data-anchor-index={index} />)}
         </g>}
         {selectionBox && <rect
           x={selectionBox.minX}

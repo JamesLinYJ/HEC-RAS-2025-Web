@@ -142,7 +142,8 @@ async function createMainWindow() {
   });
 
   let fetchObserverAttachedHere = false;
-  const geometryTopologyOnly = process.env.HECRAS_VERIFY_GEOMETRY_TOPOLOGY_ONLY === '1';
+  const geometryTopologyOnly = process.env.HECRAS_VERIFY_GEOMETRY_TOPOLOGY_ONLY === '1' ||
+      process.env.HECRAS_VERIFY_GEOMETRY_TRACE_ONLY === '1';
   if (serverSmokeMode && (geometryTopologyOnly || process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1' ||
       process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1')) {
     // A new hidden BrowserWindow may not have a renderer yet. Create one on a
@@ -203,7 +204,8 @@ async function runServerSmoke(window, baseUrl) {
   let mapUi;
   let mapPassed = true;
   try {
-    const geometryTopologyOnly = process.env.HECRAS_VERIFY_GEOMETRY_TOPOLOGY_ONLY === '1';
+    const geometryTopologyOnly = process.env.HECRAS_VERIFY_GEOMETRY_TOPOLOGY_ONLY === '1' ||
+      process.env.HECRAS_VERIFY_GEOMETRY_TRACE_ONLY === '1';
     const targetedMapOnly = geometryTopologyOnly || process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1' ||
       process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1';
     if (targetedMapOnly && !process.env.HECRAS_VERIFY_MAP_FIXTURE?.trim()) {

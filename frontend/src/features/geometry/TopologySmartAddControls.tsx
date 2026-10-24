@@ -18,6 +18,8 @@ export interface TopologySmartAddControlsProps {
   language: 'zh' | 'en';
   canApply: boolean;
   busy: boolean;
+  previewAvailable?: boolean;
+  previewState?: 'idle' | 'loading' | 'ready' | 'unavailable' | 'failed';
   terrainCapture: GeometryTopologySmartAddTerrainCapture | null;
   measuredWindow: GeometryTopologySmartAddWindow | null;
   mapCellSize: number | null;
@@ -41,7 +43,7 @@ export const TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS: GeometryTopologySmartAddOptions
   hessianMaxEuclidCells: 1500,
 };
 
-type NumericOptionKey = Exclude<keyof GeometryTopologySmartAddOptions, 'algorithm' | 'previewThrottlePixels'>;
+type NumericOptionKey = Exclude<keyof GeometryTopologySmartAddOptions, 'algorithm'>;
 export type TopologySmartAddOptionsDraft = { algorithm: string; previewThrottlePixels: string } & Record<NumericOptionKey, string>;
 export type TopologySmartAddOptionErrors = Partial<Record<keyof GeometryTopologySmartAddOptions, string>>;
 
@@ -64,6 +66,7 @@ interface NumberFieldDescriptor {
 const NUMBER_FIELDS: NumberFieldDescriptor[] = [
   { key: 'dpTolerancePixels', zh: '简化容差（px）', en: 'Simplification tolerance (px)', descriptionZh: '对路径结果执行 Douglas–Peucker 简化，单位为屏幕像素。', descriptionEn: 'Douglas–Peucker tolerance applied to the path, in screen pixels.', minimum: 0, inclusive: true },
   { key: 'maxSegmentPixels', zh: '最大线段长度（px）', en: 'Maximum segment length (px)', descriptionZh: '端点间直线距离超过此像素值时，智能路径不执行。', descriptionEn: 'Smart path is unavailable when the straight endpoint distance exceeds this pixel value.', minimum: 0, inclusive: false },
+  { key: 'previewThrottlePixels', zh: '预览节流距离（px）', en: 'Preview throttle distance (px)', descriptionZh: '光标移动小于此像素距离时跳过路径预览重算。', descriptionEn: 'Skip path-preview recomputation when the cursor moves less than this many pixels.', minimum: 0, inclusive: false },
   { key: 'highGroundAlpha', zh: 'HighGround 脊线权重 α', en: 'HighGround ridge weight α', descriptionZh: '0 表示直线偏好；数值越大越倾向沿高地脊线。', descriptionEn: 'Zero prefers straight paths; higher values bias the path toward ridges.', minimum: 0, inclusive: true },
   { key: 'highGroundBailRatio', zh: 'HighGround 搜索退出比例', en: 'HighGround search bail ratio', descriptionZh: '相对于端点直线距离的搜索退出倍率。', descriptionEn: 'Search bail multiplier relative to the straight endpoint distance.', minimum: 0, inclusive: false },
   { key: 'highGroundSnapRadiusCells', zh: 'HighGround 捕捉半径（网格）', en: 'HighGround snap radius (cells)', descriptionZh: '将目标捕捉至附近最高网格的搜索半径。', descriptionEn: 'Search radius used to snap the target to a nearby highest grid cell.', integer: true, minimum: 0, inclusive: true },
@@ -84,9 +87,7 @@ function makeOptionsDraft(options: GeometryTopologySmartAddOptions): TopologySma
     algorithm: options.algorithm,
     dpTolerancePixels: String(options.dpTolerancePixels),
     maxSegmentPixels: String(options.maxSegmentPixels),
-    // This source option only throttles live pointer-move previews in the C# UI.
-    // The current Host computes a SmartAdd path only on the endpoint click.
-    previewThrottlePixels: String(TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS.previewThrottlePixels),
+    previewThrottlePixels: String(options.previewThrottlePixels),
     highGroundAlpha: String(options.highGroundAlpha),
     highGroundBailRatio: String(options.highGroundBailRatio),
     highGroundSnapRadiusCells: String(options.highGroundSnapRadiusCells),
@@ -133,7 +134,6 @@ export function parseTopologySmartAddOptions(
   return {
     options: {
       algorithm: draft.algorithm as GeometryTopologySmartAddOptions['algorithm'],
-      previewThrottlePixels: TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS.previewThrottlePixels,
       ...values,
     },
     errors,
@@ -161,6 +161,8 @@ export function TopologySmartAddControls({
   language,
   canApply,
   busy,
+  previewAvailable = false,
+  previewState = 'unavailable',
   terrainCapture,
   measuredWindow,
   mapCellSize,
@@ -190,7 +192,17 @@ export function TopologySmartAddControls({
           ? (text ? '地图操作进行中。' : 'A map operation is in progress.')
           : !canApply
             ? (text ? '当前几何拓扑草稿尚不可编辑。' : 'The current Geometry topology draft is not editable yet.')
-            : (text ? '应用参数后，在地图上依次点选起点和终点；路径将由当前地形计算并写入未保存的几何草稿。' : 'Apply the options, then click a start and end point on the map. The current Terrain computes the path into the unsaved Geometry draft.');
+            : (text ? '点击添加起点和途经点；按 Enter 或双击完成一条弧段，按 Escape 取消。' : 'Click to add a start point and waypoints; press Enter or double-click to finish one arc, or Escape to cancel.');
+
+  const previewStatus = !previewAvailable || previewState === 'unavailable'
+    ? (text ? '当前服务未提供与此来源和草稿匹配的路径预览；最终路径仍可在完成弧段时由服务计算。' : 'The service has no path preview for this current source and draft; it can still compute the final path when the arc is completed.')
+    : previewState === 'loading'
+      ? (text ? '正在根据当前地形计算路径预览；预览尚未写入草稿。' : 'Computing a path preview from the current Terrain; the preview is not written to the draft.')
+      : previewState === 'ready'
+        ? (text ? '地图上显示的是当前地形计算的只读路径预览；完成弧段后才提交到草稿。' : 'The map shows a read-only path preview from the current Terrain; it is added to the draft only when the arc is completed.')
+        : previewState === 'failed'
+          ? (text ? '当前路径预览失败；检查服务诊断后可重试，未提交路径不会写入草稿。' : 'The current path preview failed; inspect the service diagnostic before retrying. Unsubmitted paths are not written to the draft.')
+          : (text ? '路径预览能力已就绪；添加途经点后会显示服务返回的只读预览。' : 'Path preview is available; adding a waypoint will show the read-only path returned by the service.');
 
   const terrainName = terrainReady ? terrainCapture.terrainName : null;
   const terrainPath = terrainReady ? terrainCapture.canonicalTerrainPath : null;
@@ -202,7 +214,7 @@ export function TopologySmartAddControls({
       <header className="geometry-panel-heading">
         <div>
           <h3>{text ? '智能追加弧段' : 'Smart append arc'}</h3>
-          <p>{text ? '使用当前几何的关联 Terrain，为每段端点生成顺地形路径。结果仅进入拓扑草稿。' : 'Use the associated Terrain for each endpoint pair. The result is added to the topology draft.'}</p>
+          <p>{text ? '使用当前几何的关联 Terrain 计算多途经点弧段；预览只读，完成后写入拓扑草稿。' : 'Use the associated Terrain to compute an arc through multiple waypoints; previews are read-only and the arc enters the topology draft when completed.'}</p>
         </div>
       </header>
 
@@ -229,13 +241,6 @@ export function TopologySmartAddControls({
 
         <fieldset disabled={busy} style={{ border: '1px solid #d8dee5', borderRadius: 6, padding: 10 }}>
           <legend>{text ? '路径算法' : 'Path algorithm'}</legend>
-          <div data-testid="smart-add-field-previewThrottlePixels" aria-label={text ? '预览节流参数只读说明' : 'Preview throttle read-only explanation'}
-            style={{ border: '1px solid #d8dee5', borderRadius: 6, padding: 8, marginBottom: 10 }}>
-            <strong>{text ? '预览节流距离（px）：' : 'Preview throttle distance (px): '}{TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS.previewThrottlePixels} ({text ? '源默认值，只读' : 'source default, read-only'})</strong>
-            <p style={{ margin: '4px 0 0' }}>{text
-              ? '当前界面尚未接入鼠标移动路径预览；服务仅在终点点击时计算最终路径。该参数目前不适用，提交时仍保留源默认值。'
-              : 'Live pointer-move path preview is not connected; the service computes the final path only on the endpoint click. This option is not currently applicable and remains at its source default in requests.'}</p>
-          </div>
           <label style={{ display: 'grid', gap: 4, marginBottom: 8 }}>
             <span>{text ? '算法' : 'Algorithm'}</span>
             <select data-testid="smart-add-field-algorithm" value={draft.algorithm} onChange={(event) => setOption('algorithm', event.currentTarget.value)}
@@ -265,6 +270,7 @@ export function TopologySmartAddControls({
         </fieldset>
 
         <div role="status" aria-live="polite" data-testid="smart-add-status">{status}</div>
+        <div role="status" aria-live="polite" data-testid="smart-add-preview-status">{previewStatus}</div>
         <button type="button" data-testid="geometry-topology-smart-add-apply" disabled={!canStart}
           onClick={() => { if (canStart && parsed.options) onApply(parsed.options); }}>
           {text ? '应用参数并启用智能追加' : 'Apply options and enable Smart Add'}

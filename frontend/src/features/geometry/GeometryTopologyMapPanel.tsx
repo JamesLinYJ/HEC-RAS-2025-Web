@@ -6,6 +6,7 @@ import type { GeometryTopologyMapWorkspace } from './useGeometryTopologyMap';
 import { TopologyMapArcTools } from './TopologyMapArcTools';
 import { TopologySmartAddControls } from './TopologySmartAddControls';
 import { TopologyDeepConnectControls } from './TopologyDeepConnectControls';
+import { TopologyDeepConnectVectorControls } from './TopologyDeepConnectVectorControls';
 
 export interface GeometryTopologyMapPanelProps {
   language: Language;
@@ -79,13 +80,22 @@ export function GeometryTopologyMapPanel({ language, workspace, showArcTools = f
         onRunArcCommand={(command) => { void workspace.onMapCommand(command).catch(() => undefined); }} />}
       {showArcTools && workspace.activeTool === 'smartAdd' && <TopologySmartAddControls language={language}
         canApply={workspace.canSmartAdd && workspace.draftReady} busy={workspace.interactionBusy}
+        previewAvailable={workspace.previewAvailable} previewState={workspace.previewState}
         terrainCapture={workspace.terrainCapture} measuredWindow={workspace.measuredWindow}
         mapCellSize={workspace.mapCellSize} initialOptions={workspace.smartAddOptions}
         onApply={workspace.onApplySmartAddOptions} />}
       {showArcTools && workspace.activeTool === 'deepConnect' && <TopologyDeepConnectControls language={language}
         canApply={workspace.draftReady && workspace.canvasProps.mapCaptureReady} busy={workspace.interactionBusy}
+        previewAvailable={workspace.previewAvailable} previewState={workspace.previewState}
+        sourceKind={workspace.deepConnectSourceKind} sourceLabel={workspace.deepConnectSourceLabel}
         sourceFID={workspace.deepConnectSourceFID} anchorCount={workspace.deepConnectAnchorCount}
         onCancel={workspace.onCancelDeepConnect} />}
+      {showArcTools && workspace.activeTool === 'deepConnect' && <TopologyDeepConnectVectorControls language={language}
+        candidates={workspace.vectorCandidates} inspection={workspace.vectorInspection}
+        selectedComponentKey={workspace.vectorSelectedComponentKey} busy={workspace.vectorBusy || workspace.interactionBusy}
+        canInspect={workspace.vectorCanInspect} error={workspace.vectorError}
+        onInspect={workspace.onInspectVectorSources} onSelectComponent={workspace.onSelectVectorComponent}
+        onCancel={workspace.onCancelVectorSource} />}
       <GeometryTopologyCanvas language={language} {...workspace.canvasProps} tool={canvasTool} />
     </div>
   </section>;

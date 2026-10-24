@@ -161,8 +161,28 @@ export interface GeometryTopologyDeepConnectSource {
   startSegmentFraction: number;
   endSegmentIndex: number;
   endSegmentFraction: number;
+  /** Ordered anchors for multi-click tracing; legacy start/end fields mirror the first/last entries. */
+  anchors?: GeometryTopologyDeepConnectAnchor[];
   topologySource?: GeometryTopologyDeepConnectTopologySource | null;
   vectorSource?: unknown;
+}
+
+export interface GeometryTopologyMapCommandPreviewResponse {
+  requestID: string;
+  mapID: string;
+  contextToken: string;
+  geometryRevision: string;
+  revision: string;
+  draftIdentity: string;
+  action: 'smartAdd' | 'deepConnect';
+  coordinates: GeometryTopologyCoordinate[];
+  pathSHA256: string;
+  sourceRevision: string;
+  smartAddTerrainCapture?: GeometryTopologySmartAddTerrainCapture | null;
+  deepConnectSource?: GeometryTopologyDeepConnectSource | null;
+  connectionArcFID?: number | null;
+  startNodeFID?: number | null;
+  endNodeFID?: number | null;
 }
 
 export interface GeometryTopologyMapFeature {
@@ -245,9 +265,10 @@ export type GeometryTopologyMapCommand =
       action: 'smartAdd';
       featureKind: 'arc';
       featureIDs: [];
-      coordinates: [GeometryTopologyCoordinate, GeometryTopologyCoordinate];
+      coordinates: GeometryTopologyCoordinate[];
       mapCellSize: number;
       smartAddSource: GeometryTopologySmartAddSource;
+      expectedPathSHA256?: string;
       startArcTarget?: GeometryTopologyArcSnapTarget;
       startNodeFID?: number;
       splitMode?: 'Anywhere';
@@ -259,6 +280,7 @@ export type GeometryTopologyMapCommand =
       coordinates?: null;
       mapCellSize: number;
       deepConnectSource: GeometryTopologyDeepConnectSource;
+      expectedPathSHA256?: string;
       startArcTarget?: GeometryTopologyArcSnapTarget;
       startNodeFID?: number;
       splitMode?: 'Anywhere';

@@ -2,21 +2,30 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BackendGateway, WorkbenchContext } from '../../shared/workbench';
 import type { CatalogTreeNode, CatalogTreeNodeLocator, MapDocumentTab } from '../map/mapTypes';
 import { loadMapDocumentCatalog, projectXmlSha } from '../map/ProjectTreeListener';
+import type { MapTreeSnapshot } from '../map/ProjectTreeListener';
+import type { MapAnalysisMapRequest } from '../map/analysis/mapAnalysisTypes';
 import { sameSourcePath } from '../tools/attributes/attributeTableTypes';
 import type {
   GeometryModelRequest, GeometryRow, GeometryTopologyArcPointsSnapshot, GeometryTopologyMapCommand,
   GeometryTopologyDeepConnectAnchor, GeometryTopologyMapRequestContext, GeometryTopologyMapTool,
   GeometryTopologySelectionMode, GeometryTopologySelectionScope, GeometryTopologyMarqueeHitMode,
   GeometryTopologySmartAddOptions, GeometryTopologySmartAddTerrainCapture, GeometryTopologySmartAddWindow,
-  GeometryTopologySnapshot, GeometryTopologySpatialSelectionResult,
+  GeometryTopologyMapCommandPreviewResponse, GeometryTopologySnapshot, GeometryTopologySpatialSelectionResult,
 } from './geometryTypes';
 import type {
   GeometryTopologyCanvasProps, GeometryTopologyDeepConnectGesture, GeometryTopologyDeepConnectProgress,
+  GeometryTopologyPathPreview, GeometryTopologyPathPreviewGesture, GeometryTopologyPathPreviewPriority,
+  GeometryTopologyPathPreviewState,
   GeometryTopologyNodeMove, GeometryTopologySmartAddGesture, GeometryTopologySpatialSelection,
   GeometryTopologyViewportCapture,
 } from './GeometryTopologyCanvas';
 import { TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS } from './TopologySmartAddControls';
 import { createTopologyDeepConnectCommand } from './geometryDeepConnect';
+import { useGeometryVectorSources } from './useGeometryVectorSources';
+import { createPersistedVectorDeepConnectPreview, parseVectorDeepConnectPreview,
+  deepConnectSourceEchoIdentity, vectorDeepConnectComponentSelectionKey } from './geometryVectorDeepConnect';
+import type { PersistedVectorDeepConnectComponent, PersistedVectorDeepConnectPreview, PersistedVectorDeepConnectSource,
+  VectorSourceInspectionCandidate } from './geometryVectorDeepConnect';
 
 interface MapTarget {
   key: string;
@@ -35,6 +44,7 @@ interface MapGeometryCapture {
   geometryCanonicalPath: string;
   visualizationRevision: string;
   projectRevision: string;
+  projectXmlSHA: string | null;
 }
 
 interface GeometryMapSelection {
@@ -51,6 +61,24 @@ interface ArcPointsCapture {
   draftState: string;
   draftIdentity: string;
   snapshot: GeometryTopologyArcPointsSnapshot;
+}
+
+interface PathPreviewJob {
+  id: number;
+  event: GeometryTopologyPathPreviewGesture;
+  priority: GeometryTopologyPathPreviewPriority;
+  scopeKey: string;
+  resolve: (value: GeometryTopologyMapCommandPreviewResponse | null) => void;
+}
+
+interface PathPreviewStateEntry {
+  scopeKey: string;
+  state: GeometryTopologyPathPreviewState;
+}
+
+interface PathPreviewErrorEntry {
+  scopeKey: string;
+  message: string;
 }
 
 export interface GeometryTopologyMapWorkspace {
@@ -80,8 +108,24 @@ export interface GeometryTopologyMapWorkspace {
   canSmartAdd: boolean;
   onApplySmartAddOptions: (options: GeometryTopologySmartAddOptions) => void;
   deepConnectSourceFID: number | null;
-  deepConnectAnchorCount: 0 | 1;
+  deepConnectAnchorCount: number;
   onCancelDeepConnect: () => void;
+  vectorCandidates: VectorSourceInspectionCandidate[];
+  vectorInspection: ReturnType<typeof useGeometryVectorSources>['inspection'];
+  vectorSelectedComponent: ReturnType<typeof useGeometryVectorSources>['selectedComponent'];
+  vectorSelectedComponentKey: string | null;
+  vectorBusy: boolean;
+  vectorCanInspect: boolean;
+  vectorError?: string;
+  onInspectVectorSources: () => void;
+  onSelectVectorComponent: (source: PersistedVectorDeepConnectSource | null, component: PersistedVectorDeepConnectComponent | null) => void;
+  onCancelVectorSource: () => void;
+  deepConnectSourceKind: 'topology' | 'vector' | null;
+  deepConnectSourceLabel: string | null;
+  previewAvailable: boolean;
+  previewScopeKey: string;
+  previewState: GeometryTopologyPathPreviewState;
+  pathPreview: GeometryTopologyPathPreview | null;
   draftReady: boolean;
   draftDirty: boolean;
   onTableSelectionChange: (kind: 'node' | 'arc', rows: GeometryRow[]) => void;
@@ -152,6 +196,28 @@ function walk(nodes: CatalogTreeNode[]): CatalogTreeNode[] {
   return result;
 }
 
+function checkedVisibleVectorCandidates(roots: CatalogTreeNode[] | null | undefined): VectorSourceInspectionCandidate[] {
+  const candidates: VectorSourceInspectionCandidate[] = [];
+  const visit = (node: CatalogTreeNode, ancestorsChecked: boolean): void => {
+    const checked = ancestorsChecked && node.checked !== 'unchecked';
+    const locator = node.locator;
+    if (checked && node.checked === 'checked' && locator &&
+        ((locator.nodeType === 'MapLayer' && (locator.mapType === 'PolylinesVector' || locator.mapType === 'PolygonsVector')) ||
+          locator.nodeType === 'GdbVectorLayer' || locator.mapType === 'GdbVectorLayer')) {
+      candidates.push({ node: locator, expectedFamily: null });
+    }
+    for (const child of node.children ?? []) visit(child, checked);
+  };
+  roots?.forEach((root) => visit(root, true));
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = stableJSON(candidate.node);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function sameNodePath(left?: number[] | null, right?: number[] | null): boolean {
   if (left == null || right == null) return left == null && right == null;
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -210,6 +276,49 @@ function validateMapGeometrySnapshot(value: unknown, target: MapTarget, projectR
   return snapshot as MapGeometrySnapshot;
 }
 
+interface ExpectedMapCommandPreview {
+  mapRequestContext: GeometryTopologyMapRequestContext;
+  revision: string;
+  draftIdentity: string;
+  action: 'smartAdd' | 'deepConnect';
+  sourceRevision: string;
+  command: GeometryTopologyMapCommand;
+}
+
+function validateMapCommandPreview(value: unknown, expected: ExpectedMapCommandPreview): GeometryTopologyMapCommandPreviewResponse {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Host 路径预览回执格式无效。');
+  const raw = value as Record<string, unknown>;
+  const context = expected.mapRequestContext;
+  const strings = ['requestID', 'mapID', 'contextToken', 'geometryRevision', 'revision', 'draftIdentity', 'action', 'pathSHA256', 'sourceRevision'];
+  if (strings.some((key) => typeof raw[key] !== 'string' || !String(raw[key]).trim()) ||
+      raw.requestID !== context.requestID || raw.mapID !== context.mapID || raw.contextToken !== context.contextToken ||
+      !sameRevision(String(raw.geometryRevision), expected.revision) || !sameRevision(String(raw.revision), expected.revision) ||
+      !sameRevision(String(raw.draftIdentity), expected.draftIdentity) || raw.action !== expected.action ||
+      !sameRevision(String(raw.sourceRevision), expected.sourceRevision) ||
+      !/^[0-9a-f]{64}$/i.test(String(raw.pathSHA256)) || !Array.isArray(raw.coordinates) || raw.coordinates.length < 2) {
+    throw new Error('Host 路径预览回执与当前地图、几何草稿、来源修订或操作不匹配。');
+  }
+  const coordinates = raw.coordinates.map((value, index) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Host 路径预览第 ${index + 1} 个坐标无效。`);
+    const point = value as Record<string, unknown>;
+    if (typeof point.x !== 'number' || !Number.isFinite(point.x) || typeof point.y !== 'number' || !Number.isFinite(point.y)) {
+      throw new Error(`Host 路径预览第 ${index + 1} 个坐标无效。`);
+    }
+    return { x: point.x, y: point.y };
+  });
+  const command = expected.command;
+  if (command.action === 'smartAdd' &&
+      (!raw.smartAddTerrainCapture || stableJSON(raw.smartAddTerrainCapture) !== stableJSON(command.smartAddSource.terrainCapture))) {
+    throw new Error('Host 路径预览没有回显完全相同的 Terrain 捕获。');
+  }
+  if (command.action === 'deepConnect' &&
+      (!raw.deepConnectSource || stableJSON(deepConnectSourceEchoIdentity(raw.deepConnectSource)) !==
+        stableJSON(deepConnectSourceEchoIdentity(command.deepConnectSource)))) {
+    throw new Error('Host 路径预览没有回显完全相同的 DeepConnect 来源或锚点。');
+  }
+  return { ...raw, coordinates } as unknown as GeometryTopologyMapCommandPreviewResponse;
+}
+
 function selectionFromResult(result: GeometryTopologySpatialSelectionResult): GeometryMapSelection {
   const selection: GeometryMapSelection = { node: [], arc: [], region: [] };
   for (const feature of result.selections) {
@@ -252,6 +361,9 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const [smartAddOptions, setSmartAddOptions] = useState<GeometryTopologySmartAddOptions>(TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS);
   const [deepConnectProgressEntry, setDeepConnectProgressEntry] = useState<OwnerValue<GeometryTopologyDeepConnectProgress | null> | null>(null);
   const [mapCellSize, setMapCellSize] = useState<number | null>(null);
+  const [pathPreviewEntry, setPathPreviewEntry] = useState<GeometryTopologyPathPreview | null>(null);
+  const [previewStateEntry, setPreviewStateEntry] = useState<PathPreviewStateEntry | null>(null);
+  const [pathPreviewErrorEntry, setPathPreviewErrorEntry] = useState<PathPreviewErrorEntry | null>(null);
   const catalogGenerationRef = useRef(0);
   const mapCaptureGenerationRef = useRef(0);
   const spatialGenerationRef = useRef(0);
@@ -259,6 +371,15 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const moveGenerationRef = useRef(0);
   const mapCommandInFlightRef = useRef(false);
   const arcPointsGenerationRef = useRef(0);
+  const pathPreviewGenerationRef = useRef(0);
+  const pathPreviewActiveRef = useRef<{ job: PathPreviewJob; controller: AbortController } | null>(null);
+  const pathPreviewPendingRef = useRef<PathPreviewJob | null>(null);
+  const pathPreviewLatestRef = useRef<GeometryTopologyPathPreview | null>(null);
+  const lastPreviewPointerRef = useRef<{ scopeKey: string; action: string; point: { x: number; y: number }; cellSize: number } | null>(null);
+  const pathPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pathPreviewExecutorRef = useRef<(job: PathPreviewJob, signal: AbortSignal) => Promise<GeometryTopologyMapCommandPreviewResponse>>(
+    async () => { throw new Error('路径预览执行器尚未初始化。'); },
+  );
   const onLoadArcPointsRef = useRef(onLoadArcPoints); onLoadArcPointsRef.current = onLoadArcPoints;
   const topologyRef = useRef(topology); topologyRef.current = topology;
   const captureRef = useRef(captureEntry); captureRef.current = captureEntry;
@@ -338,6 +459,341 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const progressKey = JSON.stringify([owner, selectedTarget?.key ?? null, topology?.revision ?? null,
     topology?.draftState ?? null, draftIdentity ?? null]);
   const deepConnectProgress = deepConnectProgressEntry?.owner === progressKey ? deepConnectProgressEntry.value : null;
+  const vectorMapRequest = useMemo<MapAnalysisMapRequest | null>(() => {
+    if (!capture || !selectedTarget || !context.projectPath || context.projectXml == null || !capture.projectXmlSHA ||
+        !selectedTarget.document.visualizationRevision || !context.projectSessionID) return null;
+    return {
+      projectPath: context.projectPath,
+      projectXml: context.projectXml,
+      projectXmlSHA: capture.projectXmlSHA,
+      mapID: selectedTarget.document.mapID,
+      mapIndex: selectedTarget.document.mapIndex,
+      mapName: selectedTarget.document.name,
+      mapType: selectedTarget.document.mapType,
+      expectedVisualizationRevision: selectedTarget.document.visualizationRevision,
+      projectSessionID: context.projectSessionID,
+      ...(mapContext.coreLayerContext ? { coreLayerContext: mapContext.coreLayerContext } : {}),
+    };
+  }, [capture, context.projectPath, context.projectSessionID, context.projectXml, mapContext.coreLayerContext, selectedTarget]);
+  const vectorMapTree = useMemo<MapTreeSnapshot | null>(() => {
+    const document = selectedTarget?.document;
+    if (!document?.visualizationRevision) return null;
+    return {
+      roots: document.roots,
+      previousVisualizationRevision: null,
+      visualizationRevision: document.visualizationRevision,
+      expandedNodeIDs: [],
+      selectedNodeID: null,
+      hiddenLayerIDs: [],
+    };
+  }, [selectedTarget]);
+  const vectorCandidates = useMemo(() => checkedVisibleVectorCandidates(selectedTarget?.document.roots), [selectedTarget]);
+  const vectorSources = useGeometryVectorSources({
+    active: active && activeTool === 'deepConnect',
+    backend,
+    backendRevision,
+    mapRequest: vectorMapRequest,
+    tree: vectorMapTree,
+    projectRevision: context.projectRevision,
+    geometryModel: model,
+    geometryRevision: topology?.revision ?? null,
+    topologyDraftState: topology?.draftState ?? null,
+    topologyDraftIdentity: draftIdentity ?? null,
+    targetGeometryNode: selectedTarget?.geometryNode ?? null,
+    targetGeometryCanonicalPath: capture?.geometryCanonicalPath ?? null,
+    targetGeometryRevision: capture?.geometryRevision ?? null,
+  });
+  const pathPreviewScopeKey = JSON.stringify([
+    active, backendRevision ?? null, owner, ownerContextKey, mapSourceKey, capture?.mapID ?? null, capture?.contextToken ?? null,
+    capture?.geometryRevision ?? null, topology?.revision ?? null, topology?.draftState ?? null, draftIdentity ?? null,
+    activeTool, activeTool === 'smartAdd' ? smartAddOptions : null,
+    activeTool === 'smartAdd' ? measuredWindow : null,
+    activeTool === 'smartAdd' ? terrainCapture : null,
+    activeTool === 'deepConnect' ? vectorSources.selectedComponent?.key ?? null : null,
+    vectorSources.inspectionOwnerKey,
+  ]);
+  const previewAvailable = backend.supports('topology.mapCommand.preview') && mapCaptureReady && draftReady &&
+    ((activeTool === 'smartAdd' && canSmartAdd) || (activeTool === 'deepConnect' && canEdit));
+  const pathPreview = pathPreviewEntry?.scopeKey === pathPreviewScopeKey ? pathPreviewEntry : null;
+  const previewState = previewStateEntry?.scopeKey === pathPreviewScopeKey
+    ? previewStateEntry.state : previewAvailable ? 'idle' : 'unavailable';
+  const pathPreviewError = pathPreviewErrorEntry?.scopeKey === pathPreviewScopeKey
+    ? pathPreviewErrorEntry.message : undefined;
+  const pathPreviewScopeRef = useRef(pathPreviewScopeKey);
+  pathPreviewScopeRef.current = pathPreviewScopeKey;
+  const startPathPreviewJobRef = useRef<(job: PathPreviewJob) => void>(() => undefined);
+  const cancelPathPreview = useCallback((): void => {
+    pathPreviewGenerationRef.current += 1;
+    if (pathPreviewTimerRef.current) clearTimeout(pathPreviewTimerRef.current);
+    pathPreviewTimerRef.current = null;
+    pathPreviewActiveRef.current?.controller.abort();
+    pathPreviewActiveRef.current = null;
+    const pending = pathPreviewPendingRef.current;
+    pathPreviewPendingRef.current = null;
+    pending?.resolve(null);
+    lastPreviewPointerRef.current = null;
+    pathPreviewLatestRef.current = null;
+    setPathPreviewEntry(null);
+    setPreviewStateEntry({ scopeKey: pathPreviewScopeRef.current, state: 'idle' });
+    setPathPreviewErrorEntry(null);
+  }, []);
+
+  pathPreviewExecutorRef.current = async (job, signal) => {
+    const latest = topologyRef.current;
+    const capturedMap = captureRef.current?.owner === ownerContextKey &&
+      captureRef.current.value.targetKey === targetKeyRef.current ? captureRef.current.value : undefined;
+    const currentDraftIdentity = latest?.completion?.draftIdentity;
+    const viewport = measuredViewportRef.current?.sourceKey === mapSourceKey ? measuredViewportRef.current : null;
+    if (signal.aborted || !active || !model || !latest || !capturedMap || !currentDraftIdentity || !viewport || !draftReady) {
+      throw new DOMException('路径预览的地图、Geometry 草稿或相机捕获已过期。', 'AbortError');
+    }
+    const assertCurrent = (): void => {
+      const currentTopology = topologyRef.current;
+      const currentMapCapture = captureRef.current?.owner === ownerContextKey &&
+        captureRef.current.value.targetKey === targetKeyRef.current ? captureRef.current.value : undefined;
+      const currentViewport = measuredViewportRef.current?.sourceKey === mapSourceKey ? measuredViewportRef.current : null;
+      if (signal.aborted || job.scopeKey !== pathPreviewScopeRef.current || !active || !draftReady ||
+          currentTopology?.revision !== latest.revision || currentTopology.draftState !== latest.draftState ||
+          currentTopology.completion?.draftIdentity !== currentDraftIdentity ||
+          !sameRevision(currentTopology.completion?.sourceRevision, currentTopology.revision) ||
+          currentMapCapture?.mapID !== capturedMap.mapID || currentMapCapture.contextToken !== capturedMap.contextToken ||
+          currentMapCapture.geometryRevision !== capturedMap.geometryRevision ||
+          currentViewport?.mapCellSize !== viewport.mapCellSize || job.event.mapCellSize !== viewport.mapCellSize) {
+        throw new DOMException('路径预览的地图、Geometry 草稿或相机捕获已过期。', 'AbortError');
+      }
+    };
+    assertCurrent();
+
+    const mapRequestContext: GeometryTopologyMapRequestContext = {
+      requestID: requestID(),
+      mapID: capturedMap.mapID,
+      contextToken: capturedMap.contextToken,
+      geometryRevision: capturedMap.geometryRevision,
+      expectedDraftIdentity: currentDraftIdentity,
+    };
+    let command: GeometryTopologyMapCommand;
+    let sourceRevision: string;
+    let body: unknown;
+    let vectorPreview: PersistedVectorDeepConnectPreview | null = null;
+
+    if (job.event.action === 'smartAdd') {
+      const event = job.event;
+      const currentTerrain = latest.smartAddTerrainCapture;
+      const currentWindow = measuredViewportRef.current?.sourceKey === mapSourceKey
+        ? measuredViewportRef.current : null;
+      const path = event.coordinates;
+      if (!canSmartAdd || !currentTerrain || !currentWindow || event.coordinates.length < 2 ||
+          event.coordinates.length > 512 || event.coordinates.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y)) ||
+          stableJSON(event.window) !== stableJSON({ extent: currentWindow.viewport, rows: currentWindow.rows, columns: currentWindow.columns }) ||
+          stableJSON(event.window) !== stableJSON(measuredWindow) ||
+          (event.startNodeFID != null && (latest.nodes.rows.filter((row) => row.fid === event.startNodeFID).length !== 1 ||
+            latest.nodes.rows.find((row) => row.fid === event.startNodeFID)?.x !== path[0]?.x ||
+            latest.nodes.rows.find((row) => row.fid === event.startNodeFID)?.y !== path[0]?.y)) ||
+          (event.startArcTarget != null && (event.splitMode !== 'Anywhere' ||
+            !latest.map?.features.some((feature) => feature.featureKind === 'arc' && feature.fid === event.startArcTarget!.arcFID &&
+              feature.paths.length === 1 && event.startArcTarget!.sourceSegmentIndex >= 0 &&
+              event.startArcTarget!.sourceSegmentIndex < feature.paths[0]!.length - 1 &&
+              feature.paths[0]!.some((point) => Number.isFinite(point.x) && Number.isFinite(point.y))) ||
+            path[0]?.x !== event.startArcTarget.point.x || path[0]?.y !== event.startArcTarget.point.y))) {
+        throw new DOMException('SmartAdd 预览需要当前的实测视野、Terrain 捕获和有效途经点。', 'AbortError');
+      }
+      if (path.some((point, index) => index > 0 && point.x === path[index - 1]?.x && point.y === path[index - 1]?.y)) {
+        throw new Error('相邻 SmartAdd 途经点不能重合。');
+      }
+      sourceRevision = currentTerrain.sourceRevision;
+      command = {
+        action: 'smartAdd', featureKind: 'arc', featureIDs: [], coordinates: path.map((point) => ({ ...point })),
+        mapCellSize: event.mapCellSize,
+        smartAddSource: { terrainCapture: currentTerrain, window: event.window, options: smartAddOptions },
+        ...(event.startNodeFID != null ? { startNodeFID: event.startNodeFID } : {}),
+        ...(event.startArcTarget ? { startArcTarget: event.startArcTarget, splitMode: 'Anywhere' as const } : {}),
+      };
+      body = {
+        model: model!, revision: latest.revision, draftState: latest.draftState,
+        mutation: { operation: 'mapCommand', featureKind: 'map', featureIDs: [], mapCommand: command },
+        mapRequestContext,
+      };
+    } else {
+      const event = job.event;
+      if (event.anchors.length < 2 || event.anchors.length > 512) {
+        throw new Error('DeepConnect 需要同一精确来源上的 2 至 512 个锚点。');
+      }
+      sourceRevision = latest.revision;
+      if (event.sourceKind === 'topology') {
+        const feature = latest.map?.features.filter((item) => item.featureKind === 'arc' && item.fid === event.sourceFID) ?? [];
+        const sourcePath = feature.length === 1 && feature[0]?.geometryType === 'line' && feature[0].paths.length === 1
+          ? feature[0].paths[0] : undefined;
+        if (event.componentKey || !sourcePath || sourcePath.length < 2 ||
+            !latest.arcs.rows.some((row) => row.fid === event.sourceFID) ||
+            event.sourceKey !== `topology:arc:${event.sourceFID}`) {
+          throw new DOMException('拓扑 DeepConnect 来源不再是当前唯一弧段。', 'AbortError');
+        }
+        const first = event.anchors[0]!;
+        const last = event.anchors[event.anchors.length - 1]!;
+        const base = createTopologyDeepConnectCommand({
+          model: model!, topology: latest, mapRequestContext, mapCellSize: event.mapCellSize,
+          arcFID: event.sourceFID, startAnchor: first, endAnchor: last,
+        });
+        if (base.action !== 'deepConnect') throw new Error('拓扑 DeepConnect 命令类型无效。');
+        command = {
+          ...base,
+          deepConnectSource: {
+            ...base.deepConnectSource,
+            anchors: event.anchors.map((anchor) => ({ ...anchor })),
+          },
+        };
+        body = {
+          model: model!, revision: latest.revision, draftState: latest.draftState,
+          mutation: { operation: 'mapCommand', featureKind: 'map', featureIDs: [], mapCommand: command },
+          mapRequestContext,
+        };
+      } else {
+        const selected = vectorSources.selectedComponent;
+        if (!selected || selected.key !== event.componentKey || selected.component.featureFID !== event.sourceFID ||
+            event.sourceKey !== `vector:${selected.key}` || !vectorMapRequest || !context.projectRevision) {
+          throw new DOMException('矢量 DeepConnect 来源组件已变更或过期。', 'AbortError');
+        }
+        vectorPreview = createPersistedVectorDeepConnectPreview({
+          model: model!, topology: latest, mapRequestContext, mapCellSize: event.mapCellSize,
+          currentMapRequest: vectorMapRequest, currentProjectRevision: context.projectRevision,
+          source: selected.source, component: selected.component, anchors: event.anchors,
+        });
+        command = vectorPreview.command;
+        body = vectorPreview.request;
+        sourceRevision = selected.source.sourceSHA256 ?? '';
+      }
+    }
+
+    if (!backend.supports('topology.mapCommand.preview')) {
+      throw new Error('当前 C# 服务没有发布 topology.mapCommand.preview。');
+    }
+    const raw = await backend.request<unknown>('topology.mapCommand.preview', body, { signal });
+    assertCurrent();
+    if (job.event.action === 'deepConnect' && job.event.sourceKind === 'vector') {
+      if (!vectorPreview) throw new Error('矢量来源预览捕获缺失。');
+      const parsed = parseVectorDeepConnectPreview(raw, vectorPreview);
+      const response = validateMapCommandPreview(raw, {
+        mapRequestContext, revision: latest.revision, draftIdentity: currentDraftIdentity,
+        action: 'deepConnect', sourceRevision, command,
+      });
+      if (parsed.pathSHA256 !== response.pathSHA256 || stableJSON(parsed.coordinates) !== stableJSON(response.coordinates)) {
+        throw new Error('矢量 DeepConnect 两层预览校验结果不一致。');
+      }
+      return response;
+    }
+    return validateMapCommandPreview(raw, {
+      mapRequestContext, revision: latest.revision, draftIdentity: currentDraftIdentity,
+      action: job.event.action, sourceRevision, command,
+    });
+  };
+
+  const startPathPreviewJob = useCallback((job: PathPreviewJob): void => {
+    if (job.scopeKey !== pathPreviewScopeRef.current) { job.resolve(null); return; }
+    const controller = new AbortController();
+    pathPreviewActiveRef.current = { job, controller };
+    setPathPreviewErrorEntry(null);
+    setPreviewStateEntry({ scopeKey: job.scopeKey, state: 'loading' });
+    void pathPreviewExecutorRef.current(job, controller.signal)
+      .then((response) => {
+        const current = !controller.signal.aborted && job.scopeKey === pathPreviewScopeRef.current &&
+          job.id === pathPreviewGenerationRef.current;
+        if (!current) { job.resolve(null); return; }
+        const entry = { scopeKey: job.scopeKey, response };
+        pathPreviewLatestRef.current = entry;
+        setPathPreviewEntry(entry);
+        setPathPreviewErrorEntry(null);
+        setPreviewStateEntry({ scopeKey: job.scopeKey, state: 'ready' });
+        job.resolve(response);
+      })
+      .catch((caught: unknown) => {
+        const current = !controller.signal.aborted && job.scopeKey === pathPreviewScopeRef.current &&
+          job.id === pathPreviewGenerationRef.current;
+        if (current && !(caught instanceof DOMException && caught.name === 'AbortError')) {
+          const message = caught instanceof Error ? caught.message :
+            typeof caught === 'string' ? caught : String(caught);
+          setPathPreviewErrorEntry({
+            scopeKey: job.scopeKey,
+            message: message.trim() || '路径预览失败，Host 未返回诊断。',
+          });
+          setPreviewStateEntry({ scopeKey: job.scopeKey, state: 'failed' });
+        }
+        job.resolve(null);
+      })
+      .finally(() => {
+        if (pathPreviewActiveRef.current?.job.id !== job.id) return;
+        pathPreviewActiveRef.current = null;
+        const pending = pathPreviewPendingRef.current;
+        if (!pending) return;
+        pathPreviewPendingRef.current = null;
+        if (pending.priority === 'pointer') {
+          pathPreviewPendingRef.current = pending;
+          if (pathPreviewTimerRef.current) clearTimeout(pathPreviewTimerRef.current);
+          pathPreviewTimerRef.current = setTimeout(() => {
+            pathPreviewTimerRef.current = null;
+            const next = pathPreviewPendingRef.current;
+            pathPreviewPendingRef.current = null;
+            if (next) startPathPreviewJobRef.current(next);
+          }, 80);
+        } else startPathPreviewJobRef.current(pending);
+      });
+  }, []);
+  startPathPreviewJobRef.current = startPathPreviewJob;
+
+  const onPathPreview = useCallback((event: GeometryTopologyPathPreviewGesture,
+    priority: GeometryTopologyPathPreviewPriority): Promise<GeometryTopologyMapCommandPreviewResponse | null> => {
+    if (!previewAvailable) return Promise.resolve(null);
+    const scopeKey = pathPreviewScopeKey;
+    if (priority !== 'pointer') {
+      // A committed waypoint/anchor changes the path input even when the
+      // pointer itself has not moved far enough to pass the throttle.
+      lastPreviewPointerRef.current = null;
+      pathPreviewLatestRef.current = null;
+    }
+    const lastPointer = lastPreviewPointerRef.current;
+    const thresholdPixels = event.action === 'smartAdd' ? smartAddOptions.previewThrottlePixels : 1.5;
+    if (priority === 'pointer' && lastPointer?.scopeKey === scopeKey && lastPointer.action === event.action &&
+        lastPointer.cellSize === event.mapCellSize && Math.hypot(lastPointer.point.x - event.pointer.x,
+          lastPointer.point.y - event.pointer.y) < thresholdPixels * event.mapCellSize) {
+      const latest = pathPreviewLatestRef.current;
+      return Promise.resolve(latest?.scopeKey === scopeKey && latest.response.action === event.action ? latest.response : null);
+    }
+    lastPreviewPointerRef.current = { scopeKey, action: event.action, point: { ...event.pointer }, cellSize: event.mapCellSize };
+    const id = ++pathPreviewGenerationRef.current;
+    const jobPromise = new Promise<GeometryTopologyMapCommandPreviewResponse | null>((resolve) => {
+      const job: PathPreviewJob = { id, event, priority, scopeKey, resolve };
+      setPathPreviewEntry(null);
+      setPreviewStateEntry({ scopeKey, state: 'loading' });
+      if (priority !== 'pointer') {
+        if (pathPreviewTimerRef.current) clearTimeout(pathPreviewTimerRef.current);
+        pathPreviewTimerRef.current = null;
+        pathPreviewActiveRef.current?.controller.abort();
+        pathPreviewActiveRef.current = null;
+        pathPreviewPendingRef.current?.resolve(null);
+        pathPreviewPendingRef.current = null;
+        startPathPreviewJobRef.current(job);
+      } else if (pathPreviewActiveRef.current) {
+        pathPreviewPendingRef.current?.resolve(null);
+        pathPreviewPendingRef.current = job;
+      } else {
+        pathPreviewPendingRef.current?.resolve(null);
+        pathPreviewPendingRef.current = job;
+        if (!pathPreviewTimerRef.current) {
+          pathPreviewTimerRef.current = setTimeout(() => {
+            pathPreviewTimerRef.current = null;
+            const next = pathPreviewPendingRef.current;
+            pathPreviewPendingRef.current = null;
+            if (next) startPathPreviewJobRef.current(next);
+          }, 80);
+        }
+      }
+    });
+    return jobPromise;
+  }, [pathPreviewScopeKey, previewAvailable, smartAddOptions.previewThrottlePixels]);
+
+  useEffect(() => {
+    cancelPathPreview();
+    return cancelPathPreview;
+  }, [pathPreviewScopeKey, cancelPathPreview]);
 
   useEffect(() => {
     spatialGenerationRef.current += 1;
@@ -497,6 +953,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
           geometryCanonicalPath: snapshot.geometryCanonicalPath,
           visualizationRevision: snapshot.visualizationRevision,
           projectRevision: snapshot.projectRevision,
+          projectXmlSHA,
         } });
       } catch (caught) {
         if (isMapLoadCurrent() && !(caught instanceof DOMException && caught.name === 'AbortError')) {
@@ -541,9 +998,39 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   }, [progressKey]);
 
   const onCancelDeepConnect = useCallback((): void => {
+    cancelPathPreview();
     setDeepConnectProgressEntry({ owner: progressKey, value: null });
     setActiveTool('select');
-  }, [progressKey]);
+  }, [cancelPathPreview, progressKey]);
+
+  const onInspectVectorSources = useCallback((): void => {
+    setError(undefined);
+    vectorSources.reload();
+  }, [vectorSources.reload]);
+
+  const onSelectVectorComponent = useCallback((source: PersistedVectorDeepConnectSource | null,
+    component: PersistedVectorDeepConnectComponent | null): void => {
+    if (!source || !component) {
+      vectorSources.onSelectedComponentChange(null);
+      setDeepConnectProgressEntry({ owner: progressKey, value: null });
+      cancelPathPreview();
+      return;
+    }
+    const key = vectorDeepConnectComponentSelectionKey(source, component);
+    if (!vectorSources.components.some((item) => item.key === key && item.source.key === source.key)) {
+      setError('所选矢量组件不属于当前 Host 已验证的地图来源。');
+      vectorSources.onSelectedComponentChange(null);
+      return;
+    }
+    vectorSources.onSelectedComponentChange(key);
+    cancelPathPreview();
+  }, [cancelPathPreview, progressKey, vectorSources.components, vectorSources.onSelectedComponentChange]);
+
+  const onCancelVectorSource = useCallback((): void => {
+    vectorSources.onSelectedComponentChange(null);
+    setDeepConnectProgressEntry({ owner: progressKey, value: null });
+    cancelPathPreview();
+  }, [cancelPathPreview, progressKey, vectorSources.onSelectedComponentChange]);
 
   const onTableSelectionChange = useCallback((kind: 'node' | 'arc', rows: GeometryRow[]): void => {
     const fids = [...new Set(rows.flatMap((row) => Number.isInteger(row.fid) && row.fid! >= 0 ? [row.fid!] : []))];
@@ -693,60 +1180,93 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
       if (!sameCapturedMapScale || !canSmartAdd || !currentViewport || !source || !currentTerrain ||
           stableJSON(source.terrainCapture) !== stableJSON(currentTerrain) ||
           stableJSON(window) !== stableJSON({ extent: currentViewport.viewport, rows: currentViewport.rows, columns: currentViewport.columns }) ||
-          command.coordinates.length !== 2 || command.coordinates.some((point) => !validCoordinate(point)) ||
-          sameCoordinate(command.coordinates[0], command.coordinates[1]) ||
+          stableJSON(source.options ?? null) !== stableJSON(smartAddOptions) ||
+          command.coordinates.length < 2 || command.coordinates.length > 512 ||
+          command.coordinates.some((point) => !validCoordinate(point)) ||
+          command.coordinates.some((point, index) => index > 0 && sameCoordinate(point, command.coordinates[index - 1]!)) ||
+          !/^[0-9a-f]{64}$/.test(command.expectedPathSHA256 ?? '') ||
           (command.startNodeFID != null && (!validNode(command.startNodeFID) || !nodePoint(command.startNodeFID) ||
             !sameCoordinate(command.coordinates[0], nodePoint(command.startNodeFID)!))) ||
           (command.startArcTarget != null && (!validArc(command.startArcTarget.arcFID) ||
             !validSegment(command.startArcTarget.arcFID, command.startArcTarget.sourceSegmentIndex) ||
             !validCoordinate(command.startArcTarget.point) ||
-            !sameCoordinate(command.coordinates[0], command.startArcTarget.point) || command.splitMode !== 'Anywhere'))) {
+            !sameCoordinate(command.coordinates[0], command.startArcTarget.point) || command.splitMode !== 'Anywhere')) ||
+          (command.startNodeFID != null && command.startArcTarget != null)) {
         throw new DOMException('SmartAdd 的地形捕获、实测窗口、起点或地图比例已过期。', 'AbortError');
       }
     } else if (command.action === 'deepConnect') {
       const source = command.deepConnectSource;
       const sourceOwner = source?.topologySource;
       const mapOwner = currentCapture;
-      const sourcePath = source?.featureFID != null ? arcFeature(source.featureFID)?.paths[0] : undefined;
-      const startAnchor = source ? { segmentIndex: source.startSegmentIndex, fraction: source.startSegmentFraction } : null;
-      const endAnchor = source ? { segmentIndex: source.endSegmentIndex, fraction: source.endSegmentFraction } : null;
-      const validAnchor = (anchor: GeometryTopologyDeepConnectAnchor | null): anchor is GeometryTopologyDeepConnectAnchor => !!anchor &&
-        Number.isInteger(anchor.segmentIndex) && anchor.segmentIndex >= 0 &&
-        !!sourcePath && anchor.segmentIndex < sourcePath.length - 1 &&
-        Number.isFinite(anchor.fraction) && anchor.fraction >= 0 && anchor.fraction <= 1;
-      const mapRequest = sourceOwner?.mapRequestContext;
-      let startCoordinate: { x: number; y: number } | null = null;
-      if (validAnchor(startAnchor) && sourcePath) {
-        const first = sourcePath[startAnchor.segmentIndex];
-        const second = sourcePath[startAnchor.segmentIndex + 1];
-        if (first && second) startCoordinate = {
-          x: first.x + (second.x - first.x) * startAnchor.fraction,
-          y: first.y + (second.y - first.y) * startAnchor.fraction,
-        };
-      }
-      if (!sameCapturedMapScale || !source || !mapOwner || source.sourceKind !== 'topology' || source.vectorSource != null ||
-          !sourceOwner || stableJSON(sourceOwner.model) !== stableJSON(model) || sourceOwner.featureKind !== 'arc' ||
-          sourceOwner.revision !== current.revision || sourceOwner.draftState !== current.draftState ||
-          sourceOwner.draftIdentity !== currentDraftIdentity || sourceOwner.featureID !== `arc:${source.featureFID}` ||
-          !mapRequest || mapRequest.mapID !== mapOwner.mapID || mapRequest.contextToken !== mapOwner.contextToken ||
-          mapRequest.geometryRevision !== mapOwner.geometryRevision || mapRequest.expectedDraftIdentity !== currentDraftIdentity ||
-          source.sourceLocator !== `arc:${source.featureFID}` || source.sourceRevision !== current.revision ||
-          source.pathIndex !== 0 || source.componentIdentity !== `arc:${source.featureFID}:path:0` ||
-          !validArc(source.featureFID) || !Array.isArray(source.points) || !sourcePath || sourcePath.length !== source.points.length ||
-          sourcePath.some((point, index) => !sameCoordinate(point, source.points[index]!)) ||
-          !validAnchor(startAnchor) || !validAnchor(endAnchor) || command.coordinates !== null ||
-          (command.startNodeFID != null && (!validNode(command.startNodeFID) || !nodePoint(command.startNodeFID) ||
-            !startCoordinate || !sameCoordinate(startCoordinate, nodePoint(command.startNodeFID)!))) ||
-          (command.startNodeFID == null && command.startArcTarget == null) ||
-          (command.startArcTarget != null && (!validArc(command.startArcTarget.arcFID) ||
-            command.startArcTarget.arcFID !== source.featureFID ||
-            command.startArcTarget.sourceSegmentIndex !== startAnchor.segmentIndex || !startCoordinate ||
-            !validSegment(command.startArcTarget.arcFID, command.startArcTarget.sourceSegmentIndex) ||
-            !validCoordinate(command.startArcTarget.point) || !sameCoordinate(startCoordinate, command.startArcTarget.point) ||
-            command.splitMode !== 'Anywhere')) ||
-          (command.startNodeFID != null && command.startArcTarget != null) ||
-          (command.startNodeFID != null && command.splitMode != null)) {
+      const anchors = source?.anchors?.length ? source.anchors : source
+        ? [{ segmentIndex: source.startSegmentIndex, fraction: source.startSegmentFraction },
+          { segmentIndex: source.endSegmentIndex, fraction: source.endSegmentFraction }]
+        : [];
+      const firstAnchor = anchors[0];
+      const lastAnchor = anchors[anchors.length - 1];
+      const currentVector = vectorSources.selectedComponent;
+      if (!sameCapturedMapScale || !source || !mapOwner || command.coordinates !== null ||
+          !/^[0-9a-f]{64}$/.test(command.expectedPathSHA256 ?? '') || anchors.length < 2 || anchors.length > 512 ||
+          source.startSegmentIndex !== firstAnchor?.segmentIndex || source.startSegmentFraction !== firstAnchor?.fraction ||
+          source.endSegmentIndex !== lastAnchor?.segmentIndex || source.endSegmentFraction !== lastAnchor?.fraction ||
+          source.anchors && stableJSON(source.anchors) !== stableJSON(anchors)) {
         throw new DOMException('DeepConnect 的源弧段、锚点或地图草稿捕获已过期。', 'AbortError');
+      }
+      if (source.sourceKind === 'topology') {
+        const sourcePath = arcFeature(source.featureFID)?.paths[0];
+        const mapRequest = sourceOwner?.mapRequestContext;
+        const validAnchor = (anchor: GeometryTopologyDeepConnectAnchor): boolean => Number.isInteger(anchor.segmentIndex) &&
+          anchor.segmentIndex >= 0 && !!sourcePath && anchor.segmentIndex < sourcePath.length - 1 &&
+          Number.isFinite(anchor.fraction) && anchor.fraction >= 0 && anchor.fraction <= 1;
+        if (source.vectorSource != null || !sourceOwner || stableJSON(sourceOwner.model) !== stableJSON(model) ||
+            sourceOwner.featureKind !== 'arc' || sourceOwner.revision !== current.revision ||
+            sourceOwner.draftState !== current.draftState || sourceOwner.draftIdentity !== currentDraftIdentity ||
+            sourceOwner.featureID !== `arc:${source.featureFID}` || !mapRequest || mapRequest.mapID !== mapOwner.mapID ||
+            mapRequest.contextToken !== mapOwner.contextToken || mapRequest.geometryRevision !== mapOwner.geometryRevision ||
+            mapRequest.expectedDraftIdentity !== currentDraftIdentity || !mapRequest.requestID ||
+            source.sourceLocator !== `arc:${source.featureFID}` || source.sourceRevision !== current.revision ||
+            source.pathIndex !== 0 || source.componentIdentity !== `arc:${source.featureFID}:path:0` ||
+            !validArc(source.featureFID) || !Array.isArray(source.points) || !sourcePath || sourcePath.length !== source.points.length ||
+            sourcePath.some((point, index) => !sameCoordinate(point, source.points[index]!)) || anchors.some((anchor) => !validAnchor(anchor))) {
+          throw new DOMException('拓扑 DeepConnect 的弧段来源、完整折线或草稿捕获已过期。', 'AbortError');
+        }
+        const expected = createTopologyDeepConnectCommand({
+          model: model!, topology: current,
+          mapRequestContext: mapRequest,
+          mapCellSize: command.mapCellSize,
+          arcFID: source.featureFID,
+          startAnchor: firstAnchor!, endAnchor: lastAnchor!,
+        });
+        if (expected.action !== 'deepConnect' ||
+            stableJSON(expected.deepConnectSource && { ...expected.deepConnectSource, anchors: anchors.map((anchor) => ({ ...anchor })) }) !== stableJSON(source) ||
+            expected.startNodeFID !== command.startNodeFID || stableJSON(expected.startArcTarget ?? null) !== stableJSON(command.startArcTarget ?? null) ||
+            expected.splitMode !== command.splitMode || source.vectorSource != null) {
+          throw new DOMException('拓扑 DeepConnect 的确认命令与当前来源捕获不一致。', 'AbortError');
+        }
+      } else if (source.sourceKind === 'vector') {
+        if (!currentVector || !vectorMapRequest || !context.projectRevision || source.topologySource != null ||
+            source.sourceRevision !== currentVector.source.sourceSHA256 ||
+            source.featureFID !== currentVector.component.featureFID || source.pathIndex !== currentVector.component.pathIndex ||
+            source.componentIdentity !== currentVector.component.componentIdentity ||
+            stableJSON(source.points) !== stableJSON(currentVector.component.points)) {
+          throw new DOMException('矢量 DeepConnect 的 Host 来源组件或修订已变更。', 'AbortError');
+        }
+        const expected = createPersistedVectorDeepConnectPreview({
+          model: model!, topology: current,
+          mapRequestContext: {
+            requestID: requestID(), mapID: mapOwner.mapID, contextToken: mapOwner.contextToken,
+            geometryRevision: mapOwner.geometryRevision, expectedDraftIdentity: currentDraftIdentity,
+          },
+          mapCellSize: command.mapCellSize, currentMapRequest: vectorMapRequest,
+          currentProjectRevision: context.projectRevision,
+          source: currentVector.source, component: currentVector.component, anchors,
+        });
+        if (stableJSON(expected.command.deepConnectSource) !== stableJSON(source) ||
+            expected.command.startNodeFID !== command.startNodeFID || command.startArcTarget != null || command.splitMode != null) {
+          throw new DOMException('矢量 DeepConnect 确认命令与当前来源组件不一致。', 'AbortError');
+        }
+      } else {
+        throw new DOMException('DeepConnect 来源类型不受支持。', 'AbortError');
       }
     }
     if (command.action === 'moveArcPoint' || command.action === 'deleteArcPoint') {
@@ -799,7 +1319,8 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
       if (generation === moveGenerationRef.current) setMoveBusy(false);
     }
   }, [active, arcPoints, arcPointsEntry, busy, canEdit, canSmartAdd, editMapCommand, mapSourceKey,
-    model, moveBusy, owner, ownerContextKey, spatialBusy]);
+    model, moveBusy, owner, ownerContextKey, spatialBusy, smartAddOptions, context.projectRevision,
+    vectorMapRequest, vectorSources.selectedComponent]);
 
   const onSmartAdd = useCallback(async (event: GeometryTopologySmartAddGesture): Promise<void> => {
     const current = topologyRef.current;
@@ -807,6 +1328,8 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
       ? measuredViewportRef.current : null;
     const currentTerrain = current?.smartAddTerrainCapture;
     if (!active || !current || !currentTerrain || !capturedWindow || !canSmartAdd ||
+        event.coordinates.length < 2 || event.coordinates.length > 512 ||
+        !/^[0-9a-f]{64}$/.test(event.expectedPathSHA256) ||
         event.mapCellSize !== capturedWindow.mapCellSize ||
         stableJSON(event.window) !== stableJSON({ extent: capturedWindow.viewport, rows: capturedWindow.rows, columns: capturedWindow.columns }) ||
         stableJSON(event.window) !== stableJSON(measuredWindow)) {
@@ -819,6 +1342,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
       coordinates: event.coordinates,
       mapCellSize: event.mapCellSize,
       smartAddSource: { terrainCapture: currentTerrain, window: event.window, options: smartAddOptions },
+      expectedPathSHA256: event.expectedPathSHA256,
       ...(event.startNodeFID != null ? { startNodeFID: event.startNodeFID } : {}),
       ...(event.startArcTarget ? { startArcTarget: event.startArcTarget, splitMode: 'Anywhere' as const } : {}),
     };
@@ -832,27 +1356,48 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     const currentDraftIdentity = current?.completion?.draftIdentity;
     const currentViewport = measuredViewportRef.current?.sourceKey === mapSourceKey ? measuredViewportRef.current : null;
     if (!active || !model || !current || !currentCapture || !currentDraftIdentity || !currentViewport ||
+        event.anchors.length < 2 || event.anchors.length > 512 || !/^[0-9a-f]{64}$/.test(event.expectedPathSHA256) ||
         !canEdit || !sameRevision(current.revision, currentCapture.geometryRevision) ||
         !sameRevision(current.completion?.sourceRevision, current.revision) || event.mapCellSize !== currentViewport.mapCellSize) {
       throw new DOMException('DeepConnect 当前地图捕获或拓扑草稿已过期。', 'AbortError');
     }
-    const command = createTopologyDeepConnectCommand({
-      model,
-      topology: current,
-      mapRequestContext: {
-        requestID: requestID(),
-        mapID: currentCapture.mapID,
-        contextToken: currentCapture.contextToken,
-        geometryRevision: currentCapture.geometryRevision,
-        expectedDraftIdentity: currentDraftIdentity,
-      },
-      mapCellSize: event.mapCellSize,
-      arcFID: event.arcFID,
-      startAnchor: event.startAnchor,
-      endAnchor: event.endAnchor,
-    });
+    const mapRequestContext: GeometryTopologyMapRequestContext = {
+      requestID: requestID(), mapID: currentCapture.mapID, contextToken: currentCapture.contextToken,
+      geometryRevision: currentCapture.geometryRevision, expectedDraftIdentity: currentDraftIdentity,
+    };
+    let command: GeometryTopologyMapCommand;
+    if (event.sourceKind === 'topology') {
+      const first = event.anchors[0]!;
+      const last = event.anchors[event.anchors.length - 1]!;
+      const base = createTopologyDeepConnectCommand({
+        model, topology: current, mapRequestContext, mapCellSize: event.mapCellSize,
+        arcFID: event.sourceFID, startAnchor: first, endAnchor: last,
+      });
+      if (base.action !== 'deepConnect') throw new Error('拓扑 DeepConnect 命令类型无效。');
+      command = {
+        ...base,
+        deepConnectSource: {
+          ...base.deepConnectSource,
+          anchors: event.anchors.map((anchor) => ({ ...anchor })),
+        },
+        expectedPathSHA256: event.expectedPathSHA256,
+      };
+    } else {
+      const selected = vectorSources.selectedComponent;
+      if (!selected || selected.key !== event.componentKey || selected.component.featureFID !== event.sourceFID ||
+          event.sourceKey !== `vector:${selected.key}` || !vectorMapRequest || !context.projectRevision) {
+        throw new DOMException('矢量 DeepConnect 来源组件已变更或过期。', 'AbortError');
+      }
+      const preview = createPersistedVectorDeepConnectPreview({
+        model, topology: current, mapRequestContext, mapCellSize: event.mapCellSize,
+        currentMapRequest: vectorMapRequest, currentProjectRevision: context.projectRevision,
+        source: selected.source, component: selected.component, anchors: event.anchors,
+      });
+      command = { ...preview.command, expectedPathSHA256: event.expectedPathSHA256 };
+    }
     await runMapCommand(command);
-  }, [active, canEdit, mapSourceKey, model, ownerContextKey, runMapCommand]);
+  }, [active, canEdit, context.projectRevision, mapSourceKey, model, ownerContextKey, runMapCommand, vectorMapRequest,
+    vectorSources.selectedComponent]);
 
   const onMoveNode = useCallback((event: GeometryTopologyNodeMove): void => {
     const currentSelection = selectionRef.current?.owner === owner ? selectionRef.current.value : emptySelection();
@@ -871,6 +1416,11 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     currentDraftIdentity: draftIdentity ?? null,
     map: topology?.map ?? null,
     arcPoints,
+    previewScopeKey: pathPreviewScopeKey,
+    previewAvailable,
+    previewState,
+    pathPreview,
+    deepConnectVectorComponent: vectorSources.selectedComponent,
     selectedFIDByKind: selection,
     canSelect: backend.supports('topology.spatialSelect'),
     canMoveNodes: canEdit && mapCaptureReady,
@@ -886,11 +1436,14 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     onMapCommand: runMapCommand,
     onSmartAdd,
     onDeepConnect,
+    onPathPreview,
+    onCancelPathPreview: cancelPathPreview,
     onDeepConnectProgress,
   }), [activeTool, arcPoints, arcPointsLoading, backend, canEdit, capturing, draftIdentity, loading, splitMode,
     canSmartAdd, mapCaptureReady, marqueeHitMode, moveBusy, onDeepConnect, onDeepConnectProgress, onMoveNode,
-    onSmartAdd, onViewportReady, onSpatialSelect, owner, runMapCommand, selection, selectionMode, selectionScope,
-    selectedTarget?.key, spatialBusy, topology?.map, busy]);
+    onSmartAdd, onPathPreview, cancelPathPreview, onViewportReady, onSpatialSelect, owner, runMapCommand, selection, selectionMode, selectionScope,
+    selectedTarget?.key, spatialBusy, topology?.map, busy, pathPreviewScopeKey, previewAvailable, previewState, pathPreview,
+    vectorSources.selectedComponent]);
 
   return {
     targets: targets.map(({ key, label }) => ({ key, label })),
@@ -899,7 +1452,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     loading,
     capturing,
     interactionBusy: spatialBusy || moveBusy || arcPointsLoading,
-    error,
+    error: pathPreviewError ? [error, `路径预览：${pathPreviewError}`].filter(Boolean).join('\n') : error,
     selectionScope,
     onSelectionScopeChange: setSelectionScope,
     selectionMode,
@@ -918,9 +1471,25 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     smartAddOptions,
     canSmartAdd,
     onApplySmartAddOptions,
-    deepConnectSourceFID: deepConnectProgress?.arcFID ?? null,
+    deepConnectSourceFID: deepConnectProgress?.sourceKind === 'topology' ? deepConnectProgress.sourceFID : null,
     deepConnectAnchorCount: deepConnectProgress?.anchorCount ?? 0,
+    deepConnectSourceKind: deepConnectProgress?.sourceKind ?? null,
+    deepConnectSourceLabel: deepConnectProgress?.sourceLabel ?? null,
     onCancelDeepConnect,
+    vectorCandidates,
+    vectorInspection: vectorSources.inspection,
+    vectorSelectedComponent: vectorSources.selectedComponent,
+    vectorSelectedComponentKey: vectorSources.selectedComponentKey,
+    vectorBusy: vectorSources.loading,
+    vectorCanInspect: !!vectorMapRequest && !!vectorMapTree && mapCaptureReady && canEdit && !busy,
+    ...(vectorSources.error ? { vectorError: vectorSources.error } : {}),
+    onInspectVectorSources,
+    onSelectVectorComponent,
+    onCancelVectorSource,
+    previewAvailable,
+    previewScopeKey: pathPreviewScopeKey,
+    previewState,
+    pathPreview,
     draftReady,
     draftDirty: !!topology?.isDirty,
     onTableSelectionChange,

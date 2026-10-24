@@ -148,6 +148,9 @@ internal static partial class ServerAcceptance
         CoreLayerRequestContext? coreLayerContext = PropertyOrNull(opened.Result, "coreLayerContext").ValueKind == JsonValueKind.Object
             ? Property(opened.Result, "coreLayerContext").Deserialize<CoreLayerRequestContext>(JsonOptions)
             : null;
+        // A browser workspace owns a project session even when a saved Geometry
+        // model has no optional core-layer override context.
+        string projectSessionID = coreLayerContext?.ProjectSessionID ?? Guid.NewGuid().ToString("D");
 
         OperationReceipt listed = await SubmitOperationAsync(client, "map.document.list", new
         {
@@ -175,7 +178,7 @@ internal static partial class ServerAcceptance
             string mapID = Guid.NewGuid().ToString("D");
             var candidateRequest = new MapTreeRequest(projectPath, projectXml, projectXmlSHA,
                 mapID, mapIndex, mapName, mapType, visualizationRevision,
-                ProjectSessionID: coreLayerContext?.ProjectSessionID,
+                ProjectSessionID: projectSessionID,
                 CoreLayerContext: coreLayerContext);
             OperationReceipt treeReceipt = await SubmitOperationAsync(client, "map.tree.load", candidateRequest, cancellation);
             operations.Add(OperationEntry("map.tree.load", treeReceipt));
@@ -347,7 +350,7 @@ internal static partial class ServerAcceptance
         {
             var exactRequest = new MapTreeRequest(projectPath, projectXml, projectXmlSHA,
                 owner.MapID, owner.MapIndex, owner.MapName, owner.MapType, currentVisualizationRevision,
-                ProjectSessionID: coreLayerContext?.ProjectSessionID,
+                ProjectSessionID: projectSessionID,
                 CoreLayerContext: coreLayerContext);
             OperationReceipt treeReceipt = await SubmitOperationAsync(client, "map.tree.load", exactRequest, cancellation);
             operations.Add(OperationEntry("map.tree.load/refresh", treeReceipt));

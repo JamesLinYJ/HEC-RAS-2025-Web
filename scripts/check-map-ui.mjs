@@ -7,6 +7,7 @@ import { checkGdbRasterUI } from './check-gdb-raster-ui.mjs';
 import { checkResultHoverUI } from './check-result-hover-ui.mjs';
 import { checkTerrainUI } from './check-terrain-ui.mjs';
 import { checkGeometryMapUI } from './check-geometry-map-ui.mjs';
+import { checkGeometryTraceUI } from './check-geometry-trace-ui.mjs';
 
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex').toUpperCase();
 
@@ -40,6 +41,11 @@ export async function checkMapUI({ fixture, output, evaluate, waitFor, command, 
     assert.equal(fixture?.schema, 'hecras-geometry-topology-map-http-e2e/v1',
       'Geometry topology-only acceptance requires its dedicated source-backed manifest.');
     return await checkGeometryMapUI({ manifest: fixture, output, evaluate, waitFor, command, navigate, report });
+  }
+  if (process.env.HECRAS_VERIFY_GEOMETRY_TRACE_ONLY === '1') {
+    assert.equal(fixture?.schema, 'hecras-geometry-topology-map-http-e2e/v1',
+      'Geometry trace-only acceptance requires its dedicated source-backed manifest.');
+    return await checkGeometryTraceUI({ manifest: fixture, output, evaluate, waitFor, command, navigate, report });
   }
   const resultHoverOnly = process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1';
   const terrainOnly = process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1';

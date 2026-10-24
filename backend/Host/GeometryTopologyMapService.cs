@@ -612,10 +612,7 @@ public static partial class ModelEditorAdapter
         if (node.MapType is not ("PolylinesVector" or "PolygonsVector")
             || map.MapID != mapRequestContext.MapID
             || !SameOptionalCanonicalPath(map.ProjectPath, model.ProjectPath)
-            || !string.Equals(map.ProjectSessionID, model.CoreLayerContext?.ProjectSessionID,
-                StringComparison.Ordinal)
-            || !string.Equals(map.CoreLayerContext?.IdentityToken, model.CoreLayerContext?.IdentityToken,
-                StringComparison.Ordinal))
+            || !SameOptionalMapCoreLayerContext(map, model))
             throw new SourceFileChangedException();
 
         MapSourceNodeLocation location = MapSourceIdentity.ResolvePersistedNode(map, node);
@@ -709,6 +706,21 @@ public static partial class ModelEditorAdapter
         MapSourceIdentity.VerifyPersistedNode(map, capture);
         VerifyVisibleMapVectorSource(map, node);
         return line;
+    }
+
+    private static bool SameOptionalMapCoreLayerContext(MapTreeRequest map,
+        GeometryTopologyModelRequest model)
+    {
+        CoreLayerRequestContext? expected = model.CoreLayerContext;
+        CoreLayerRequestContext? actual = map.CoreLayerContext;
+        if (expected is null)
+            return actual is null && map.ExternalCoreLayerReferences is not { Length: > 0 };
+        if (actual is null) return false;
+
+        string? resolvedMapSessionID = map.ProjectSessionID ?? actual.ProjectSessionID;
+        return string.Equals(actual.ProjectSessionID, expected.ProjectSessionID, StringComparison.Ordinal)
+            && string.Equals(resolvedMapSessionID, expected.ProjectSessionID, StringComparison.Ordinal)
+            && string.Equals(actual.IdentityToken, expected.IdentityToken, StringComparison.Ordinal);
     }
 
     private static void VerifyVisibleMapVectorSource(MapTreeRequest request,

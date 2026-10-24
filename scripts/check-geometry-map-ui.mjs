@@ -17,7 +17,9 @@ export const geometryMapFetchObserverSource = String.raw`(() => {
   if (window.__hecGeometryMapObserver?.version === 1) return;
   const methods = new Set([
     'project.open', 'project.tree.load', 'catalog.tree.load', 'model.load', 'topology.load',
-    'map.geometry.load', 'topology.spatialSelect', 'topology.edit',
+    'map.document.list', 'map.tree.load', 'map.geometry.load',
+    'topology.spatialSelect', 'topology.edit', 'topology.mapCommand.preview',
+    'topology.vectorSource.inspect',
   ]);
   const maximumRecords = 240;
   const trace = { version: 1, items: [], dropped: 0 };
@@ -326,7 +328,7 @@ export async function checkGeometryMapUI({ manifest, output, evaluate, waitFor, 
   async function selectSavedMap() {
     const selector = '[data-testid="geometry-topology-map-workspace"] header select';
     await waitFor(`Boolean(Array.from(document.querySelector(${JSON.stringify(selector)})?.options ?? []).length)`,
-      'exact saved Geometry map selector');
+      'exact saved Geometry map selector', 60_000);
     const option = await evaluate(`(()=>{const select=document.querySelector(${JSON.stringify(selector)});` +
       `const matches=Array.from(select.options).filter(option=>{try{const tuple=JSON.parse(option.value);` +
       `return tuple?.[1]?.assetID===${JSON.stringify(fixture.geometryPath)}&&` +

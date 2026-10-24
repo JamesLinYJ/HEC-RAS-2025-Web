@@ -99,7 +99,8 @@ export async function runElectronMapUISmoke({ window, fixturePath, serverUrl }) 
         const image = await window.capturePage(undefined, { stayHidden: true });
         return { data: image.toPNG().toString('base64') };
       }
-      assert.equal(method, 'Input.dispatchMouseEvent', `Unsupported Electron map smoke command: ${method}`);
+      assert.ok(method === 'Input.dispatchMouseEvent' || method === 'Input.dispatchKeyEvent',
+        `Unsupported Electron map smoke command: ${method}`);
       const debuggerClient = webContents.debugger;
       if (!debuggerClient.isAttached()) {
         debuggerClient.attach('1.3');
@@ -129,6 +130,7 @@ export async function runElectronMapUISmoke({ window, fixturePath, serverUrl }) 
     result.resultHover = checkReport.resultHover;
     result.terrain = checkReport.terrain;
     result.geometryTopology = checkReport.geometryTopology;
+    result.geometryTrace = checkReport.geometryTrace;
     result.modelCopies = checkReport.modelCopies;
     result.savedMapLayout = checkReport.savedMapLayout;
     result.gdbVelocity = checkReport.gdbVelocity;
@@ -143,6 +145,7 @@ export async function runElectronMapUISmoke({ window, fixturePath, serverUrl }) 
     result.resultHover = checkReport.resultHover;
     result.terrain = checkReport.terrain;
     result.geometryTopology = checkReport.geometryTopology;
+    result.geometryTrace = checkReport.geometryTrace;
     result.modelCopies = checkReport.modelCopies;
     result.savedMapLayout = checkReport.savedMapLayout;
     result.gdbVelocity = checkReport.gdbVelocity;
