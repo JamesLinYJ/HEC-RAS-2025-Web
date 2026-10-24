@@ -14,9 +14,12 @@ try {
     logLevel: 'silent',
     build: {
       lib: {
-        entry: path.join(root, 'frontend/src/features/editors/SchemaFieldRenderer.tsx'),
+        entry: {
+          'editor-validation': path.join(root, 'frontend/src/features/editors/SchemaFieldRenderer.tsx'),
+          'terrain-input-type': path.join(root, 'frontend/src/features/editors/terrainTopologyTypes.ts'),
+        },
         formats: ['es'],
-        fileName: () => 'editor-validation.mjs',
+        fileName: (_format, entryName) => `${entryName}.mjs`,
       },
       outDir: temporary,
       emptyOutDir: true,
@@ -48,7 +51,10 @@ try {
   assert.deepEqual(validateModelDraft(draft({ [functional]: 'NaN' }), schemas,
     { ...snapshot, readOnlyFields: [functional] }, 'zh'), [],
     'An explicitly read-only Host field must remain outside editable validation.');
-  console.log(JSON.stringify({ state: 'passed', checks: 4, scope: 'editor-schema-owner-validation' }));
+  const { isPolygonTerrainInputType } = await import(pathToFileURL(path.join(temporary, 'terrain-input-type.mjs')).href);
+  assert.equal(isPolygonTerrainInputType('Polygon'), true, 'The real Host TypeName must enable both the polygon editor and its parent topology transaction.');
+  assert.equal(isPolygonTerrainInputType('ChannelModTerrainInput'), false, 'Channel terrain input must not be routed into polygon topology.');
+  console.log(JSON.stringify({ state: 'passed', checks: 6, scope: 'editor-schema-owner-and-terrain-type-validation' }));
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

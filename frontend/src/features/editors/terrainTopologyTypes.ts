@@ -162,3 +162,9 @@ export interface TerrainTopologyResponse {
   snapshot: ModelSnapshot;
   topology: TerrainTopologyData;
 }
+
+/** Matches the Host TerrainInput.TypeName plus older CLR-name captures. */
+export function isPolygonTerrainInputType(type?: string): boolean {
+  return type === 'Polygon' || type === 'PolygonRasterModTerrainInput' ||
+    type?.endsWith('.PolygonRasterModTerrainInput') === true;
+}

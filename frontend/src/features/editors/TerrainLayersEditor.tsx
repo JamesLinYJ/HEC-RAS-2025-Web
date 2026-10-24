@@ -13,6 +13,7 @@ import { DetailedTerrainInputHeader } from './DetailedTerrainInputHeader';
 import { TerrainAddControl } from './TerrainAddControl';
 import { LeveeModTerrainInputEditor } from './LeveeModTerrainInputEditor';
 import { TerrainPolygonMapEditor } from './TerrainPolygonMapEditor';
+import { isPolygonTerrainInputType } from './terrainTopologyTypes';
 
 const selectedInputField = 'TerrainLayersEditor/SelectedInputWithMap';
 const channelFeatureTableID = 'ChannelModEditor/Features';
@@ -60,7 +61,7 @@ export function TerrainLayersEditor(props: EditorPageProps) {
     : [];
   const tableByID = terrain?.tables ?? {};
   const channelSchemaSelected = selected.schema === 'ChannelModTerrainInputProperties';
-  const polygonRasterModSelected = selected.type === 'PolygonRasterModTerrainInput' || selected.type.endsWith('.PolygonRasterModTerrainInput');
+  const polygonRasterModSelected = isPolygonTerrainInputType(selected.type);
   const hasLeveeTables = selectedInputIsLoaded && (tableByID[leveeFeatureTableID] !== undefined || tableByID[leveePropertyTableID] !== undefined);
   const transform = props.onTerrainTransform;
 

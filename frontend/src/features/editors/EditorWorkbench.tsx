@@ -1,3 +1,4 @@
+import { isPolygonTerrainInputType } from './terrainTopologyTypes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { message, text } from '../../shared/workbench';
@@ -1390,7 +1391,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       || !baseline.canEdit || !source.context.projectPath
       || !backend.supports('model.terrainTopology') || !backend.supports('model.save')) return null;
     const selectedInput = terrain.inputs.find((input) => input.id === command.inputId);
-    const isPolygonInput = isPolygonRasterModInput(selectedInput?.type);
+    const isPolygonInput = isPolygonTerrainInputType(selectedInput?.type);
     if (validations.length || command.inputId !== terrain.selectedId || !selectedInput) {
       setSaveErrors(validations);
       setSaveMessage(text(language, '请先修正草稿中的无效值，并重新选择当前地形输入。', 'Correct invalid draft values and reselect the current terrain input.'));
@@ -2258,10 +2259,6 @@ function terrainMapProjectOwner(context: WorkbenchContext, asset: NonNullable<Wo
     projectSessionID: context.projectSessionID,
     ...(core ? { coreLayerContext: core } : {}),
   };
-}
-
-function isPolygonRasterModInput(type?: string): boolean {
-  return type === 'PolygonRasterModTerrainInput' || type?.endsWith('.PolygonRasterModTerrainInput') === true;
 }
 
 function sameTerrainSourcePath(left: string, right: string): boolean {
