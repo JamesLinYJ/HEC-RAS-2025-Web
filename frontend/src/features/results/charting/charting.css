@@ -1,0 +1,9 @@
+.results-chart-scrollbar { padding: 2px 1px 4px; }
+.results-chart-scrollbar-track { position: relative; height: 22px; overflow: hidden; border: 1px solid rgba(148, 181, 194, .22); border-radius: 4px; background: rgba(5, 20, 29, .72); cursor: ew-resize; touch-action: none; }
+.results-chart-scrollbar-preview { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .48; pointer-events: none; }
+.results-chart-scrollbar-preview path { fill: none; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.results-chart-scrollbar-thumb { position: absolute; top: 0; bottom: 0; min-width: 8px; box-sizing: border-box; border: 1px solid rgba(118, 212, 184, .85); border-radius: 3px; background: rgba(72, 175, 148, .19); cursor: grab; touch-action: none; }
+.results-chart-scrollbar-thumb:hover, .results-chart-scrollbar-thumb:focus-visible { border-color: #a1ead0; background: rgba(72, 175, 148, .3); outline: none; }
+.results-chart-scrollbar-thumb:active { cursor: grabbing; }
+.results-chart-y-axis-hit-area { cursor: ns-resize; touch-action: none; }
+.results-chart-y-selection { fill: rgba(72, 175, 148, .13); stroke: rgba(82, 203, 170, .65); stroke-width: 1; pointer-events: none; }

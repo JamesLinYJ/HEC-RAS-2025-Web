@@ -1,0 +1,35 @@
+{
+  "name": "hec-ras-2025-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared React UI for browser and Electron, backed by an ASP.NET Core C# server.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "build:server": "node scripts/build-server.mjs",
+    "build:web": "npm run typecheck && vite build",
+    "test:ui": "node scripts/verify-ui.mjs",
+    "test:gateway": "node scripts/verify-gateway.mjs",
+    "test:wasm": "node scripts/verify-wasm.mjs",
+    "serve:web": "node scripts/start-server.mjs",
+    "setup:desktop": "node node_modules/electron/install.js",
+    "desktop": "npm run build:web && node desktop/launch.mjs",
+    "smoke:electron": "npm run build:web && node desktop/launch.mjs --server-smoke",
+    "smoke:electron-ui": "npm run build:web && node desktop/launch.mjs --ui-smoke",
+    "smoke:electron:wasm": "npm run build:web && npm run build:wasm && electron desktop/main.mjs --wasm-smoke"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "40.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.4"
+  }
+}

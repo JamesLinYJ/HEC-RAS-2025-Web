@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Ras.Runtime</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <MaxRevGdalCliEnablePathInitializer>false</MaxRevGdalCliEnablePathInitializer>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Hec.Dss/Hec.Dss.csproj" />
+    <ProjectReference Include="../H5Assist/H5Assist.csproj" />
+    <ProjectReference Include="../Geospatial.GDALAssist/Geospatial.GDALAssist.csproj" />
+  </ItemGroup>
+</Project>

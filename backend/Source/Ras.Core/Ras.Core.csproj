@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Ras.Core</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <TargetFramework>net10.0</TargetFramework>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <CheckForOverflowUnderflow>False</CheckForOverflowUnderflow>
+  </PropertyGroup>
+  <PropertyGroup />
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="../Utility.Core/Utility.Core.csproj" />
+    <ProjectReference Include="../Geospatial.GDALAssist/Geospatial.GDALAssist.csproj" />
+    <ProjectReference Include="../H5Assist/H5Assist.csproj" />
+    <ProjectReference Include="../Utility.Communication/Utility.Communication.csproj" />
+    <ProjectReference Include="../Geospatial.Core/Geospatial.Core.csproj" />
+    <ProjectReference Include="../Ras.Engine/Ras.Engine.csproj" />
+    <ProjectReference Include="../TiffAssist/TiffAssist.csproj" />
+    <ProjectReference Include="../TiffBinaryReader/TiffBinaryReader.csproj" />
+    <ProjectReference Include="../Geospatial.IO/Geospatial.IO.csproj" />
+    <ProjectReference Include="../Hec.Dss/Hec.Dss.csproj" />
+    <ProjectReference Include="../Geospatial.Rendering/Geospatial.Rendering.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" Version="4.0.22.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,10 @@
+<Project>
+  <Target Name="RasConfigureToolLibrariesForBuild" AfterTargets="MaxRevGdalCliFixRPath;Build"
+      Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$(MaxRevGdalCliRid)' == 'osx-arm64'">
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)Tools/configure_tool_libraries.py&quot; &quot;$(TargetDir)&quot;" />
+  </Target>
+  <Target Name="RasConfigureToolLibrariesForPublish" AfterTargets="Publish"
+      Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$(MaxRevGdalCliRid)' == 'osx-arm64'">
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)Tools/configure_tool_libraries.py&quot; &quot;$(PublishDir)&quot;" />
+  </Target>
+</Project>

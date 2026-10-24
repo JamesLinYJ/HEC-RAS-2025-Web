@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Nullable>annotations</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <MaxRevGdalCliEnablePathInitializer>false</MaxRevGdalCliEnablePathInitializer>
+  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)../MacRuntime.targets" />
+</Project>

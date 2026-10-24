@@ -1,0 +1,150 @@
+import { useMemo, useState } from 'react';
+import type { Language } from '../../shared/workbench';
+import { GeometryFeatureTable } from './GeometryFeatureTable';
+import { gdiagnostic, gerror, gfield, gmode, gt } from './geometryText';
+import { GeometryError } from './GeometryError';
+import { FlowAreaEditorControl } from './FlowAreaEditorControl';
+import { MeshErrorProperties } from './MeshErrorProperties';
+import { geometryDiagnosticMessage } from './geometryErrors';
+import type { GeometryField, GeometryRow, GeometryTable, GeometryMeshDegreeScan, GeometryMeshSnapshot } from './geometryTypes';
+
+export interface GeometryMeshPageProps {
+  language: Language;
+  snapshot?: GeometryMeshSnapshot;
+  localRegionRows: GeometryRow[];
+  busy: boolean;
+  canEdit: boolean;
+  canGenerate: boolean;
+  canPrepare: boolean;
+  canDegreeScan: boolean;
+  canPropertyTables: boolean;
+  onFlowAreaChange: (row: GeometryRow, field: GeometryField, value: string, isLocal: boolean) => void;
+  onRegionSelection: (ids: number[]) => void;
+  onPrepare: () => void;
+  onGenerate: (progress: (progress: unknown) => void) => Promise<void>;
+  onDegreeScan: (maxFacesPerNode: number) => Promise<GeometryMeshDegreeScan>;
+  onPropertyTables: () => Promise<unknown>;
+}
+
+function flowAreaTable(snapshot: GeometryMeshSnapshot | undefined, language: Language): GeometryTable | undefined {
+  if (!snapshot) return undefined;
+  return {
+    featureKind: 'flowArea',
+    columns: [
+      { id: 'Name', title: gt(language, 'name'), sourceType: 'string', readOnly: false },
+      { id: 'TargetedCellSpacing', title: gt(language, 'targetSpacing'), sourceType: 'double', readOnly: false },
+      { id: 'HasMesh', title: gt(language, 'hasMesh'), sourceType: 'bool' },
+      { id: 'CellCount', title: gt(language, 'cells'), sourceType: 'int' },
+      { id: 'FaceCount', title: gt(language, 'faces'), sourceType: 'int' },
+      { id: 'NodeCount', title: gt(language, 'meshNodes'), sourceType: 'int' },
+    ],
+    editableFields: [
+      { id: 'Name', title: gt(language, 'name'), sourceType: 'string' },
+      { id: 'TargetedCellSpacing', title: gt(language, 'targetSpacing'), sourceType: 'double', minimum: 0 },
+    ],
+    rows: snapshot.flowAreas.map((area) => ({
+      id: area.id,
+      fid: area.rowIndex,
+      values: {
+        Name: area.name,
+        TargetedCellSpacing: area.targetedCellSpacing == null || Number.isNaN(area.targetedCellSpacing) ? '' : String(area.targetedCellSpacing),
+        HasMesh: String(area.hasMesh),
+        CellCount: String(area.cellCount),
+        FaceCount: String(area.faceCount),
+        NodeCount: String(area.nodeCount),
+      },
+    })),
+  };
+}
+
+function pretty(value: unknown): string {
+  if (value == null) return '';
+  return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+export function GeometryMeshPage({
+  language, snapshot, localRegionRows, busy, canEdit, canGenerate, canPrepare, canDegreeScan, canPropertyTables,
+  onFlowAreaChange, onRegionSelection, onPrepare, onGenerate, onDegreeScan, onPropertyTables,
+}: GeometryMeshPageProps) {
+  const [maximumFaces, setMaximumFaces] = useState('8');
+  const [progress, setProgress] = useState('');
+  const [taskError, setTaskError] = useState('');
+  const [degreeOutput, setDegreeOutput] = useState('');
+  const [degreeScanResult, setDegreeScanResult] = useState<GeometryMeshDegreeScan>();
+  const [propertyOutput, setPropertyOutput] = useState('');
+  const flowAreas = useMemo(() => flowAreaTable(snapshot, language), [language, snapshot]);
+  const selectedRegionIDSet = new Set(snapshot?.selectedRegionIDs ?? []);
+  const regions = useMemo(() => snapshot ? {
+    ...snapshot.regions,
+    rows: snapshot.regions.rows.map((row) => ({ ...row, values: { ...row.values, __selected: String(selectedRegionIDSet.has(row.fid ?? -1)) } })),
+  } : undefined, [snapshot, selectedRegionIDSet]);
+
+  const generate = async (): Promise<void> => {
+    setTaskError(''); setProgress('');
+    try {
+      await onGenerate((value) => setProgress(pretty(value)));
+    } catch (error) {
+      setTaskError(geometryDiagnosticMessage(error));
+    }
+  };
+  const scan = async (): Promise<void> => {
+    const limit = Number(maximumFaces);
+    if (!Number.isInteger(limit) || limit < 1) { setTaskError(language === 'zh' ? '最大面数必须是正整数。' : 'Maximum faces must be a positive integer.'); return; }
+    setTaskError('');
+    setDegreeScanResult(undefined); setDegreeOutput('');
+    try { const result = await onDegreeScan(limit); setDegreeScanResult(result); setDegreeOutput(pretty(result)); }
+    catch (error) { setTaskError(geometryDiagnosticMessage(error)); }
+  };
+  const computeTables = async (): Promise<void> => {
+    setTaskError('');
+    try { setPropertyOutput(pretty(await onPropertyTables())); }
+    catch (error) { setTaskError(geometryDiagnosticMessage(error)); }
+  };
+  const handleAreaEdit = (row: GeometryRow, field: GeometryField, value: string, isLocal: boolean): void => {
+    if (field.id === 'TargetedCellSpacing' && value !== '') {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) { setTaskError(gt(language, 'positive')); return; }
+    }
+    setTaskError('');
+    onFlowAreaChange(row, field, value, isLocal);
+  };
+  const handleRegionSelect = (ids: string[]): void => {
+    const selected = new Set(ids);
+    onRegionSelection((snapshot?.regions.rows ?? []).filter((row) => selected.has(row.id) && row.fid != null).map((row) => row.fid!));
+  };
+
+  return (
+    <div className="geometry-grid">
+      <FlowAreaEditorControl language={language} table={flowAreas} canEdit={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleAreaEdit} headerActions={<>
+        <button className="geometry-secondary" disabled={!canPrepare || busy || !canEdit} onClick={onPrepare}>{gt(language, 'prepare')}</button>
+        <button className="geometry-primary" disabled={!canGenerate || busy || !canEdit || !snapshot} onClick={() => void generate()}>{busy ? gt(language, 'generating') : gt(language, 'generate')}</button>
+      </>}>
+        {snapshot?.preparePending && <div className="geometry-local-banner">{gt(language, 'preparing')}</div>}
+        {!canGenerate && <div className="geometry-inline-help" style={{ padding: '0 16px 12px' }}>{gt(language, 'unavailable')}</div>}
+        {snapshot?.flowAreas.some((area) => area.hasMeshErrors) && <div className="geometry-validation-list"><div className="geometry-validation-item">{language === 'zh' ? '至少一个流动区域包含网格错误。' : 'At least one flow area contains mesh errors.'}</div></div>}
+        {snapshot?.prepareSummary && <div className="geometry-panel-body"><div className="geometry-kv-grid"><div className="geometry-kv"><span>{gt(language, 'status')}</span><strong>{snapshot.prepareSummary.succeeded ? gt(language, 'saved') : snapshot.prepareSummary.failureReason ? gerror(language, snapshot.prepareSummary.failureReason) : gt(language, 'incomplete')}</strong></div><div className="geometry-kv"><span>{gt(language, 'softwareVersion')}</span><strong>{snapshot.prepareSummary.softwareVersion || '—'}</strong></div><div className="geometry-kv"><span>{gt(language, 'duration')}</span><strong>{snapshot.prepareSummary.totalDurationSeconds ?? '—'}</strong></div><div className="geometry-kv"><span>{gt(language, 'startTime')}</span><strong>{snapshot.prepareSummary.startTime || '—'}</strong></div></div>{snapshot.prepareSummary.failureReason && <details className="geometry-inline-help" style={{ marginTop: 9 }}><summary>{gt(language, 'rawErrorDetails')}</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{snapshot.prepareSummary.failureReason}</pre></details>}</div>}
+        {snapshot?.generationReport && <div className="geometry-report-list"><strong>{gt(language, 'generationReport')} · {snapshot.generationReport.succeeded ? gt(language, 'complete') : gt(language, 'incomplete')}{snapshot.generationReport.cellCount != null ? ` · ${snapshot.generationReport.cellCount} ${gt(language, 'cells')}` : ''}</strong>{snapshot.generationReport.messages.length > 0 && <details className="geometry-report-item"><summary>{gt(language, 'generationDetails')}</summary>{snapshot.generationReport.messages.map((message, index) => <pre key={`${index}-${message}`}>{gdiagnostic(language, message)}</pre>)}</details>}</div>}
+        {progress && <details className="geometry-panel-body"><summary>{gt(language, 'serverProgress')}</summary><pre className="geometry-report-item">{progress}</pre></details>}
+        {taskError && <GeometryError language={language} error={taskError} style={{ margin: 13 }} />}
+      </FlowAreaEditorControl>
+      <section className="geometry-panel">
+        <header className="geometry-panel-heading"><div><h2>{gt(language, 'selectedRegions')}</h2><p>{snapshot?.selectedRegionIDs.length ?? 0} {gt(language, 'selected')}</p></div><span className="geometry-count-pill">{gt(language, 'sizingStatus')}</span></header>
+        {snapshot?.patchSizing && <details className="geometry-inline-help"><summary>{gt(language, 'diagnosticDetails')}</summary><p>{gdiagnostic(language, snapshot.patchSizing.message)}</p></details>}
+        {snapshot?.patchSizing?.dimensions?.length ? <div className="geometry-panel-body geometry-grid two">{snapshot.patchSizing.dimensions.map((dimension) => <div className="geometry-kv" key={dimension.id}><span>{gfield(language, dimension.id, dimension.title)}</span><strong>{gmode(language, dimension.sizeFunction)} {dimension.liveValue ?? ''} · {dimension.arcCount} {gt(language, 'arcCountUnit')}</strong></div>)}</div> : null}
+        <GeometryFeatureTable language={language} kind="region" table={regions} localRows={localRegionRows} editable={false} allowLocalAdd={false} busy={busy} onSelect={handleRegionSelect} />
+      </section>
+      <section className="geometry-panel">
+        <header className="geometry-panel-heading"><div><h2>{gt(language, 'degreeScan')} / {gt(language, 'propertyTables')}</h2><p>{gt(language, 'validationNote')}</p></div></header>
+        <div className="geometry-panel-body geometry-mesh-controls">
+          <label className="geometry-form-field">{gt(language, 'maxFaces')}<input type="number" min={1} step={1} value={maximumFaces} onChange={(event) => setMaximumFaces(event.target.value)} /></label>
+          <button className="geometry-secondary" disabled={!canDegreeScan || busy || !snapshot} onClick={() => void scan()}>{gt(language, 'degreeScan')}</button>
+          <button className="geometry-secondary" disabled={!canPropertyTables || busy || !snapshot} onClick={() => void computeTables()}>{gt(language, 'propertyTables')}</button>
+        </div>
+        {propertyOutput && <details className="geometry-report-item" style={{ margin: '0 14px 14px' }}><summary>{gt(language, 'propertyOutput')}</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{propertyOutput}</pre></details>}
+      </section>
+      <MeshErrorProperties language={language} scan={degreeScanResult} rawOutput={degreeOutput} />
+    </div>
+  );
+}
+
+export default GeometryMeshPage;

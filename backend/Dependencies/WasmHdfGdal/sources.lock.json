@@ -1,0 +1,59 @@
+{
+  "formatVersion": 1,
+  "status": "checkpoint-source-lock-only",
+  "hdf5": {
+    "repository": "https://github.com/HDFGroup/hdf5",
+    "tag": "2.1.1",
+    "commit": "4fde4fd787744b6a19b12032f4dad0383fbe6fbd",
+    "archiveUrl": "https://github.com/HDFGroup/hdf5/archive/4fde4fd787744b6a19b12032f4dad0383fbe6fbd.tar.gz",
+    "archiveSha256": "096bf04114fc539138a663cb16892e694741cdb678cf3e59655ea11831fc19a4",
+    "archiveKind": "GitHub codeload archive of the immutable official repository commit",
+    "verifiedDownloadPathOutsideRepository": "work/wasm-chain-2026-10-22/hdf-gdal/source/hdf5-2.1.1-4fde4fd.tar.gz",
+    "officialReleaseArchiveSha256FromExistingRuntimeProvenance": "efff93b5a904d66e8f626d7da60b5eedc9faf544be27dbabbaa87967b8ad798b"
+  },
+  "managedPackages": [
+    {
+      "id": "H5.Bindings",
+      "version": "1.0.8-hecras.portable.3",
+      "sha256": "b86077e2adb123f0d8c510a13b59720a1baf8a279a02b9791466765793e6e50a",
+      "source": "backend/Dependencies/packages.json"
+    },
+    {
+      "id": "Hdf5.ThreadSafe.Runtime.osx-arm64",
+      "version": "2.1.1-threadsafe.2",
+      "sha256": "d754d79a905906d79b881812dce7fbaa36beead0191342323fbce4dc9b6e9c00",
+      "source": "backend/Dependencies/packages.json",
+      "browserWasmAsset": false
+    },
+    {
+      "id": "MaxRev.Gdal.Core",
+      "version": "3.13.3.557",
+      "source": "backend/Source/Geospatial.GDALAssist/Geospatial.GDALAssist.csproj"
+    },
+    {
+      "id": "MaxRev.Gdal.MacosRuntime.Minimal.arm64",
+      "version": "3.13.3.557",
+      "source": "backend/Source/Geospatial.GDALAssist/Geospatial.GDALAssist.csproj",
+      "browserWasmAsset": false
+    },
+    {
+      "id": "MaxRev.Gdal.CLI.osx-arm64",
+      "version": "3.13.3.557",
+      "source": "backend/Source/Geospatial.GDALAssist/Geospatial.GDALAssist.csproj",
+      "browserWasmAsset": false
+    }
+  ],
+  "wasmToolchain": {
+    "dotnetSdk": "10.0.401",
+    "dotnetRuntime": "10.0.12",
+    "emscripten": "3.1.56",
+    "pathIsTaskLocal": true,
+    "installedByParentAgent": true
+  },
+  "unresolved": [
+    "HDF5 Emscripten static-library build command has not been run or validated.",
+    "H5T global-data static-link bridge has not been implemented.",
+    "GDAL and transitive source archive SHA-256 pins have not been acquired.",
+    "No browser-WASM HDF round-trip or GDAL projection/GeoTIFF test has run."
+  ]
+}

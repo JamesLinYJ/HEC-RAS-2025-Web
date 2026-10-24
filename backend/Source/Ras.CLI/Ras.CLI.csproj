@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ras</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>annotations</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <MaxRevGdalCliEnablePathInitializer>false</MaxRevGdalCliEnablePathInitializer>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Hec.Dss.Runtime.osx-arm64" Version="7.0.0-hecdss-v7it2.2" />
+    <PackageReference Include="Hdf5.ThreadSafe.Runtime.osx-arm64" Version="2.1.1-threadsafe.2" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <ProjectReference Include="../Ras.Runtime/Ras.Runtime.csproj" />
+    <ProjectReference Include="../Ras.Core/Ras.Core.csproj" />
+    <ProjectReference Include="../Ras.Migration/Ras.Migration.csproj" />
+    <ProjectReference Include="../Ras.Mapper/Ras.Mapper.csproj" />
+    <ProjectReference Include="../Geospatial.IO/Geospatial.IO.csproj" />
+    <ProjectReference Include="../Geospatial.Rendering/Geospatial.Rendering.csproj" />
+    <ProjectReference Include="../Utility.Communication/Utility.Communication.csproj" />
+    <ProjectReference Include="../Utility.Core/Utility.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.Core" Version="4.0.4" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.22.1" />
+    <PackageReference Include="CommandLineParser" Version="2.9.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="Spectre.Console" Version="0.55.2" />
+    <PackageReference Include="Spectre.Console.Ansi" Version="0.55.2" />
+  </ItemGroup>
+</Project>

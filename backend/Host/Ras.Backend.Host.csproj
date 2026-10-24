@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>HECRASBackend</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <MaxRevGdalCliEnablePathInitializer>false</MaxRevGdalCliEnablePathInitializer>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Hec.Dss.Runtime.osx-arm64" Version="7.0.0-hecdss-v7it2.2" />
+    <PackageReference Include="Hdf5.ThreadSafe.Runtime.osx-arm64" Version="2.1.1-threadsafe.2" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <PackageReference Include="Google.Protobuf" Version="3.34.1" />
+    <PackageReference Include="Ras.VectorTiles.Schema" Version="1.0.0-renamed" />
+    <ProjectReference Include="../Source/Ras.Runtime/Ras.Runtime.csproj" />
+    <ProjectReference Include="../Source/Hec.Dss/Hec.Dss.csproj" />
+    <ProjectReference Include="../Source/Ras.Observables/Ras.Observables.csproj" />
+    <ProjectReference Include="../Source/Ras.Migration/Ras.Migration.csproj" />
+    <ProjectReference Include="../Source/Ras.Core/Ras.Core.csproj" />
+    <ProjectReference Include="../Source/Testing.Core/Testing.Core.csproj" />
+    <ProjectReference Include="../Source/Utility.Core/Utility.Core.csproj" />
+    <ProjectReference Include="../Source/Geospatial.IO/Geospatial.IO.csproj" />
+    <ProjectReference Include="../Source/Geospatial.Rendering/Geospatial.Rendering.csproj" />
+    <ProjectReference Include="../Source/Utility.Communication/Utility.Communication.csproj" />
+    <EmbeddedResource Include="../../resources/editor-schemas.json" LogicalName="editor-schemas.json" />
+  </ItemGroup>
+</Project>

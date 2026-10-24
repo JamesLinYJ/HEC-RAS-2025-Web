@@ -1,0 +1,44 @@
+{
+  "packages": [
+    {
+      "id": "H5.Bindings",
+      "version": "1.0.8-hecras.portable.3",
+      "file": "H5.Bindings.1.0.8-hecras.portable.3.nupkg",
+      "sha256": "b86077e2adb123f0d8c510a13b59720a1baf8a279a02b9791466765793e6e50a",
+      "requiredFiles": [
+        "lib/net10.0/H5.Bindings.dll"
+      ]
+    },
+    {
+      "id": "Hdf5.ThreadSafe.Runtime.osx-arm64",
+      "version": "2.1.1-threadsafe.2",
+      "file": "Hdf5.ThreadSafe.Runtime.osx-arm64.2.1.1-threadsafe.2.nupkg",
+      "sha256": "d754d79a905906d79b881812dce7fbaa36beead0191342323fbce4dc9b6e9c00",
+      "requiredFiles": [
+        "buildTransitive/native/libhdf5.320.1.1.dylib",
+        "buildTransitive/native/libhdf5_hl.320.0.2.dylib"
+      ]
+    },
+    {
+      "id": "Hec.Dss.Runtime.osx-arm64",
+      "version": "7.0.0-hecdss-v7it2.2",
+      "file": "Hec.Dss.Runtime.osx-arm64.7.0.0-hecdss-v7it2.2.nupkg",
+      "sha256": "e02f09925bd82003d744711685f6bf9093e9ed703471c3ed50de1545ba3e72a1",
+      "requiredFiles": [
+        "runtimes/osx-arm64/native/libgcc_s.1.1.dylib",
+        "runtimes/osx-arm64/native/libgfortran.5.dylib",
+        "runtimes/osx-arm64/native/libhecdss.dylib",
+        "runtimes/osx-arm64/native/libquadmath.0.dylib"
+      ]
+    },
+    {
+      "id": "Ras.VectorTiles.Schema",
+      "version": "1.0.0-renamed",
+      "file": "Ras.VectorTiles.Schema.1.0.0-renamed.nupkg",
+      "sha256": "c0defb79f0180851cd5c770ac2d06234fb7b40e8195d9d0ee560241769e5f67c",
+      "requiredFiles": [
+        "lib/net10.0/VectorTileSchema.dll"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+<Project>
+  <Import Project="../Directory.Build.props" />
+
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Ras.Wasm.Native'">
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)obj-native/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)bin-native/</BaseOutputPath>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,86 @@
+{
+  "checkpointStatus": "source-pinned; browser-WASM-native-build-not-yet-proven",
+  "upstream": {
+    "repository": "https://github.com/HydrologicEngineeringCenter/hec-dss.git",
+    "tag": "v7-IT-2",
+    "commit": "34fcb129c7a7c48b02591eb012a44ea3b0823cd6",
+    "archiveUrl": "https://codeload.github.com/HydrologicEngineeringCenter/hec-dss/tar.gz/34fcb129c7a7c48b02591eb012a44ea3b0823cd6",
+    "archiveSha256": "eceeb5de681fef415b136b94c7524fa697cded1b443780499cae3b7ee3d7ef25",
+    "license": "MIT"
+  },
+  "existingMacOSBuild": {
+    "packageId": "Hec.Dss.Runtime.osx-arm64",
+    "packageVersion": "7.0.0-hecdss-v7it2.2",
+    "packageSha256": "e02f09925bd82003d744711685f6bf9093e9ed703471c3ed50de1545ba3e72a1",
+    "patchFile": "hecdss-v7it2.2-macos.patch",
+    "patchSha256": "b8035d00e761ce25c6a1cb1dbfadd54f2dd1ddd8e527a84644fcd57d1e3eb202",
+    "sourceBuildRecipeSha256": "f9cba22c46769a5d9eb8fce6e92fa1c32a6f29a92d21e49ee7d3de90331e0c52"
+  },
+  "managedInterop": {
+    "sourceFile": "backend/Source/Hec.Dss/DssNative.cs",
+    "importLibrary": "hecdss",
+    "declaredImports": 31,
+    "unusedLegacyImports": [
+      "hec_dss_deprecated_ifltab",
+      "hec_dss_deprecated_ifltab_print"
+    ],
+    "requiredImports": [
+      "hec_dss_CONSTANT_MAX_PATH_SIZE",
+      "hec_dss_catalog",
+      "hec_dss_close",
+      "hec_dss_convertToVersion7",
+      "hec_dss_dataType",
+      "hec_dss_dateToJulian",
+      "hec_dss_dateToYearMonthDay",
+      "hec_dss_delete",
+      "hec_dss_getFileVersion",
+      "hec_dss_getVersion",
+      "hec_dss_gridRetrieve",
+      "hec_dss_gridStore",
+      "hec_dss_julianToYearMonthDay",
+      "hec_dss_locationRetrieve",
+      "hec_dss_locationStore",
+      "hec_dss_open",
+      "hec_dss_pdRetrieve",
+      "hec_dss_pdRetrieveInfo",
+      "hec_dss_pdStore",
+      "hec_dss_record_count",
+      "hec_dss_set_string",
+      "hec_dss_set_value",
+      "hec_dss_squeeze",
+      "hec_dss_tsGetDateTimeRange",
+      "hec_dss_tsGetSizes",
+      "hec_dss_tsRetrieve",
+      "hec_dss_tsRetrieveInfo",
+      "hec_dss_tsStoreIregular",
+      "hec_dss_tsStoreRegular"
+    ]
+  },
+  "browserWasm": {
+    "runtimeIdentifier": "browser-wasm",
+    "runtimePackageVersion": "10.0.12",
+    "emscriptenVersion": "3.1.56",
+    "linkingModelToValidate": "link the DSS archive into dotnet.native.wasm with NativeFileReference; dynamic NativeLibrary.Load of a .dylib is not a browser runtime strategy",
+    "dssVersionSupportRequirement": "preserve and verify the upstream DSS 6 and DSS 7 paths"
+  },
+  "fortranConversionEvaluation": {
+    "recommendedCandidate": "Netlib f2c Fortran-to-C translator plus its C runtime, both compiled or run from temporary work directories",
+    "translatorSourceUrl": "https://www.netlib.org/f2c/src.tgz",
+    "translatorArchiveSha256": "b2824a6f7b75ffe0193ce9ba55463191a7af7c2ffe10e371e372451e2b527e09",
+    "translatorReportedVersion": "20240504",
+    "runtimeSourceUrl": "https://www.netlib.org/f2c/libf2c.zip",
+    "runtimeArchiveSha256": "cc84253b47b5c036aa1d529332a6c218a39ff71c76974296262b03776f822695",
+    "verifiedSoFar": [
+      "the Netlib translator builds and reports version 20240504 on the host",
+      "the official HEC-DSS source archive matches its configured SHA-256",
+      "the existing v7it2.2 patch applies to the pinned upstream source"
+    ],
+    "notYetVerified": [
+      "translation of every required Fortran source file",
+      "Emscripten compilation and static linking of the generated code and f2c runtime",
+      "all 29 required managed imports resolved in the final WASM module",
+      "DSS 6/7 compatibility and a Chinese-path time-series write/read round trip"
+    ],
+    "sourceCompatibilityNote": "the existing v7it2.2 patch adds zlegacyrawbuffers6.f90 with ISO_C_BINDING, C_LOC, and C_F_POINTER adapters for legacy DSS 6 typed-buffer calls; preserve this repair, and do not assume an F77-only translator can compile it"
+  }
+}

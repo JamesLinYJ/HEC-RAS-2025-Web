@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Ras.Migration</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <TargetFramework>net10.0</TargetFramework>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <CheckForOverflowUnderflow>False</CheckForOverflowUnderflow>
+  </PropertyGroup>
+  <PropertyGroup />
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="../Geospatial.Core/Geospatial.Core.csproj" />
+    <ProjectReference Include="../Ras.Mapper/Ras.Mapper.csproj" />
+    <ProjectReference Include="../Ras.Core/Ras.Core.csproj" />
+    <ProjectReference Include="../Utility.Core/Utility.Core.csproj" />
+    <ProjectReference Include="../H5Assist/H5Assist.csproj" />
+    <ProjectReference Include="../Geospatial.IO/Geospatial.IO.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+  </ItemGroup>
+</Project>

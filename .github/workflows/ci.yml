@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  push:
+    branches: [main, 'work/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: React and TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:web
+      - run: npm run test:gateway
+      - run: node scripts/verify-map-result-hover.mjs
+      - run: node scripts/verify-map-result-labels.mjs
+
+  csharp:
+    name: CSharp build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Compile server and retained backend
+        run: dotnet build backend/Server/Ras.Backend.Server.csproj --configuration Release --runtime osx-arm64 -warnaserror -p:RestoreAdditionalProjectSources="$PWD/backend/Packages"
+      - name: Compile backend acceptance checks
+        run: dotnet build backend/ServerChecks/Ras.Backend.ServerChecks.csproj --configuration Release --runtime osx-arm64 -warnaserror -p:RestoreAdditionalProjectSources="$PWD/backend/Packages"

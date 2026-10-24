@@ -1,0 +1,1871 @@
+--- a/heclib/heclib_c/Makefile
++++ b/heclib/heclib_c/Makefile
+@@ -14,7 +14,7 @@
+ endif
+ ifeq ($(UNAME_S),Darwin)
+ 	CWARNING=-Werror=implicit-function-declaration
+-    CFLAGS=-m64 -c -fPIC -g -std=gnu99 -Isrc/headers $(CWARNING)
++    CFLAGS=-arch arm64 -mmacosx-version-min=26.0 -c -fPIC -g -std=gnu99 -Werror -Isrc/headers $(CWARNING)
+ endif
+ 
+ TARGET_LIB := libhec_c.a
+--- a/heclib/heclib_f/Makefile
++++ b/heclib/heclib_f/Makefile
+@@ -27,10 +27,10 @@
+ 	FIND=gfind
+ endif
+ ifeq ($(UNAME_S),Darwin)
+-	FWARNINGS=-Warray-bounds -Wc-binding-type -Wcharacter-truncation -fallow-argument-mismatch
++	FWARNINGS=-Warray-bounds -Wc-binding-type -Wcharacter-truncation -Werror
+ 	FDEBUG=-fcheck=all,no-recursion
+ 	FORTRAN=gfortran
+-	FFLAGS=-c -g -cpp -m64 -fPIC $(FWARNINGS) $(FDEBUG) -Isrc/headers
++	FFLAGS=-c -g -cpp -arch arm64 -mmacosx-version-min=26.0 -fPIC $(FWARNINGS) $(FDEBUG) -Isrc/headers
+ 	FIND=find
+ endif
+ 
+--- a/heclib/hecdss/Makefile
++++ b/heclib/hecdss/Makefile
+@@ -23,7 +23,7 @@
+ ifeq ($(UNAME_S),Darwin)
+ 	CWARNING=-Werror=implicit-function-declaration
+     FDEBUG=-fcheck=all,no-recursion
+-    CFLAGS=-m64 -dynamiclib -fPIC -g -std=gnu99 $(CWARNING) $(INC_DIRS_MACOS)
++    CFLAGS=-arch arm64 -mmacosx-version-min=26.0 -fPIC -g -std=gnu99 -Werror $(CWARNING) $(INC_DIRS_MACOS)
+     LDFLAGS=-L${GFORTRAN_PATH} -lz -lgfortran -lm
+ endif
+ 
+@@ -34,8 +34,8 @@
+ BUILD_DIR := ./
+ SRC_DIRS := ./
+ INC_DIRS=-Isrc -I../heclib_c/src/headers -I${JAVA_HOME}/include -I${JAVA_HOME}/include/linux
+-INC_DIRS_MACOS=-Isrc -I../heclib_c/src/headers -I${JAVA_HOME}/include -I${JAVA_HOME}/include/darwin
+-HLIBS=../heclib_f/Output/libhec_f.a ../heclib_c/Output/libhec_c.a ../heclib_f/Output/libhec_f.a
++INC_DIRS_MACOS=-Isrc -I../heclib_c/src/headers
++HLIBS=../Output/libheclib.a
+ 
+ SRCS := $(shell find $(SRC_DIRS) -name '*.c' )
+ 
+@@ -43,7 +43,7 @@
+ OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
+ 
+ $(BUILD_DIR)/$(TARGET_LIB): $(OBJS)
+-	$(CC) $(CFLAGS) -shared  -o $@  $(OBJS) $(HLIBS) $(HLIBS)  $(LDFLAGS)
++	$(CC) $(CFLAGS) -shared -o $@ $(OBJS) $(HLIBS) $(LDFLAGS)
+ 	ls -la $(BUILD_DIR)/*
+ 
+ $(BUILD_DIR)/%.c.o: %.c
+--- a/heclib/hecdss/hecdss.c
++++ b/heclib/hecdss/hecdss.c
+@@ -301,7 +301,6 @@
+       
+ 
+     tss = zstructTsNewRegFloats(pathname, values, valueArraySize, startDate, startTime, units, type);
+-    tss->allocated[zSTRUCT_TS_floatValues];// zstructFree will free float array
+     if (qualityArraySize > 0 && qualityArraySize == valueArraySize)
+       tss->quality = qualityArray;
+   }
+@@ -333,7 +332,6 @@
+ 
+     tss = zstructTsNewIrregFloats(pathname,values, valueArraySize,times,
+       timeGranularitySeconds, startDateBase,units, type);
+-    tss->allocated[zSTRUCT_TS_floatValues];
+     if (qualityArraySize > 0 && qualityArraySize == valueArraySize)
+       tss->quality = qualityArray;
+   }
+--- a/heclib/heclib_c/src/Internal/zgetFileSpace.c
++++ b/heclib/heclib_c/src/Internal/zgetFileSpace.c
+@@ -75,7 +75,7 @@
+ 	  (sizeNeeded >= fileHeader[zdssFileKeys.kreclaimMin]) &&
+ 	  (sizeNeeded <= fileHeader[zdssFileKeys.kreclaimMaxAvailable])) {
+ 		iarrayNumber = 0;
+-		while (reclaimArray = zreclaimRead(ifltab, &iarrayNumber, 0)) {
++		while ((reclaimArray = zreclaimRead(ifltab, &iarrayNumber, 0))) {
+ 			//  Walk down reclaimed space array, looking for smallest space
+ 			//  that is equal or larger than what we need
+ 			//  We want the smallest space so that larger chunks can be used
+--- a/heclib/heclib_c/src/Utilities/sortfiles.c
++++ b/heclib/heclib_c/src/Utilities/sortfiles.c
+@@ -910,7 +910,7 @@
+       else
+ 	logb = 0;
+ 
+-      if (tmp = logb - loga)
++      if ((tmp = logb - loga))
+ 	return tmp;
+ 
+       if (! loga)
+@@ -949,7 +949,7 @@
+       else
+ 	logb = 0;
+ 
+-      if (tmp = loga - logb)
++      if ((tmp = loga - logb))
+ 	return tmp;
+ 
+       if (! loga)
+@@ -1105,7 +1105,7 @@
+ 
+       if (diff)
+ 	return key->reverse ? -diff : diff;
+-      if (diff = lena - lenb)
++      if ((diff = lena - lenb))
+ 	return key->reverse ? -diff : diff;
+     }
+ 
+@@ -1122,7 +1122,7 @@
+ 
+   if (keyhead.next)
+     {
+-      if (diff = keycompare(a, b))
++      if ((diff = keycompare(a, b)))
+ 	return diff;
+       if (!unique)
+ 	{
+@@ -1906,7 +1906,7 @@
+ 
+ 	  tmp = tempname();
+ 	  ofp = xfopen(tmp, "w");
+-	  while (cc = (int)fread(buf, 1, sizeof buf, fp))
++	  while ((cc = (int)fread(buf, 1, sizeof buf, fp)))
+ 	    if (cc < 0)
+ 	      {
+ 		fprintf(stderr, "sort: error in fread\n");
+--- a/heclib/heclib_c/src/Internal/zcatalogInternal.c
++++ b/heclib/heclib_c/src/Internal/zcatalogInternal.c
+@@ -54,7 +54,7 @@
+ *					To search for all pathnames in a collection, pass one of the collections path in pathWithWild
+ *					and set this to 1.  You cannot directly search for both wild and collections (because pathWithWild
+ *					has to be a valid seed.  You can accomplish a similar search by passing a wild in the F part,
+-*					e.g. .../*|Run A/
++*					e.g. .../<star>|Run A/
+ *
+ *				int boolForSort
+ *					An int boolean flag set to "1" to indicate that this list is in preparation for sorting.
+--- a/heclib/heclib_c/src/Dss6/zcatalog6Internal.c
++++ b/heclib/heclib_c/src/Dss6/zcatalog6Internal.c
+@@ -52,7 +52,7 @@
+ *					To search for all pathnames in a collection, pass one of the collections path in pathWithWild
+ *					and set this to 1.  You cannot directly search for both wild and collections (because pathWithWild
+ *					has to be a valid seed.  You can accomplish a similar search by passing a wild in the F part,
+-*					e.g. .../*|Run A/
++*					e.g. .../<star>|Run A/
+ *
+ *				int boolForSort
+ *					An int boolean flag set to "1" to indicate that this list is in preparation for sorting.
+--- a/heclib/heclib_c/src/Dss6/ztsRetrieveReg6.c
++++ b/heclib/heclib_c/src/Dss6/ztsRetrieveReg6.c
+@@ -159,7 +159,7 @@
+ 		*CUNITS, CTYPE, CSUPP, IOFSET, JCOMP,
+ 		*ITZONE, CTZONE, COORDS, ICDESC, LCOORDS, ISTAT)
+ 
+-/*VOID zrrtsi6_ (long long* ifltab, const char* pathname, const char* startDate,
++   VOID zrrtsi6_ (long long* ifltab, const char* pathname, const char* startDate,
+ 			 const char* startTime, int* maxVals, int* numberVals,
+ 			 int* getDoubles, int* doublesRead, float* floatValues, double* doubleValues,
+ 			 int* flags, int* readFlags, int* flagsRead,
+--- a/heclib/heclib_c/src/Internal/zcatInternalSort.c
++++ b/heclib/heclib_c/src/Internal/zcatInternalSort.c
+@@ -258,7 +258,6 @@
+ 	tempSorted = _tempnam("", "cat_sorted");
+ #else
+ 	tempUnsorted=(char*)malloc(32*sizeof(char));
+-	memset( tempUnsorted, 0, sizeof(tempUnsorted));
+ 	strcpy( tempUnsorted, "/tmp/cat_unsorted-XXXXXX");
+ 	int fileId = mkstemp(tempUnsorted);
+ 	if (fileId<1)
+@@ -269,7 +268,6 @@
+ 		return -1;
+ 	}
+ 	tempSorted=(char*)malloc(32*sizeof(char));
+-	memset( tempSorted, 0, sizeof(tempSorted));
+ 	strcpy( tempSorted, "/tmp/cat_sorted-XXXXXX");
+ 	fileId = mkstemp(tempSorted);
+ 	if (fileId<1)
+diff --git a/heclib/heclib_c/Makefile b/heclib/heclib_c/Makefile
+--- a/heclib/heclib_c/Makefile
++++ b/heclib/heclib_c/Makefile
+@@ -24,6 +24,9 @@
+ 
+ FDEBUG=-fcheck=all,no-recursion
+ SRCS := $(shell find $(SRC_DIRS) -name '*.c' )
++ifeq ($(UNAME_S),Darwin)
++SRCS := $(filter-out ./src/Internal/powf_wrap.c,$(SRCS))
++endif
+ 
+ OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
+ 
+diff --git a/heclib/heclib_c/src/Internal/charLong.c b/heclib/heclib_c/src/Internal/charLong.c
+--- a/heclib/heclib_c/src/Internal/charLong.c
++++ b/heclib/heclib_c/src/Internal/charLong.c
+@@ -139,7 +139,7 @@
+ 			}
+ 			longArray = (unsigned long long*)to;
+ 			nlongwords = ((maxBytesTo - 1) / 8) + 1;
+-			zswap(longArray, 2 * nlongwords);			
++			zswap((long long *)longArray, 2 * nlongwords);			
+ 		}
+ 		else {
+ 			//  From a long long array to a character string
+diff --git a/heclib/heclib_c/src/Internal/zgetInternalPath.c b/heclib/heclib_c/src/Internal/zgetInternalPath.c
+--- a/heclib/heclib_c/src/Internal/zgetInternalPath.c
++++ b/heclib/heclib_c/src/Internal/zgetInternalPath.c
+@@ -58,7 +58,7 @@
+ }
+ char *zgetInternalPathRa(zStructRecordAddresses *zstruct)
+ {
+-	return '\0';
++	return NULL;
+ }
+ char *zgetInternalPathLo(zStructLocation *zstruct)
+ {
+diff --git a/heclib/heclib_c/src/Public/zpdStore.c b/heclib/heclib_c/src/Public/zpdStore.c
+--- a/heclib/heclib_c/src/Public/zpdStore.c
++++ b/heclib/heclib_c/src/Public/zpdStore.c
+@@ -281,16 +281,16 @@
+ 		if (boolStoreEntire) {
+ 			//  Be sure we have units, etc. defined.
+ 			if (!pds->unitsDependent) {
+-				pds->unitsDependent = '\0';
++				pds->unitsDependent = NULL;
+ 			}
+ 			if (!pds->typeDependent) {
+-				pds->typeDependent = '\0';
++				pds->typeDependent = NULL;
+ 			}
+ 			if (!pds->unitsIndependent) {
+-				pds->unitsIndependent = '\0';
++				pds->unitsIndependent = NULL;
+ 			}
+ 			if (!pds->typeIndependent) {
+-				pds->typeIndependent = '\0';
++				pds->typeIndependent = NULL;
+ 			}
+ 		}
+ 		// copy any VDI from location struct into user header
+diff --git a/heclib/heclib_c/src/Public/zstructTsClone.c b/heclib/heclib_c/src/Public/zstructTsClone.c
+--- a/heclib/heclib_c/src/Public/zstructTsClone.c
++++ b/heclib/heclib_c/src/Public/zstructTsClone.c
+@@ -220,10 +220,8 @@
+ 	tssClone->lastWrittenTime =		tss->lastWrittenTime;
+ 	tssClone->fileLastWrittenTime = tss->fileLastWrittenTime;
+ 
+-	if (tss->programName) {
+-		if (strlen(tss->programName) > 0) {
+-			stringCopy(tssClone->programName, sizeof(tssClone->programName), tss->programName, strlen(tss->programName));
+-		}
++	if (strlen(tss->programName) > 0) {
++		stringCopy(tssClone->programName, sizeof(tssClone->programName), tss->programName, strlen(tss->programName));
+ 	}
+ 
+ 	/*
+diff --git a/heclib/heclib_c/src/Public/ztsStore.c b/heclib/heclib_c/src/Public/ztsStore.c
+--- a/heclib/heclib_c/src/Public/ztsStore.c
++++ b/heclib/heclib_c/src/Public/ztsStore.c
+@@ -255,7 +255,7 @@
+ 	}
+ 	if (tss->profileDepthsNumber == 0) {
+ 		if (!tss->units) {
+-			tss->units = '\0';
++			tss->units = NULL;
+ 		}
+ 		if (!tss->type) {
+ 			return zerrorProcessing(ifltab, DSS_FUNCTION_ztsStore_ID,
+diff --git a/heclib/heclib_c/src/Utilities/DateTime/incrementTime.c b/heclib/heclib_c/src/Utilities/DateTime/incrementTime.c
+--- a/heclib/heclib_c/src/Utilities/DateTime/incrementTime.c
++++ b/heclib/heclib_c/src/Utilities/DateTime/incrementTime.c
+@@ -214,7 +214,7 @@
+ 			day = 15;
+ 		}
+ 	}
+-	else if (abs(intervalMinutes - MINS_IN_1_MONTH) <= 2 * MINS_IN_1_DAY) {
++	else if (llabs(intervalMinutes - MINS_IN_1_MONTH) <= 2 * MINS_IN_1_DAY) {
+ 		//  Monthly
+ 		month += numberPeriods;
+ 		//  Day is always end of month for standard
+diff --git a/heclib/heclib_c/src/Utilities/sortfiles.c b/heclib/heclib_c/src/Utilities/sortfiles.c
+--- a/heclib/heclib_c/src/Utilities/sortfiles.c
++++ b/heclib/heclib_c/src/Utilities/sortfiles.c
+@@ -461,9 +461,7 @@
+ }
+ 
+ static char *
+-xrealloc(p, n)
+-     char *p;
+-     int n;
++xrealloc(char *p, int n)
+ {
+   char *r = realloc(p, n);
+ 
+@@ -477,8 +475,7 @@
+ #endif /* not _MSC_VER */
+ 
+ static FILE *
+-xfopen(file, how)
+-     char *file, *how;
++xfopen(char *file, char *how)
+ {
+   FILE *fp = strcmp(file, "-") ? fopen(file, how) : stdin;
+ 
+@@ -491,8 +488,7 @@
+ }
+ 
+ static void
+-xfclose(fp)
+-     FILE *fp;
++xfclose(FILE *fp)
+ {
+   fflush(fp);
+   if (fp != stdin && fp != stdout)
+@@ -506,10 +502,7 @@
+ }
+ 
+ static void
+-xfwrite(buf, size, nelem, fp)
+-     char *buf;
+-     int size, nelem;
+-     FILE *fp;
++xfwrite(char *buf, int size, int nelem, FILE *fp)
+ {
+   if (fwrite(buf, size, nelem, fp) < 0)
+     {
+@@ -551,8 +544,7 @@
+ /* Search through the list of temporary files for the given name;
+    remove it if it is found on the list. */
+ static void
+-zaptemp(name)
+-     char *name;
++zaptemp(char *name)
+ {
+   struct tempnode *node, *temp;
+ 
+@@ -594,9 +586,7 @@
+ 
+ /* Initialize BUF allocating ALLOC bytes initially. */
+ static void
+-initbuf(buf, alloc)
+-     struct buffer *buf;
+-     int alloc;
++initbuf(struct buffer *buf, int alloc)
+ {
+   buf->alloc = alloc;
+   buf->buf = xmalloc(buf->alloc);
+@@ -608,9 +598,7 @@
+    file wasn't terminated by a newline, supply one.  Return a count
+    of bytes actually read. */
+ static int
+-fillbuf(buf, fp)
+-     struct buffer *buf;
+-     FILE *fp;
++fillbuf(struct buffer *buf, FILE *fp)
+ {
+   int cc, total = 0;
+ 
+@@ -666,9 +654,7 @@
+ 
+ /* Initialize LINES, allocating space for ALLOC lines initially. */
+ static void
+-initlines(lines, alloc)
+-     struct lines *lines;
+-     int alloc;
++initlines(struct lines *lines, int alloc)
+ {
+   lines->alloc = alloc;
+ #ifdef _MSC_VER
+@@ -680,9 +666,7 @@
+ 
+ /* Return a pointer to the first character of a field. */
+ static char *
+-begfield(line, key)
+-     struct line *line;
+-     struct keyfield *key;
++begfield(struct line *line, struct keyfield *key)
+ {
+   register char *ptr = line->text, *lim = ptr + line->length;
+   register int sword = key->sword, schar = key->schar;
+@@ -717,9 +701,7 @@
+ /* Find the limit of a field; i.e., a pointer to the first character
+    after the field. */
+ static char *
+-limfield(line, key)
+-     struct line *line;
+-     struct keyfield *key;
++limfield(struct line *line, struct keyfield *key)
+ {
+   register char *ptr = line->text, *lim = ptr + line->length;
+   register int eword = key->eword, echar = key->echar;
+@@ -754,9 +736,7 @@
+ /* Find the lines in BUF, storing pointers and lengths in LINES.
+    Also replace newlines with NULs. */
+ static void
+-findlines(buf, lines)
+-     struct buffer *buf;
+-     struct lines *lines;
++findlines(struct buffer *buf, struct lines *lines)
+ {
+   register char *beg = buf->buf, *lim = buf->buf + buf->used, *ptr;
+   struct keyfield *key = keyhead.next;
+@@ -814,8 +794,7 @@
+    should begin with a decimal point followed immediately by the digits
+    of the fraction.  Strings not of this form are considered to be zero. */
+ static int
+-fraccompare(a, b)
+-     register char *a, *b;
++fraccompare(register char *a, register char *b)
+ {
+   register unsigned char tmpa = UCHAR(*a), tmpb = UCHAR(*b);
+ 
+@@ -869,8 +848,7 @@
+    machine numbers.  Comparatively slow for short strings, but asymptotically
+    hideously fast. */
+ static int
+-numcompare(a, b)
+-     register char *a, *b;
++numcompare(register char *a, register char *b)
+ {
+   register int tmpa, tmpb, loga, logb, tmp;
+ 
+@@ -962,9 +940,7 @@
+ /* Return an integer <= 12 associated with a month name (0 if the name
+    is not recognized. */
+ static int
+-getmonth(s, len)
+-     char *s;
+-     int len;
++getmonth(char *s, int len)
+ {
+   char month[4];
+   register int i, lo = 0, hi = 12;
+@@ -989,8 +965,7 @@
+ /* Compare two lines trying every key in sequence until there
+    are no more keys or a difference is found. */
+ static int
+-keycompare(a, b)
+-     struct line *a, *b;
++keycompare(struct line *a, struct line *b)
+ {
+   register char *texta, *textb, *lima, *limb, *translate;
+   register int *ignore;
+@@ -1115,8 +1090,7 @@
+ /* Compare two lines, returning negative, zero, or positive depending on
+    whether A compares less than, equal to, or greater than B. */
+ static int
+-compare(a, b)
+-     register struct line *a, *b;
++compare(register struct line *a, register struct line *b)
+ {
+   int diff, tmpa, tmpb, min;
+ 
+@@ -1158,8 +1132,7 @@
+ /* Check that the lines read from the given FP come in order.  Return
+    1 if they do and 0 if there is a disorder. */
+ static int
+-checkfp(fp)
+-     FILE *fp;
++checkfp(FILE *fp)
+ {
+   struct buffer buf;		/* Input buffer. */
+   struct lines lines;		/* Lines scanned from the buffer. */
+@@ -1228,9 +1201,7 @@
+ /* Merge lines from FPS onto OFP.  NFPS cannot be greater than NMERGE.
+    Close FPS before returning. */
+ static void
+-mergefps(fps, nfps, ofp)
+-     FILE *fps[], *ofp;
+-     register int nfps;
++mergefps(FILE *fps[], register int nfps, FILE *ofp)
+ {
+   struct buffer buffer[NMERGE]; /* Input buffers for each file. */
+   struct lines lines[NMERGE];	/* Line tables for each buffer. */
+@@ -1312,13 +1283,14 @@
+ 
+       /* Check if we need to read more lines into core. */
+       if (++cur[ord[0]] == lines[ord[0]].used)
+-	if (fillbuf(&buffer[ord[0]], fps[ord[0]]))
+-	  {
+-	    findlines(&buffer[ord[0]], &lines[ord[0]]);
+-	    cur[ord[0]] = 0;
+-	  }
+-	else
+-	  {
++        {
++	  if (fillbuf(&buffer[ord[0]], fps[ord[0]]))
++	    {
++	      findlines(&buffer[ord[0]], &lines[ord[0]]);
++	      cur[ord[0]] = 0;
++	    }
++	  else
++	    {
+ 	    /* We reached EOF on fps[ord[0]]. */
+ 	    for (i = 1; i < nfps; ++i)
+ 	      if (ord[i] > ord[0])
+@@ -1337,7 +1309,8 @@
+ 	    for (i = 0; i < nfps; ++i)
+ 	      ord[i] = ord[i + 1];
+ 	    continue;
+-	  }
++	    }
++        }
+ 
+       /* The new line just read in may be larger than other lines
+ 	 already in core; push it back in the queue until we encounter
+@@ -1367,9 +1340,7 @@
+ 
+ /* Sort the array LINES using TEMP for temporary space. */
+ static void
+-sortlines(lines, nlines, temp)
+-     struct line *lines, *temp;
+-     int nlines;
++sortlines(struct line *lines, int nlines, struct line *temp)
+ {
+   register struct line *lo, *hi, *t;
+   register int nlo, nhi;
+@@ -1409,9 +1380,7 @@
+ /* Check that each of the given FILES is ordered.
+    Return a count of disordered files. */
+ static int
+-check(files, nfiles)
+-     char *files[];
+-     int nfiles;
++check(char *files[], int nfiles)
+ {
+   int i, disorders = 0;
+   FILE *fp;
+@@ -1430,10 +1399,7 @@
+ 
+ /* Merge any number of FILES onto the given OFP. */
+ static void
+-merge(files, nfiles, ofp)
+-     char *files[];
+-     int nfiles;
+-     FILE *ofp;
++merge(char *files[], int nfiles, FILE *ofp)
+ {
+   int i, j, t;
+   char *temp;
+@@ -1473,10 +1439,7 @@
+ 
+ /* Sort any number of FILES onto the given OFP. */
+ static void
+-sort(files, nfiles, ofp)
+-     char **files;
+-     int nfiles;
+-     FILE *ofp;
++sort(char **files, int nfiles, FILE *ofp)
+ {
+   struct buffer buf;
+   struct lines lines;
+@@ -1549,8 +1512,7 @@
+ 
+ /* Insert a key at the end of the list. */
+ static void
+-insertkey(key)
+-     struct keyfield *key;
++insertkey(struct keyfield *key)
+ {
+   struct keyfield *k = &keyhead;
+ 
+@@ -1571,8 +1533,7 @@
+ }
+ 
+ static void
+-badfieldspec(s)
+-     char *s;
++badfieldspec(char *s)
+ {
+   fprintf(stderr, "sort: bad field specification %s\n", s);
+   exit(-1);
+@@ -1602,9 +1563,7 @@
+ #endif /* not _MSC_VER */
+ 
+ int
+-sortfilesGnu (argc, argv)
+-     int argc;
+-     char *argv[];
++sortfilesGnu(int argc, char *argv[])
+ {
+   struct keyfield *key = NULL, gkey;
+   char *s;
+diff --git a/heclib/heclib_c/src/Utilities/verticalDatum.c b/heclib/heclib_c/src/Utilities/verticalDatum.c
+--- a/heclib/heclib_c/src/Utilities/verticalDatum.c
++++ b/heclib/heclib_c/src/Utilities/verticalDatum.c
+@@ -11,7 +11,7 @@
+ //
+ // The 64 valid characters used in base64 encoding (excluding pad character '='), in index order
+ //
+-static const unsigned char* base64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++static const char base64chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+ //
+ // The index of valid characters. Ex: 'A' = ASCII 65; pos 65 in this table is 0 which is the index pos of 'A' in
+ // the valid characters. Positions for non-valid characters are all 255.
+@@ -391,7 +391,7 @@
+                 break;
+             }
+         }
+-        while ((cp - start) > 1 == ' ' && *(cp-1)) --cp;
++        while ((cp - start) > 1 && *(cp - 1) == ' ') --cp;
+         len = cp - start;
+ 		if (len > 0) {
+ 			str = mallocAndInit((size_t)userHeaderNumber*4+1);
+@@ -507,7 +507,7 @@
+     }
+     *decoded = (char*)mallocAndInit(strlen(toDecode));
+     const char* c = toDecode;
+-    char i[4];
++    unsigned char i[4];
+     char* o = *decoded;
+     while (*c) {
+         i[0] = base64bytes[c[0]];
+@@ -627,9 +627,9 @@
+     zstr.zfree     = Z_NULL;
+     zstr.opaque    = Z_NULL;
+     zstr.avail_in  = decodedLen + 1;
+-    zstr.next_in   = decodedBuf;
++    zstr.next_in   = (Bytef *)decodedBuf;
+     zstr.avail_out = sizeof(textBuf);
+-    zstr.next_out  = textBuf;
++    zstr.next_out  = (Bytef *)textBuf;
+     rc = inflateInit2(&zstr, 16+MAX_WBITS);
+     if (rc != Z_OK) {
+         free(decodedBuf);
+@@ -695,9 +695,9 @@
+     zstr.zfree     = Z_NULL;
+     zstr.opaque    = Z_NULL;
+     zstr.avail_in  = inputLen;
+-    zstr.next_in   = (char*)inputBuf;
++    zstr.next_in   = (Bytef *)inputBuf;
+     zstr.avail_out = inputLen;
+-    zstr.next_out  = compressedBuf;
++    zstr.next_out  = (Bytef *)compressedBuf;
+     //-------------------------//
+     // gzip compress the input //
+     //-------------------------//
+diff --git a/heclib/heclib_f/src/Support/dcreal.f b/heclib/heclib_f/src/Support/dcreal.f
+--- a/heclib/heclib_f/src/Support/dcreal.f
++++ b/heclib/heclib_f/src/Support/dcreal.f
+@@ -1,5 +1,6 @@
+       SUBROUTINE DCREAL ( R, NR, ISKM, BASE, LBASE, ISIZE, IPREC,
+      .                    ICMVAL, NCMVAL, KCMVAL, IH, NH, KH, ISTAT )
++      USE ISO_C_BINDING, ONLY: C_LOC
+ C
+ C
+       COMMON /WORDS/ NCMW, NCPW, IWDS(8)
+@@ -11,7 +12,8 @@
+       INTEGER*4 NELMS                                                   MLu
+ C
+ C     INTEGER*6 IH(KH), ICMVAL(KCMVAL), IBASE                           H
+-      INTEGER*4 IH(KH), ICMVAL(KCMVAL), IBASE                           MLu
++      INTEGER*4 IH(KH), IBASE
++      INTEGER*4, TARGET :: ICMVAL(KCMVAL)
+ C
+       INTEGER IPREC, ISIZE, ISKM, ISTAT, NCMVAL, NH, NR
+ C
+@@ -227,8 +229,9 @@
+          IBBYTE = 1
+ C
+          IF ( LRPEAT ) THEN
+-            CALL DCDLTR ( ICMVAL, NR2, IPREC, BASE, LBASE, ICMVAL,
+-     .                    NCMVAL, KCMVAL, IBBYTE, ISIZE, ISTAT )
++            CALL DCDLTR_RAW ( C_LOC(ICMVAL(1)), NR2, IPREC,
++     .                    BASE, LBASE, ICMVAL, NCMVAL, KCMVAL,
++     .                    IBBYTE, ISIZE, ISTAT )
+          ELSE
+             CALL DCDLTR ( R, NR, IPREC, BASE, LBASE, ICMVAL,
+      .                    NCMVAL, KCMVAL, IBBYTE, ISIZE, ISTAT )
+@@ -276,8 +279,8 @@
+          IBBYTE = 1
+ C
+          IF ( LRPEAT ) THEN
+-            CALL DCSD3R ( ICMVAL, NR2, ICMVAL, NCMVAL, KCMVAL,
+-     .                    IBBYTE, ISTAT )
++            CALL DCSD3R_RAW ( C_LOC(ICMVAL(1)), NR2, ICMVAL,
++     .                    NCMVAL, KCMVAL, IBBYTE, ISTAT )
+          ELSE
+             CALL DCSD3R ( R, NR, ICMVAL, NCMVAL, KCMVAL,
+      .                    IBBYTE, ISTAT )
+diff --git a/heclib/heclib_f/src/Support/dureal.f b/heclib/heclib_f/src/Support/dureal.f
+--- a/heclib/heclib_f/src/Support/dureal.f
++++ b/heclib/heclib_f/src/Support/dureal.f
+@@ -1,5 +1,6 @@
+       SUBROUTINE DUREAL ( R, KR, IBGELM, NELMS, ICMVAL, NCMVAL, KCMVAL,
+      .                    IH, NH, ISTAT )
++      USE ISO_C_BINDING, ONLY: C_LOC
+ C
+ C
+       COMMON /WORDS/ NCMW, NCPW, IWDS(8)
+@@ -13,7 +14,8 @@
+       INTEGER*4 NELMS                                                   MLu
+ C
+ C     INTEGER*6 IH(NH), ICMVAL(KCMVAL)                                  H
+-      INTEGER*4 IH(NH), ICMVAL(KCMVAL)                                  MLu
++      INTEGER*4 IH(NH)
++      INTEGER*4, TARGET :: ICMVAL(KCMVAL)
+ C
+       REAL R(KR)
+ C
+@@ -98,8 +100,9 @@
+       IF ( LDELTA ) THEN
+ C
+          IF ( LRPEAT ) THEN
+-            CALL DUDLTR ( ICMVAL, NR2, IPREC, BASE, LBASE, ICMVAL,
+-     .                    NCMVAL, IBBYTE, ISIZE, ISTAT )
++            CALL DUDLTR_RAW ( C_LOC(ICMVAL(1)), NR2, IPREC,
++     .                    BASE, LBASE, ICMVAL, NCMVAL, IBBYTE,
++     .                    ISIZE, ISTAT )
+          ELSE
+             CALL DUDLTR ( R, NR1, IPREC, BASE, LBASE, ICMVAL,
+      .                    NCMVAL, IBBYTE, ISIZE, ISTAT )
+@@ -124,7 +127,8 @@
+       IF ( LSIGDT ) THEN
+ C
+          IF ( LRPEAT ) THEN
+-            CALL DUSD3R ( ICMVAL, NR2, ICMVAL, NCMVAL, IBBYTE, ISTAT )
++            CALL DUSD3R_RAW ( C_LOC(ICMVAL(1)), NR2, ICMVAL,
++     .                    NCMVAL, IBBYTE, ISTAT )
+          ELSE
+             CALL DUSD3R ( R, NR1, ICMVAL, NCMVAL, IBBYTE, ISTAT )
+          ENDIF
+diff --git a/heclib/heclib_f/src/zcheck6.f b/heclib/heclib_f/src/zcheck6.f
+--- a/heclib/heclib_f/src/zcheck6.f
++++ b/heclib/heclib_f/src/zcheck6.f
+@@ -180,7 +180,8 @@
+                 IFLTAB(KCOLL) = 1
+ C               Since we are in a write mode, the file's already locked
+                 NADD = 1
+-                CALL zptrec6(IFLTAB, IFLTAB(KPERM), NPERM, NADD, .TRUE.)
++                CALL zptrec6_i1(IFLTAB, IFLTAB(KPERM), NPERM,
++     *               NADD, .TRUE.)
+             ENDIF
+          ELSE
+             IF (IFLTAB(KCOLL).EQ.0) THEN
+@@ -192,7 +193,7 @@
+                 ELSE
+                     IFLTAB(KCOLL) = 1
+                     NADD = 1
+-                    CALL zptrec6 (IFLTAB, IFLTAB(KPERM), NPERM,
++                    CALL zptrec6_i1 (IFLTAB, IFLTAB(KPERM), NPERM,
+      *                           NADD, .TRUE.)
+ C                   Dump the buffer to disk
+                     CALL zbdump6(IFLTAB, 1)
+@@ -210,7 +211,7 @@
+ C     If a Hash table is used, read the address for this hash code
+       IF (IFLTAB(KTABLE).EQ.1) THEN
+       IADD = NPERM + IHASH
+-      CALL zgtrec6 (IFLTAB, IPBADD, 1, IADD, .FALSE.)
++      CALL zgtrec6_i1 (IFLTAB, IPBADD, 1, IADD, .FALSE.)
+       IF (MLEVEL.GE.10) WRITE (MUNIT,45) IADD, IPBADD
+  45   FORMAT (T12,'Hash Table address:',I8,'  Bin address:',I8)
+ C     Does a pathname bin exist for this hash code?  (Exit if no)
+diff --git a/heclib/heclib_f/src/zckmul6.f b/heclib/heclib_f/src/zckmul6.f
+--- a/heclib/heclib_f/src/zckmul6.f
++++ b/heclib/heclib_f/src/zckmul6.f
+@@ -39,7 +39,7 @@
+ C           Some one else has requested access, go to mode 2.
+             IFLTAB(KMULT) = 2
+             IF (MLEVEL.GE.1) WRITE (MUNIT, 80) IFLTAB(KUNIT)
+- 80         FORMAT(' -----DSS--- zckmul6, File set to multi-user access',
++ 80   FORMAT(' -----DSS--- zckmul6, File set to multi-user access',
+      *              ', unit:',I6)
+ C           Let go of it, if we are not in the middle of a write
+             IF ((IFLTAB(KLOCK).EQ.2).AND.(.NOT.LWRITE)) THEN
+diff --git a/heclib/heclib_f/src/zckpdd6.f b/heclib/heclib_f/src/zckpdd6.f
+--- a/heclib/heclib_f/src/zckpdd6.f
++++ b/heclib/heclib_f/src/zckpdd6.f
+@@ -168,7 +168,8 @@
+       IADD = INFO(NPPWRD+KIADAT)
+       CALL zgtrec6(IFLTAB, ILBUFF, NTOT, IDADD, .FALSE.)
+       NVAL = NTOT / 2
+-      IF (IFLTAB(KDSWAP).NE.0) CALL ZDSWAP6(DBUFF, NTOT)
++      IF (IFLTAB(KDSWAP).NE.0)
++     *   CALL ZDSWAP6_R8(DBUFF, NTOT)
+       DP = 0.0
+       NCOUNT = 0
+       LUPDATE = .FALSE.
+@@ -186,7 +187,7 @@
+       IF (LUPDATE) THEN
+          NFIXED = NFIXED + 1
+          IF (INSTR.GE.3) THEN
+-            CALL ZDSWAP6(DBUFF, NTOT)
++            CALL ZDSWAP6_R8(DBUFF, NTOT)
+             CALL ZPTREC6(IFLTAB, ILBUFF, NTOT, IDADD, .FALSE.)
+              IF (MLEVEL.GE.3) WRITE (MUNIT,190) CPATH(1:NPATH)
+  190  FORMAT (' -----DSS--- ZCKPDD;  Updated Endian for Record: ',A)
+diff --git a/heclib/heclib_f/src/zckpnb6.f b/heclib/heclib_f/src/zckpnb6.f
+--- a/heclib/heclib_f/src/zckpnb6.f
++++ b/heclib/heclib_f/src/zckpnb6.f
+@@ -80,7 +80,7 @@
+ C     If a Hash table is used, read the address for this hash code
+       IF (IFLTAB(KTABLE).EQ.1) THEN
+       IADD = NPERM + IHASH
+-      CALL zgtrec6 (IFLTAB, IPBADD, 1, IADD, .FALSE.)
++      CALL zgtrec6_i1 (IFLTAB, IPBADD, 1, IADD, .FALSE.)
+       IF (IERRMS.NE.0) THEN
+       IERRMS = 0
+       NERROR = NERROR + 1
+diff --git a/heclib/heclib_f/src/zcofil6.f b/heclib/heclib_f/src/zcofil6.f
+--- a/heclib/heclib_f/src/zcofil6.f
++++ b/heclib/heclib_f/src/zcofil6.f
+@@ -210,7 +210,7 @@
+ C     Check for pseudo regular time series data
+       IF ((ITYPE.GE.110).AND.(ITYPE.LE.120)) THEN
+         IADD = IIHADD + 4
+-        CALL ZGTREC6 (IFTOLD, INTL_PSEUDO, 1, IADD, .FALSE.)
++        CALL zgtrec6_i1 (IFTOLD, INTL_PSEUDO, 1, IADD, .FALSE.)
+       ENDIF
+ C
+ C
+diff --git a/heclib/heclib_f/src/zdbmod6.f b/heclib/heclib_f/src/zdbmod6.f
+--- a/heclib/heclib_f/src/zdbmod6.f
++++ b/heclib/heclib_f/src/zdbmod6.f
+@@ -35,7 +35,7 @@
+             CALL zptrec6 (IFLTAB, ILBUFF, NWRDS, IADD, .FALSE.)
+ 	   ENDIF
+       ELSE
+-         CALL zptrec6 (IFLTAB, IVALUE, 1, IADD, .FALSE.)
++         CALL zptrec6_i1 (IFLTAB, IVALUE, 1, IADD, .FALSE.)
+       ENDIF
+       CALL zbdump6 (IFLTAB, 1)
+       CALL zmultu6 ( IFLTAB, .FALSE., .TRUE.)
+diff --git a/heclib/heclib_f/src/zircpy6.f b/heclib/heclib_f/src/zircpy6.f
+--- a/heclib/heclib_f/src/zircpy6.f
++++ b/heclib/heclib_f/src/zircpy6.f
+@@ -42,7 +42,7 @@
+ C        Copy data value
+          IF (LDOUBLE) THEN
+             DEQUIV = DVALUES(IPOS)
+-            IF (LDSWAP) CALL zdswap6(DEQUIV, 2)
++            IF (LDSWAP) CALL zdswap6_r8(DEQUIV, 2)
+             JARRAY(2) = IEQUIV(1)
+             JARRAY(3) = IEQUIV(2)
+          ELSE
+@@ -68,7 +68,7 @@
+          IF (LDOUBLE) THEN
+             IEQUIV(1) = JARRAY(2)
+             IEQUIV(2) = JARRAY(3)
+-            IF (LDSWAP) CALL zdswap6(DEQUIV, 2)
++            IF (LDSWAP) CALL zdswap6_r8(DEQUIV, 2)
+             DVALUES(IPOS) = DEQUIV
+          ELSE
+             IEQUIV(1)       = JARRAY(2)
+diff --git a/heclib/heclib_f/src/zlegacyrawbuffers6.f90 b/heclib/heclib_f/src/zlegacyrawbuffers6.f90
+new file mode 100644
+--- /dev/null
++++ b/heclib/heclib_f/src/zlegacyrawbuffers6.f90
+@@ -0,0 +1,239 @@
++! Type-safe adapters for legacy DSS APIs whose buffers are sequences of
++! 32-bit words.  C_LOC/C_F_POINTER preserve the original address and bits.
++subroutine zptrec6_r4(ifltab, iarray, narray, jadd, lsaveb)
++  use iso_c_binding, only: c_float, c_int, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), narray, jadd
++  real(c_float), target :: iarray(*)
++  logical :: lsaveb
++  call zptrec6_word_address(ifltab, c_loc(iarray(1)), narray, jadd, lsaveb)
++end subroutine zptrec6_r4
++
++subroutine zptrec6_r8(ifltab, iarray, narray, jadd, lsaveb)
++  use iso_c_binding, only: c_double, c_int, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), narray, jadd
++  real(c_double), target :: iarray(*)
++  logical :: lsaveb
++  call zptrec6_word_address(ifltab, c_loc(iarray(1)), narray, jadd, lsaveb)
++end subroutine zptrec6_r8
++
++subroutine zptrec6_i1(ifltab, iarray, narray, jadd, lsaveb)
++  use iso_c_binding, only: c_int, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), narray, jadd
++  integer(c_int), target :: iarray
++  logical :: lsaveb
++  call zptrec6_word_address(ifltab, c_loc(iarray), narray, jadd, lsaveb)
++end subroutine zptrec6_i1
++
++subroutine zptrec6_word_address(ifltab, address, narray, jadd, lsaveb)
++  use iso_c_binding, only: c_f_pointer, c_int, c_ptr
++  implicit none
++  integer(c_int) :: ifltab(*), narray, jadd, nwords
++  type(c_ptr), intent(in) :: address
++  integer(c_int), pointer :: words(:)
++  logical :: lsaveb
++  nwords = max(1, narray)
++  call c_f_pointer(address, words, [nwords])
++  call zptrec6(ifltab, words, narray, jadd, lsaveb)
++end subroutine zptrec6_word_address
++
++subroutine zgtrec6_r4(ifltab, iarray, narray, jadd, lsaveb)
++  use iso_c_binding, only: c_float, c_int, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), narray, jadd
++  real(c_float), target :: iarray(*)
++  logical :: lsaveb
++  call zgtrec6_word_address(ifltab, c_loc(iarray(1)), narray, jadd, lsaveb)
++end subroutine zgtrec6_r4
++
++subroutine zgtrec6_r8(ifltab, iarray, narray, jadd, lsaveb)
++  use iso_c_binding, only: c_double, c_int, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), narray, jadd
++  real(c_double), target :: iarray(*)
++  logical :: lsaveb
++  call zgtrec6_word_address(ifltab, c_loc(iarray(1)), narray, jadd, lsaveb)
++end subroutine zgtrec6_r8
++
++subroutine zgtrec6_i1(ifltab, iarray, narray, jadd, lsaveb)
++  use iso_c_binding, only: c_int, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), narray, jadd
++  integer(c_int), target :: iarray
++  logical :: lsaveb
++  call zgtrec6_word_address(ifltab, c_loc(iarray), narray, jadd, lsaveb)
++end subroutine zgtrec6_i1
++
++subroutine zgtrec6_word_address(ifltab, address, narray, jadd, lsaveb)
++  use iso_c_binding, only: c_f_pointer, c_int, c_ptr
++  implicit none
++  integer(c_int) :: ifltab(*), narray, jadd, nwords
++  type(c_ptr), intent(in) :: address
++  integer(c_int), pointer :: words(:)
++  logical :: lsaveb
++  nwords = max(1, narray)
++  call c_f_pointer(address, words, [nwords])
++  call zgtrec6(ifltab, words, narray, jadd, lsaveb)
++end subroutine zgtrec6_word_address
++
++subroutine zdswap6_r4(iarray, nwords)
++  use iso_c_binding, only: c_float, c_int, c_loc
++  implicit none
++  real(c_float), target :: iarray(*)
++  integer(c_int) :: nwords
++  call zdswap6_word_address(c_loc(iarray(1)), nwords)
++end subroutine zdswap6_r4
++
++subroutine zdswap6_r8(iarray, nwords)
++  use iso_c_binding, only: c_double, c_int, c_loc
++  implicit none
++  real(c_double), target :: iarray(*)
++  integer(c_int) :: nwords
++  call zdswap6_word_address(c_loc(iarray(1)), nwords)
++end subroutine zdswap6_r8
++
++subroutine zdswap6_word_address(address, nwords)
++  use iso_c_binding, only: c_f_pointer, c_int, c_ptr
++  implicit none
++  type(c_ptr), intent(in) :: address
++  integer(c_int) :: nwords
++  integer(c_int), pointer :: words(:)
++  call c_f_pointer(address, words, [max(1, nwords)])
++  call zdswap6(words, nwords)
++end subroutine zdswap6_word_address
++
++subroutine zreadx6_r4data(ifltab, cpath, iihead, kihead, nihead, &
++                          ichead, kchead, nchead, iuhead, kuhead, &
++                          nuhead, idata, kdata, ndata, iplan, lfound)
++  use iso_c_binding, only: c_float, c_int, c_f_pointer, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), iihead(*), ichead(*), iuhead(*)
++  integer(c_int) :: kihead, nihead, kchead, nchead, kuhead, nuhead
++  integer(c_int) :: kdata, ndata, iplan
++  character(len=*) :: cpath
++  real(c_float), target :: idata(*)
++  logical :: lfound
++  integer(c_int), pointer :: words(:)
++  call c_f_pointer(c_loc(idata(1)), words, [max(1, kdata)])
++  call zreadx6(ifltab, cpath, iihead, kihead, nihead, ichead, kchead, &
++               nchead, iuhead, kuhead, nuhead, words, kdata, ndata, &
++               iplan, lfound)
++end subroutine zreadx6_r4data
++
++subroutine zreadx6_r8data(ifltab, cpath, iihead, kihead, nihead, &
++                          ichead, kchead, nchead, iuhead, kuhead, &
++                          nuhead, idata, kdata, ndata, iplan, lfound)
++  use iso_c_binding, only: c_double, c_int, c_f_pointer, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), iihead(*), ichead(*), iuhead(*)
++  integer(c_int) :: kihead, nihead, kchead, nchead, kuhead, nuhead
++  integer(c_int) :: kdata, ndata, iplan
++  character(len=*) :: cpath
++  real(c_double), target :: idata(*)
++  logical :: lfound
++  integer(c_int), pointer :: words(:)
++  call c_f_pointer(c_loc(idata(1)), words, [max(1, kdata)])
++  call zreadx6(ifltab, cpath, iihead, kihead, nihead, ichead, kchead, &
++               nchead, iuhead, kuhead, nuhead, words, kdata, ndata, &
++               iplan, lfound)
++end subroutine zreadx6_r8data
++
++subroutine dudltr_raw(address, nr1, iprec, base, lbase, icmval, &
++                      ncmval, ibbyte, isize, istat)
++  use iso_c_binding, only: c_f_pointer, c_float, c_ptr
++  implicit none
++  type(c_ptr), intent(in) :: address
++  integer :: nr1, iprec, ncmval, ibbyte, isize, istat
++  integer :: icmval(*)
++  real :: base
++  logical :: lbase
++  real(c_float), pointer :: r1(:)
++  call c_f_pointer(address, r1, [max(1, nr1)])
++  call dudltr(r1, nr1, iprec, base, lbase, icmval, ncmval, &
++              ibbyte, isize, istat)
++end subroutine dudltr_raw
++
++subroutine dusd3r_raw(address, nr1, icmval, ncmval, ibbyte, istat)
++  use iso_c_binding, only: c_f_pointer, c_float, c_ptr
++  implicit none
++  type(c_ptr), intent(in) :: address
++  integer :: nr1, ncmval, ibbyte, istat
++  integer :: icmval(*)
++  real(c_float), pointer :: r1(:)
++  call c_f_pointer(address, r1, [max(1, nr1)])
++  call dusd3r(r1, nr1, icmval, ncmval, ibbyte, istat)
++end subroutine dusd3r_raw
++
++subroutine dcdltr_raw(address, nr1, iprec, base, lbase, icmval, &
++                      ncmval, kcmval, ibbyte, isize, istat)
++  use iso_c_binding, only: c_f_pointer, c_float, c_ptr
++  implicit none
++  type(c_ptr), intent(in) :: address
++  integer :: nr1, iprec, ncmval, kcmval, ibbyte, isize, istat
++  integer :: icmval(*)
++  real :: base
++  logical :: lbase
++  real(c_float), pointer :: r1(:)
++  call c_f_pointer(address, r1, [max(1, nr1)])
++  call dcdltr(r1, nr1, iprec, base, lbase, icmval, ncmval, &
++              kcmval, ibbyte, isize, istat)
++end subroutine dcdltr_raw
++
++subroutine dcsd3r_raw(address, nr1, icmval, ncmval, kcmval, &
++                      ibbyte, istat)
++  use iso_c_binding, only: c_f_pointer, c_float, c_ptr
++  implicit none
++  type(c_ptr), intent(in) :: address
++  integer :: nr1, ncmval, kcmval, ibbyte, istat
++  integer :: icmval(*)
++  real(c_float), pointer :: r1(:)
++  call c_f_pointer(address, r1, [max(1, nr1)])
++  call dcsd3r(r1, nr1, icmval, ncmval, kcmval, ibbyte, istat)
++end subroutine dcsd3r_raw
++
++subroutine dureal_r4cmval(r, kr, ibgelm, nelms, icmval, ncmval, &
++                           kcmval, ih, nh, istat)
++  use iso_c_binding, only: c_float, c_int, c_f_pointer, c_loc
++  implicit none
++  integer(c_int) :: kr, ibgelm, nelms, ncmval, kcmval, nh, istat
++  integer(c_int) :: ih(*)
++  real(c_float) :: r(kr)
++  real(c_float), target :: icmval(*)
++  integer(c_int), pointer :: words(:)
++  call c_f_pointer(c_loc(icmval(1)), words, [max(1, kcmval)])
++  call dureal(r, kr, ibgelm, nelms, words, ncmval, kcmval, ih, nh, istat)
++end subroutine dureal_r4cmval
++
++subroutine zwritex6_r4data(ifltab, cpath, npath, iihead, nihead, &
++                           ichead, nchead, iuhead, nuhead, idata, &
++                           ndata, jtype, iplan, istat, lfound)
++  use iso_c_binding, only: c_float, c_int, c_f_pointer, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), iihead(*), nihead, ichead(*), nchead
++  integer(c_int) :: iuhead(*), nuhead, ndata, jtype, iplan, istat, npath
++  character(len=*) :: cpath
++  real(c_float), target :: idata(*)
++  logical :: lfound
++  integer(c_int), pointer :: words(:)
++  call c_f_pointer(c_loc(idata(1)), words, [max(1, ndata)])
++  call zwritex6(ifltab, cpath, npath, iihead, nihead, ichead, nchead, &
++                iuhead, nuhead, words, ndata, jtype, iplan, istat, lfound)
++end subroutine zwritex6_r4data
++
++subroutine zwritex6_r8data(ifltab, cpath, npath, iihead, nihead, &
++                           ichead, nchead, iuhead, nuhead, idata, &
++                           ndata, jtype, iplan, istat, lfound)
++  use iso_c_binding, only: c_double, c_int, c_f_pointer, c_loc
++  implicit none
++  integer(c_int) :: ifltab(*), iihead(*), nihead, ichead(*), nchead
++  integer(c_int) :: iuhead(*), nuhead, ndata, jtype, iplan, istat, npath
++  character(len=*) :: cpath
++  real(c_double), target :: idata(*)
++  logical :: lfound
++  integer(c_int), pointer :: words(:)
++  call c_f_pointer(c_loc(idata(1)), words, [max(1, ndata)])
++  call zwritex6(ifltab, cpath, npath, iihead, nihead, ichead, nchead, &
++                iuhead, nuhead, words, ndata, jtype, iplan, istat, lfound)
++end subroutine zwritex6_r8data
+diff --git a/heclib/heclib_f/src/znwbin6.f b/heclib/heclib_f/src/znwbin6.f
+--- a/heclib/heclib_f/src/znwbin6.f
++++ b/heclib/heclib_f/src/znwbin6.f
+@@ -36,7 +36,7 @@
+ C     1 on the PC or other computer where the bin size is the same as
+ C     the record length.
+       IF (IFLTAB(KBNREM).LE.0) THEN
+-      CALL zptrec6 (IFLTAB, IZERO, 1, IFLTAB(KFSIZE), .FALSE.)
++      CALL zptrec6_i1 (IFLTAB, IZERO, 1, IFLTAB(KFSIZE), .FALSE.)
+       CALL zgetrw6 (IFLTAB(KFSIZE), IREC, IWRD)
+ C     I = (IWRD-2) / INT(IFLTAB(KBNSIZ))
+ C     JWRD = ((I + 1) * INT(IFLTAB(KBNSIZ))) + 1
+@@ -77,8 +77,8 @@
+ C     Store a new pathname block area (zero filled)
+       ISIZE = -(IFLTAB(KBNBLK) * IFLTAB(KBNSIZ))
+ C     (This call keeps this block in memory - for speed only)
+-      CALL zptrec6 (IFLTAB, IZERO, 1, IFLTAB(KANBIN), .TRUE.)
+-      CALL zptrec6 (IFLTAB, IZERO, ISIZE, IFLTAB(KANBIN), .FALSE.)
++      CALL zptrec6_i1 (IFLTAB, IZERO, 1, IFLTAB(KANBIN), .TRUE.)
++      CALL zptrec6_i1 (IFLTAB, IZERO, ISIZE, IFLTAB(KANBIN), .FALSE.)
+       LSBUFF(JBUFF) = .TRUE.
+ C     Now update the file size
+       IFLTAB(KFSIZE) = IFLTAB(KFSIZE) + IABS(ISIZE)
+diff --git a/heclib/heclib_f/src/znwrit6.f b/heclib/heclib_f/src/znwrit6.f
+--- a/heclib/heclib_f/src/znwrit6.f
++++ b/heclib/heclib_f/src/znwrit6.f
+@@ -89,7 +89,7 @@
+ C     Write address of new pathname bin to hash location in table
+       IF(MLEVEL.GE.14)WRITE(MUNIT,*)'-znwrit6:  Save bin add in index'
+       NADD = NPERM + IHASH
+-      CALL zptrec6 (IFLTAB, IPBADD, 1, NADD, .TRUE.)
++      CALL zptrec6_i1 (IFLTAB, IPBADD, 1, NADD, .TRUE.)
+ C
+       ELSE
+ C
+@@ -213,7 +213,7 @@
+ C
+       NADD = 1
+       IF(MLEVEL.GE.14)WRITE(MUNIT,*)'-znwrit6:  Update root'
+-      CALL zptrec6 (IFLTAB, IFLTAB(KPERM), NPERM, NADD, .TRUE.)
++      CALL zptrec6_i1 (IFLTAB, IFLTAB(KPERM), NPERM, NADD, .TRUE.)
+ C
+  800  CONTINUE
+ C     Reset flags
+diff --git a/heclib/heclib_f/src/zrdinf6.f b/heclib/heclib_f/src/zrdinf6.f
+--- a/heclib/heclib_f/src/zrdinf6.f
++++ b/heclib/heclib_f/src/zrdinf6.f
+@@ -34,7 +34,7 @@
+ C
+ C     Check that IFLTAB is valid (e.g., the DSS file is open)
+       IF (IFLTAB(1).NE.6) CALL zerror6 (IFLTAB, 5, 'zrdinf6',
+-     * 0, IFLTAB, ' ', 0, ' ',0)
++     * 0, IFLTAB(1), ' ', 0, ' ',0)
+ C
+ C
+       CALL CHRLNB (CPATH, NPATH)
+diff --git a/heclib/heclib_f/src/zrpdi6.f b/heclib/heclib_f/src/zrpdi6.f
+--- a/heclib/heclib_f/src/zrpdi6.f
++++ b/heclib/heclib_f/src/zrpdi6.f
+@@ -84,10 +84,10 @@
+ C        Double to double.
+ C        We have twice the space of singles
+          KV = KVALS * 2
+-         CALL zreadx6 (IFLTAB, CPATH, IGBUFF, NGBUFF, NIHEAD,
++         CALL zreadx6_r8data (IFLTAB, CPATH, IGBUFF, NGBUFF, NIHEAD,
+      *   ICHEAD, 0, NCHEAD, IUHEAD, KUHEAD, NUHEAD, DVALUES,
+      *   KV, NVALS, 0, LFOUND)
+-         IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DVALUES, NVALS)
++         IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DVALUES, NVALS)
+          NVALS = NVALS / 2
+          IF (NVALS.GT.KVALS) THEN
+             CALL CHRLNB(CPATH,N)
+@@ -95,7 +95,7 @@
+          ENDIF
+       ELSE IF ((.NOT.LDOUBLE).AND.(.NOT.LFILDOB)) THEN
+ C        Single to single.
+-         CALL zreadx6 (IFLTAB, CPATH, IGBUFF, NGBUFF, NIHEAD,
++         CALL zreadx6_r4data (IFLTAB, CPATH, IGBUFF, NGBUFF, NIHEAD,
+      *   ICHEAD, 0, NCHEAD, IUHEAD, KUHEAD, NUHEAD, SVALUES,
+      *   KVALS, NVALS, 0, LFOUND)
+          IF (NVALS.GT.KVALS) THEN
+@@ -107,7 +107,7 @@
+       ELSE
+ C        Need to convert data sets.  Check that it is normal size.
+          IF ((NDATA.LE.KLBUFF).OR.(KVALS.LE.KLBUFF)) THEN
+-            CALL zreadx6 (IFLTAB, CPATH, IGBUFF, NGBUFF, NIHEAD,
++            CALL zreadx6_r4data (IFLTAB, CPATH, IGBUFF, NGBUFF, NIHEAD,
+      *      ICHEAD, 0, NCHEAD, IUHEAD, KUHEAD, NUHEAD, BUFF,
+      *      KLBUFF, NVALS, 0, LFOUND)
+             IF (NVALS.GT.KLBUFF) THEN
+@@ -123,7 +123,7 @@
+             ELSE
+ C              Data on disk is double, single requested
+                NVALS = MIN0(NVALS, KVALS)
+-               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DBUFF, NVALS)
++               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DBUFF, NVALS)
+                DO 70 I=1,NVALS
+                   SVALUES(I) = SNGL(DBUFF(I))
+  70            CONTINUE
+@@ -131,7 +131,7 @@
+          ELSE
+ C           Huge data set, buffer in reads.
+ C           Read internal header, etc., but not data
+-            CALL zreadx6 (IFLTAB, CPATH, IGBUFF, NGBUFF, NIHEAD,
++            CALL zreadx6_r4data (IFLTAB, CPATH, IGBUFF, NGBUFF, NIHEAD,
+      *      ICHEAD, 0, NCHEAD, IUHEAD, KUHEAD, NUHEAD, BUFF,
+      *      0, NVALS, 0, LFOUND)
+             ICOUNT = 0
+@@ -151,7 +151,7 @@
+  90            CONTINUE
+             ELSE
+ C              Data on disk is double, single requested
+-               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DVALUES, NDATA)
++               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DVALUES, NDATA)
+                NDATA = NDATA / 2
+                DO 95 I=1,NDATA
+                   ICOUNT = ICOUNT + 1
+diff --git a/heclib/heclib_f/src/zrrtpa6.f b/heclib/heclib_f/src/zrrtpa6.f
+--- a/heclib/heclib_f/src/zrrtpa6.f
++++ b/heclib/heclib_f/src/zrrtpa6.f
+@@ -31,7 +31,7 @@
+       KVALS = NVALS
+ C
+ C     Read the data
+-      CALL zreadx6 (IFLTAB, CPATH, INTBUF, NIBUFF, NHEADI,
++      CALL zreadx6_r4data (IFLTAB, CPATH, INTBUF, NIBUFF, NHEADI,
+      *             HEADC, 0, NHEADC, IUHEAD, KHEADU, NUHEAD,
+      *             VALUES, KVALS, NVALS, IPLAN, LFOUND)
+ C
+diff --git a/heclib/heclib_f/src/zrrtsb6.f b/heclib/heclib_f/src/zrrtsb6.f
+--- a/heclib/heclib_f/src/zrrtsb6.f
++++ b/heclib/heclib_f/src/zrrtsb6.f
+@@ -96,13 +96,13 @@
+       ELSE
+ C
+ C        Get the data block
+-         CALL zgtrec6 (IFLTAB, SBUFF2, NADATA, INFO(NPPWRD+KIADAT),
++         CALL zgtrec6_r4 (IFLTAB, SBUFF2, NADATA, INFO(NPPWRD+KIADAT),
+      *    .FALSE.)
+          IF (IFLTAB(KSTAT).NE.0) GO TO 800
+ C        Uncompress the data, with new data in buffer
+          NELMS = -1
+-         CALL DUREAL(SBUFF1, KSBUFF, 1, NELMS, SBUFF2, NADATA, KSBUFF,
+-     *    IDCH, NDCH, IST)
++         CALL dureal_r4cmval(SBUFF1, KSBUFF, 1, NELMS, SBUFF2,
++     *    NADATA, KSBUFF, IDCH, NDCH, IST)
+          IF (IST.NE.0) GO TO 910
+ C
+       ENDIF
+@@ -133,11 +133,14 @@
+ C              Read doubles
+                IADD = INFO(NPPWRD+KIADAT) + (NPOS*2) - 2
+                N = NREAD * IWORD(10)
+-               CALL zgtrec6 (IFLTAB, DVALUES(NSTART), N, IADD, .FALSE.)
+-               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DVALUES(NSTART), N)
++               CALL zgtrec6_r8 (IFLTAB, DVALUES(NSTART), N,
++     *              IADD, .FALSE.)
++               IF (IFLTAB(KDSWAP).NE.0)
++     *            CALL zdswap6_r8(DVALUES(NSTART), N)
+             ELSE
+                IADD = INFO(NPPWRD+KIADAT) + NPOS - 1
+-               CALL zgtrec6(IFLTAB, SVALUES(NSTART), NREAD,IADD,.FALSE.)
++               CALL zgtrec6_r4(IFLTAB, SVALUES(NSTART), NREAD,
++     *              IADD, .FALSE.)
+             ENDIF
+          ELSE
+ C           Need to translate word types
+@@ -145,7 +148,7 @@
+ C              Translate single (file) into double (requested)
+                IF (NREAD.GT.KSBUFF) GO TO 910
+                IADD = INFO(NPPWRD+KIADAT) + NPOS - 1
+-               CALL zgtrec6 (IFLTAB, BUFF, NREAD, IADD, .FALSE.)
++               CALL zgtrec6_r4 (IFLTAB, BUFF, NREAD, IADD, .FALSE.)
+                M = 0
+                DO 80 I=NSTART, ILIM
+                   M = M + 1
+@@ -156,8 +159,8 @@
+                IF (NREAD.GT.KDBUFF) GO TO 910
+                IADD = INFO(NPPWRD+KIADAT) + (NPOS*2) - 2
+                N = NREAD * IWORD(10)
+-               CALL zgtrec6 (IFLTAB, DBUFF, N, IADD, .FALSE.)
+-               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DBUFF, N)
++               CALL zgtrec6_r8 (IFLTAB, DBUFF, N, IADD, .FALSE.)
++               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DBUFF, N)
+                M = 0
+                DO 100 I=NSTART, ILIM
+                   M = M + 1
+@@ -190,7 +193,7 @@
+ C        Compute starting address of data
+          IADD = INFO(NPPWRD+KIADAT) + ((NPOS-1) * 2)
+          IREAD = NREAD * 2
+-         CALL zgtrec6 (IFLTAB, BUFF, IREAD, IADD, .FALSE.)
++         CALL zgtrec6_r4 (IFLTAB, BUFF, IREAD, IADD, .FALSE.)
+          IF (IFLTAB(KSTAT).NE.0) GO TO 800
+ C
+          IF (LGETDOB) THEN
+diff --git a/heclib/heclib_f/src/zsitsi6.f b/heclib/heclib_f/src/zsitsi6.f
+--- a/heclib/heclib_f/src/zsitsi6.f
++++ b/heclib/heclib_f/src/zsitsi6.f
+@@ -491,7 +491,7 @@
+       END IF
+ C
+ C
+-      CALL zreadx6 (IFLTAB, CPATH1, INTBUF, NIBUFF, N,
++      CALL zreadx6_r4data (IFLTAB, CPATH1, INTBUF, NIBUFF, N,
+      * ICHEAD, 0, J, iuhead_copy2, 0, N, BUFF, KLBUFF, NDA, 2, LF)
+       CALL zinqir6 (IFLTAB, 'STATUS', CSCRAT, JSTAT)
+       IF (JSTAT.NE.0) GO TO 940
+diff --git a/heclib/heclib_f/src/zspdi6.f b/heclib/heclib_f/src/zspdi6.f
+--- a/heclib/heclib_f/src/zspdi6.f
++++ b/heclib/heclib_f/src/zspdi6.f
+@@ -320,12 +320,12 @@
+          IF (LDOUBLE) THEN
+             N = NORD  *2
+             IADD = INFO(NPPWRD+KIADAT) + (NCURVE * NORD * 2)
+-            IF (IFLTAB(KDSWAP).NE.0) CALL ZDSWAP6(DVALUES, N)
+-            CALL ZPTREC6(IFLTAB, DVALUES, N, IADD, .FALSE.)
+-            IF (IFLTAB(KDSWAP).NE.0) CALL ZDSWAP6(DVALUES, N)
++            IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DVALUES, N)
++            CALL zptrec6_r8(IFLTAB, DVALUES, N, IADD, .FALSE.)
++            IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DVALUES, N)
+          ELSE
+             IADD = INFO(NPPWRD+KIADAT) + (NCURVE * NORD)
+-            CALL ZPTREC6(IFLTAB, SVALUES, NORD, IADD, .FALSE.)
++            CALL zptrec6_r4(IFLTAB, SVALUES, NORD, IADD, .FALSE.)
+          ENDIF
+          NVALS = NORD
+ 
+@@ -435,7 +435,7 @@
+      *     nuhead_copy2,
+      *     size(iuhead_copy2),
+      *     errMsg)
+-         CALL zwritex6(IFLTAB, CPATH, NPATH, IGBUFF, NIHEAD,
++         CALL zwritex6_r4data(IFLTAB, CPATH, NPATH, IGBUFF, NIHEAD,
+      *   ICHEAD, 0, iuhead_copy2, nuhead_copy2, BUFF, NTOT, JTYPE,
+      *   0, ISTAT, LFOUND)
+          IF (ISTAT.NE.0) GO TO 900
+@@ -452,11 +452,12 @@
+ 
+          IF (LDOUBLE) THEN
+             N = NORD  *2
+-            IF (IFLTAB(KDSWAP).NE.0) CALL ZDSWAP6(DVALUES, N)
+-            CALL ZPTREC6(IFLTAB,DVALUES, N, INFO(NPPWRD+KIADAT),.FALSE.)
+-            IF (IFLTAB(KDSWAP).NE.0) CALL ZDSWAP6(DVALUES, N)
++            IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DVALUES, N)
++            CALL zptrec6_r8(IFLTAB,DVALUES, N,
++     *           INFO(NPPWRD+KIADAT),.FALSE.)
++            IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DVALUES, N)
+          ELSE
+-            CALL ZPTREC6(IFLTAB, SVALUES, NORD, INFO(NPPWRD+KIADAT),
++            CALL zptrec6_r4(IFLTAB, SVALUES, NORD, INFO(NPPWRD+KIADAT),
+      *                   .FALSE.)
+          ENDIF
+ 
+@@ -507,15 +508,15 @@
+          JTYPE = 205
+          N = NVALS * 2
+ C        Swap words on unix to keep compatitable with PC
+-         IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DVALUES, N)
+-         CALL zwritex6 (IFLTAB, CPATH, NPATH, IGBUFF, NIHEAD,
++         IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DVALUES, N)
++         CALL zwritex6_r8data (IFLTAB, CPATH, NPATH, IGBUFF, NIHEAD,
+      *   ICHEAD, 0, iuhead_copy2, nuhead_copy2, DVALUES, N, JTYPE,
+      *   IPLAN, ISTAT, LFOUND)
+ C        Swap back so we don't mess up the user's data
+-         IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DVALUES, N)
++         IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DVALUES, N)
+       ELSE
+          JTYPE = 200
+-         CALL zwritex6 (IFLTAB, CPATH, NPATH, IGBUFF, NIHEAD,
++         CALL zwritex6_r4data (IFLTAB, CPATH, NPATH, IGBUFF, NIHEAD,
+      *   ICHEAD, 0, iuhead_copy2, nuhead_copy2, SVALUES, NVALS,
+      *   JTYPE, IPLAN, ISTAT, LFOUND)
+       ENDIF
+diff --git a/heclib/heclib_f/src/zsrtsi6.f b/heclib/heclib_f/src/zsrtsi6.f
+--- a/heclib/heclib_f/src/zsrtsi6.f
++++ b/heclib/heclib_f/src/zsrtsi6.f
+@@ -155,7 +155,7 @@
+ C
+ C     Check that IFLTAB is valid (e.g., the DSS file is open)
+       IF (IFLTAB(1).NE.6) CALL zerror6 (IFLTAB, 5, 'zsrtsi6', 0,
+-     * IFLTAB, ' ', 0, ' ',0)
++     * IFLTAB(1), ' ', 0, ' ',0)
+ C
+ C
+ C     Are we in a read only state?
+@@ -647,13 +647,13 @@
+       CALL zgtrec6 (IFLTAB, IDCH, NDCH, INFO(NPPWRD+KIACHE), .TRUE.)
+ C     Read the compressed data
+       NCDA = INFO(NPPWRD+KINDAT)
+-      CALL zgtrec6 (IFLTAB, SBUFF2, NCDA, INFO(NPPWRD+KIADAT),
++      CALL zgtrec6_r4 (IFLTAB, SBUFF2, NCDA, INFO(NPPWRD+KIADAT),
+      * .FALSE.)
+ C     Uncompress the data
+       NELMS = -1
+       NDCH = NDCH * 2
+-      CALL DUREAL (SBUFF1, KSBUFF, 1, NELMS, SBUFF2, NCDA, KSBUFF,
+-     * IDCH, NDCH, IST)
++      CALL DUREAL_R4CMVAL (SBUFF1, KSBUFF, 1, NELMS,
++     * SBUFF2, NCDA, KSBUFF, IDCH, NDCH, IST)
+       IF (IST.NE.0) GO TO 980
+ C     NEED TO GET OTHER COMPRESSION INFORMATION HERE !!!!!!!!!!!!!!!!!!
+ C     (EG BASE NPREC, ETC!!!)
+@@ -664,10 +664,10 @@
+       NDA = INFO(NPPWRD+KINDAT)
+ C     Make sure we have enough space
+       IF (NDA.GT.KSBUFF) GO TO 925
+-      CALL zgtrec6 (IFLTAB, BUFF, NDA, INFO(NPPWRD+KIADAT), .FALSE.)
++      CALL zgtrec6_r4 (IFLTAB, BUFF, NDA, INFO(NPPWRD+KIADAT), .FALSE.)
+       IF (IFLTAB(KSTAT).NE.0) GO TO 961
+       IF (LFILDOB) THEN
+-         IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(BUFF, NDA)
++         IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r4(BUFF, NDA)
+       ENDIF
+       ENDIF
+       ENDIF
+@@ -1006,11 +1006,12 @@
+       IPOS = KSBUFF + 1
+       ENDIF
+          IF (LDOUBLE.OR.LFILDOB) THEN
+-            IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DBUFF(IPOS), NTDATA)
+-            CALL zptrec6 (IFLTAB, DBUFF(IPOS), NTDATA,
++            IF (IFLTAB(KDSWAP).NE.0)
++     *         CALL zdswap6_r8(DBUFF(IPOS), NTDATA)
++            CALL zptrec6_r8 (IFLTAB, DBUFF(IPOS), NTDATA,
+      *                   INFO(NPPWRD+KIADAT),.FALSE.)
+          ELSE
+-            CALL zptrec6 (IFLTAB, BUFF(IPOS), NTDATA,
++            CALL zptrec6_r4 (IFLTAB, BUFF(IPOS), NTDATA,
+      *                   INFO(NPPWRD+KIADAT),.FALSE.)
+          ENDIF
+       ENDIF
+@@ -1037,13 +1038,13 @@
+             IADD = INFO(NPPWRD+KIADAT)
+             NTDATA = INFO(NPPWRD+KINDAT)
+             IF (LDOUBLE) THEN
+-               CALL zgtrec6 (IFLTAB, DBUFF, NTDATA, IADD, .FALSE.)
+-               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6(DBUFF, N)
++               CALL zgtrec6_r8 (IFLTAB, DBUFF, NTDATA, IADD, .FALSE.)
++               IF (IFLTAB(KDSWAP).NE.0) CALL zdswap6_r8(DBUFF, N)
+                DO 480 I=1,NLDATA
+                   IF (DBUFF(I).NE.-901.0) GO TO 500
+  480           CONTINUE
+             ELSE
+-               CALL zgtrec6 (IFLTAB, BUFF, NTDATA, IADD, .FALSE.)
++               CALL zgtrec6_r4 (IFLTAB, BUFF, NTDATA, IADD, .FALSE.)
+                DO 490 I=1,NLDATA
+                   IF (BUFF(I).NE.-901.0) GO TO 500
+  490           CONTINUE
+@@ -1185,7 +1186,7 @@
+  974  CONTINUE
+       IF (MLEVEL.GE.1) WRITE (MUNIT,975) CPATH(1:NPATH)
+  975  FORMAT (/,' *****DSS*** zsrtsi6:  ERROR  - Attempting ',
+-     * ' to store',/,' a different type of data set than'
++     * ' to store',/,' a different type of data set than',
+      * ' what already exists.',/,' Pathname: ',A,/)
+       ISTAT=511
+       GO TO 990
+diff --git a/heclib/heclib_f/src/ztagfi6.f b/heclib/heclib_f/src/ztagfi6.f
+--- a/heclib/heclib_f/src/ztagfi6.f
++++ b/heclib/heclib_f/src/ztagfi6.f
+@@ -70,7 +70,7 @@
+ C     Adjust the file size so we start on a record boundary.
+       IF (IWRD.NE.1) THEN
+ C     Clear the end of file flag
+-      CALL zptrec6 (IFLTAB, IZERO, 1, IFLTAB(KFSIZE), .FALSE.)
++      CALL zptrec6_i1 (IFLTAB, IZERO, 1, IFLTAB(KFSIZE), .FALSE.)
+       IREC = IREC + 1
+       IWRD = 1
+       CALL zgetad6 (IFLTAB(KFSIZE), IREC, IWRD)
+@@ -95,7 +95,7 @@
+ C     hash table is not completed (i.e., an abort)
+       IFLTAB(KTAGBK) = 0
+       NADD = 1
+-      CALL zptrec6 (IFLTAB, IFLTAB(KPERM), NPERM, NADD, .TRUE.)
++      CALL zptrec6_i1 (IFLTAB, IFLTAB(KPERM), NPERM, NADD, .TRUE.)
+ C
+ C     Clear the buffer
+       DO 40 I=1,NTAGBK
+@@ -150,7 +150,7 @@
+       IF (JADD.GT.0) THEN
+       IF ((IADD.GT.0).AND.(ITGADD.GT.0)) THEN
+       NADD = IADD + NTAGBK - 1
+-      CALL zgtrec6 (IFLTAB, JADD, 1, NADD, .FALSE.)
++      CALL zgtrec6_i1 (IFLTAB, JADD, 1, NADD, .FALSE.)
+       ELSE
+       ITGADD = 0
+       ENDIF
+@@ -184,7 +184,7 @@
+ C     Store the address of the first block
+       IFLTAB(KTAGBK) = ITGADD
+       NADD = 1
+-      CALL zptrec6 (IFLTAB, IFLTAB(KPERM), NPERM, NADD, .TRUE.)
++      CALL zptrec6_i1 (IFLTAB, IFLTAB(KPERM), NPERM, NADD, .TRUE.)
+       CALL zmultu6 (IFLTAB, .FALSE., .TRUE.)
+       ENDIF
+ C
+diff --git a/heclib/heclib_f/src/ztagpa6.f b/heclib/heclib_f/src/ztagpa6.f
+--- a/heclib/heclib_f/src/ztagpa6.f
++++ b/heclib/heclib_f/src/ztagpa6.f
+@@ -128,7 +128,7 @@
+       IF ((IHCODE(I).GT.0).AND.(NPATH(I).EQ.0)) THEN
+       IF (IFLTAB(KTABLE).EQ.1) THEN
+       IADD = NPERM + IHCODE(I)
+-      CALL zgtrec6 (IFLTAB, IPBADD, 1, IADD, .FALSE.)
++      CALL zgtrec6_i1 (IFLTAB, IPBADD, 1, IADD, .FALSE.)
+ C     Does a pathname bin exist for this hash code?  (Exit if no)
+       IF (IPBADD.EQ.0) GO TO 280
+ C
+diff --git a/heclib/heclib_f/src/zuprts6.f b/heclib/heclib_f/src/zuprts6.f
+--- a/heclib/heclib_f/src/zuprts6.f
++++ b/heclib/heclib_f/src/zuprts6.f
+@@ -102,9 +102,9 @@
+ C     Does IPLAN require us the read the current data first?
+       IF (((IPLAN.EQ.0).OR.(IPLAN.EQ.2)).AND.(.NOT.LTOL)) THEN
+ C     No - just store the data
+-      CALL zptrec6 (IFLTAB, VALUES(NSTART), NSTORE, IADD, .FALSE.)
+-      ELSE
+-      CALL zgtrec6 (IFLTAB, BUFF, NSTORE, IADD, .TRUE.)
++      CALL zptrec6_r4 (IFLTAB, VALUES(NSTART), NSTORE, IADD, .FALSE.)
++      ELSE
++      CALL zgtrec6_r4 (IFLTAB, BUFF, NSTORE, IADD, .TRUE.)
+       J = NSTART - 1
+       IF (IPLAN.EQ.1) THEN
+       DO 60 I=1,NSTORE
+@@ -128,7 +128,7 @@
+       BUFF(I) = VALUES(J)
+  95   CONTINUE
+       ENDIF
+-      CALL zptrec6 (IFLTAB, BUFF, NSTORE, IADD, .FALSE.)
++      CALL zptrec6_r4 (IFLTAB, BUFF, NSTORE, IADD, .FALSE.)
+       ENDIF
+ C
+       ELSE
+@@ -149,10 +149,10 @@
+       K = K + 1
+       ILBUFF(K) = JQUAL(J)
+  100  CONTINUE
+-      CALL zptrec6 (IFLTAB, BUFF, ISTORE, IADD, .FALSE.)
+-C
+-      ELSE
+-      CALL zgtrec6 (IFLTAB, BUFF, ISTORE, IADD, .TRUE.)
++      CALL zptrec6_r4 (IFLTAB, BUFF, ISTORE, IADD, .FALSE.)
++C
++      ELSE
++      CALL zgtrec6_r4 (IFLTAB, BUFF, ISTORE, IADD, .TRUE.)
+ C
+       IF (IPLAN.EQ.1) THEN
+       DO 120 I=1,NSTORE
+@@ -177,7 +177,7 @@
+  140  CONTINUE
+       ENDIF
+ C
+-      CALL zptrec6 (IFLTAB, BUFF, ISTORE, IADD, .FALSE.)
++      CALL zptrec6_r4 (IFLTAB, BUFF, ISTORE, IADD, .FALSE.)
+       ENDIF
+ C
+       ENDIF
+
+--- a/heclib/hecdss/hecdss.c
++++ b/heclib/hecdss/hecdss.c
+@@ -1,5 +1,6 @@
+ #include <string.h>
+ #include <stdio.h>
++#include <limits.h>
+ #include "hecdss.h"
+ #include "heclib.h"
+ 
+@@ -82,7 +83,11 @@
+ 
+ void hec_dss_array_copy(double* destination, const long destinationSize,
+   double* source, const size_t sourceSize) {
+-  size_t numberToCopy = sourceSize < destinationSize ? sourceSize: destinationSize;
++  if (destinationSize <= 0 || sourceSize == 0 || destination == NULL || source == NULL)
++    return;
++
++  size_t destinationCapacity = (size_t)destinationSize;
++  size_t numberToCopy = sourceSize < destinationCapacity ? sourceSize : destinationCapacity;
+ 
+   for (size_t i = 0; i < numberToCopy; i++)
+   {
+@@ -224,13 +229,18 @@
+     if (status == 0)
+     {
+       int intervalType = ztsProcessTimes(pdss->ifltab, tss, 0);
+-      status = ztsInternalHeaderUnpack(tss, transfer->internalHeader, transfer->internalHeaderNumber);
+-
+-      if (tss->units != NULL) {
+-        stringCopy(units, unitsLength, tss->units, strlen(tss->units));
+-      }
+-      if (tss->type != NULL) {
+-        stringCopy(type, typeLength, tss->type, strlen(tss->type));
++      if (intervalType < 0)
++        status = intervalType;
++      else
++        status = ztsInternalHeaderUnpack(tss, transfer->internalHeader, transfer->internalHeaderNumber);
++
++      if (status == 0) {
++        if (tss->units != NULL) {
++          stringCopy(units, unitsLength, tss->units, strlen(tss->units));
++        }
++        if (tss->type != NULL) {
++          stringCopy(type, typeLength, tss->type, strlen(tss->type));
++        }
+       }
+     }
+     zstructFree(tss);
+@@ -238,6 +248,17 @@
+     return status;
+ }
+ 
++
++static int hec_dss_quality_element_size(const int valueCount, const int* quality,
++                                        const int qualityArraySize) {
++  if (qualityArraySize < 0)
++    return -1;
++  if (qualityArraySize == 0)
++    return 0;
++  if (quality == NULL || valueCount <= 0 || qualityArraySize % valueCount != 0)
++    return -1;
++  return qualityArraySize / valueCount;
++}
+ 
+ HECDSS_API int hec_dss_tsRetrieve(dss_file* dss, const char *pathname, 
+                                   const char *startDate, const char *startTime, 
+@@ -247,8 +268,24 @@
+                                   int* julianBaseDate,int* timeGranularitySeconds,
+                                   char* units,const int unitsLength, char* type,const int typeLength)
+ {
+-    *numberValuesRead = 0; 
++    if (numberValuesRead == NULL || arraySize < 0 || qualityWidth < 0 ||
++        unitsLength < 0 || typeLength < 0 ||
++        dss == NULL || pathname == NULL || startDate == NULL || startTime == NULL ||
++        julianBaseDate == NULL || timeGranularitySeconds == NULL ||
++        (arraySize > 0 && (timeArray == NULL || valueArray == NULL)) ||
++        (qualityWidth > 0 && quality == NULL) ||
++        (unitsLength > 0 && units == NULL) ||
++        (typeLength > 0 && type == NULL)) {
++        hec_dss_log_error("Invalid time series buffer size or pointer in hec_dss_tsRetrieve");
++        return -1;
++    }
++
++    *numberValuesRead = 0;
+     zStructTimeSeries* tss = zstructTsNew(pathname);
++    if (tss == NULL) {
++        hec_dss_log_error("Error allocating time series structure in hec_dss_tsRetrieve");
++        return -1;
++    }
+ 
+     tss->startJulianDate = dateToJulian(startDate);
+     tss->startTimeSeconds = timeStringToSeconds(startTime);
+@@ -270,12 +307,23 @@
+         int size = MIN(tss->numberValues, arraySize);
+         size = MAX(0, size);
+         *numberValuesRead = size;
++        if (qualityWidth > 0) {
++            memset(quality, 0, (size_t)qualityWidth * sizeof(*quality));
++            if (size > 0 && tss->quality != NULL && tss->qualityElementSize > 0 &&
++                tss->qualityArraySize > 0) {
++                size_t sourceWords = (size_t)tss->qualityArraySize;
++                size_t elementWords = (size_t)tss->qualityElementSize;
++                size_t valuesToCopy = (size_t)size;
++                size_t wordsForValues = valuesToCopy > sourceWords / elementWords
++                    ? sourceWords : valuesToCopy * elementWords;
++                size_t wordsToCopy = wordsForValues < (size_t)qualityWidth
++                    ? wordsForValues : (size_t)qualityWidth;
++                memcpy(quality, tss->quality, wordsToCopy * sizeof(*quality));
++            }
++        }
+         for (int i = 0; i < size; i++) {
+             timeArray[i] = tss->times[i];
+             valueArray[i] = tss->doubleValues[i];
+-            if (qualityWidth > 0) // TO DO.. quality can have multiple columns
+-              quality[i] = tss->quality[i];
+-
+         }
+     }
+ 
+@@ -289,25 +337,45 @@
+   const int saveAsFloat,
+   const char* units, const char* type)
+ {
+-  zStructTimeSeries* tss = 0;
+-
++  if (dss == NULL || pathname == NULL || startDate == NULL || startTime == NULL ||
++      valueArraySize < 0 || (valueArraySize > 0 && valueArray == NULL)) {
++    hec_dss_log_error("Invalid time series buffer size or pointer in hec_dss_tsStoreRegular");
++    return -1;
++  }
++
++  int qualityElementSize = hec_dss_quality_element_size(valueArraySize, qualityArray, qualityArraySize);
++  if (qualityElementSize < 0) {
++    hec_dss_log_error("Invalid quality buffer size or pointer in hec_dss_tsStoreRegular");
++    return -1;
++  }
++
++  zStructTimeSeries* tss = NULL;
++  float* convertedValues = NULL;
+   if (saveAsFloat) {
+-    float* values = hec_dss_double_array_to_float(valueArray, valueArraySize);
+-    if (values == NULL)
+-    {
+-      hec_dss_log_error("Error allocating memory in hec_dss_tsStoreRegular ");
++    convertedValues = hec_dss_double_array_to_float(valueArray, valueArraySize);
++    if (convertedValues == NULL) {
++      hec_dss_log_error("Error allocating memory in hec_dss_tsStoreRegular");
+       return -1;
+     }
+-      
+-
+-    tss = zstructTsNewRegFloats(pathname, values, valueArraySize, startDate, startTime, units, type);
+-    if (qualityArraySize > 0 && qualityArraySize == valueArraySize)
+-      tss->quality = qualityArray;
++
++    tss = zstructTsNewRegFloats(pathname, convertedValues, valueArraySize, startDate, startTime, units, type);
+   }
+   else {
+     tss = zstructTsNewRegDoubles(pathname, valueArray, valueArraySize, startDate, startTime, units, type);
+   }
+-  
++
++  if (tss == NULL) {
++    free(convertedValues);
++    hec_dss_log_error("Error allocating time series structure in hec_dss_tsStoreRegular");
++    return -1;
++  }
++  if (convertedValues != NULL)
++    tss->allocated[zSTRUCT_TS_floatValues] = 1;
++  if (qualityElementSize > 0) {
++    tss->quality = qualityArray;
++    tss->qualityElementSize = qualityElementSize;
++  }
++
+   int status = ztsStore(dss->ifltab, tss, REPLACE_ALL);
+ 
+   zstructFree(tss);
+@@ -321,27 +389,60 @@
+   const int saveAsFloat,
+   const char* units, const char* type)
+ {
++  if (dss == NULL || pathname == NULL ||
++      valueArraySize < 0 || (valueArraySize > 0 && (valueArray == NULL || times == NULL))) {
++    hec_dss_log_error("Invalid time series buffer size or pointer in hec_dss_tsStoreIregular");
++    return -1;
++  }
++
++  int julianBaseDate = 0;
++  int hasBaseDate = startDateBase != NULL && startDateBase[0] != '\0';
++  if (hasBaseDate) {
++    julianBaseDate = dateToJulian(startDateBase);
++    if (julianBaseDate == UNDEFINED_TIME) {
++      hec_dss_log_error("Invalid irregular time series base date in hec_dss_tsStoreIregular");
++      return -1;
++    }
++  }
++
++  int qualityElementSize = hec_dss_quality_element_size(valueArraySize, qualityArray, qualityArraySize);
++  if (qualityElementSize < 0) {
++    hec_dss_log_error("Invalid quality buffer size or pointer in hec_dss_tsStoreIregular");
++    return -1;
++  }
++
+   zStructTimeSeries* tss = NULL;
+-
++  float* convertedValues = NULL;
+   if (saveAsFloat) {
+-    float* values = hec_dss_double_array_to_float(valueArray, valueArraySize);
+-    if (values == NULL) {
+-      hec_dss_log_error("Error allocating memory in hec_dss_tsStoreIregular ");
++    convertedValues = hec_dss_double_array_to_float(valueArray, valueArraySize);
++    if (convertedValues == NULL) {
++      hec_dss_log_error("Error allocating memory in hec_dss_tsStoreIregular");
+       return -1;
+     }
+ 
+-    tss = zstructTsNewIrregFloats(pathname,values, valueArraySize,times,
+-      timeGranularitySeconds, startDateBase,units, type);
+-    if (qualityArraySize > 0 && qualityArraySize == valueArraySize)
+-      tss->quality = qualityArray;
++    tss = zstructTsNewIrregFloats(pathname, convertedValues, valueArraySize, times,
++      timeGranularitySeconds, startDateBase, units, type);
+   }
+   else {
+     tss = zstructTsNewIrregDoubles(pathname, valueArray, valueArraySize, times,
+       timeGranularitySeconds, startDateBase, units, type);
+   }
+ 
++  if (tss == NULL) {
++    free(convertedValues);
++    hec_dss_log_error("Error allocating time series structure in hec_dss_tsStoreIregular");
++    return -1;
++  }
++  if (hasBaseDate)
++    tss->julianBaseDate = julianBaseDate;
++  if (convertedValues != NULL)
++    tss->allocated[zSTRUCT_TS_floatValues] = 1;
++  if (qualityElementSize > 0) {
++    tss->quality = qualityArray;
++    tss->qualityElementSize = qualityElementSize;
++  }
++
+   int status = ztsStore(dss->ifltab, tss, DELETE_INSERT);
+-
+ 
+   zstructFree(tss);
+   return status;
+@@ -551,6 +652,18 @@
+   const char* typeDependent, 
+   const char* labels, const int labelsLength)
+ {
++  if (dss == NULL || pathname == NULL || numberOrdinates < 0 || numberCurves < 0 ||
++      doubleOrdinatesLength < 0 || doubleValuesLength < 0 || labelsLength < 0 ||
++      (long long)numberOrdinates * numberCurves > INT_MAX ||
++      doubleOrdinatesLength < numberOrdinates ||
++      doubleValuesLength < (long long)numberOrdinates * numberCurves ||
++      (doubleOrdinatesLength > 0 && doubleOrdinates == NULL) ||
++      (doubleValuesLength > 0 && doubleValues == NULL) ||
++      (labelsLength > 0 && labels == NULL)) {
++    hec_dss_log_error("Invalid paired data buffer size or pointer in hec_dss_pdStore");
++    return -1;
++  }
++
+   zStructPairedData* pds = zstructPdNewDoubles(pathname, doubleOrdinates, doubleValues,
+     numberOrdinates, numberCurves, unitsIndependent, typeIndependent, unitsDependent, typeDependent);
+ 
+@@ -774,4 +887,4 @@
+     status = zconvertVersion(filenameVersion6, filenameVersion7);
+     return status;
+ 
+-}
+\ No newline at end of file
++}
+--- a/heclib/hecdss/hecdss.h
++++ b/heclib/hecdss/hecdss.h
+@@ -213,6 +213,8 @@
+ /// <param name="valueArray">input/output: array to hold double representation of values</param>
+ /// <param name="arraySize">input: length of timeArray and valueArray </param>
+ /// <param name="numberValuesRead">output: number of values returned</param>
++/// <param name="quality">output: flattened quality words for each returned value</param>
++/// <param name="qualityWidth">input: total int-word capacity of quality</param>
+ /// <param name="julianBaseDate">base integer </param>
+ /// <param name="timeGranularitySeconds"></param>
+ /// <param name="units">output: units</param>
+@@ -239,8 +241,8 @@
+ /// <param name="startTime">input: end time/param>
+ /// <param name="valueArray">timeseries point values</param>
+ /// <param name="valueArraySize">number of points</param>
+-/// <param name="qualityArray">array of quality flags</param>
+-/// <param name="qualityArraySize">number of quality values per point</param>
++/// <param name="qualityArray">flattened quality words, grouped by value</param>
++/// <param name="qualityArraySize">total number of int words; for nonempty quality, must be divisible by valueArraySize</param>
+ /// <param name="saveAsFloat">set to true to save disk space</param>
+ /// <param name="units">units of data</param>
+ /// <param name="type">type of data: PER-AVER, PER-CUM,INST-VAL,INST-CUM https://www.hec.usace.army.mil/confluence/dssvuedocs/latest/introduction/time-series-conventions</param>
+@@ -330,9 +332,9 @@
+ /// <param name="dss"></param>
+ /// <param name="pathname"></param>
+ /// <param name="doubleOrdinates"></param>
+-/// <param name="doubleOrdinatesLength"></param>
++/// <param name="doubleOrdinatesLength">must equal the number of ordinates read</param>
+ /// <param name="doubleValues"></param>
+-/// <param name="doubleValuesLength"></param>
++/// <param name="doubleValuesLength">must equal numberOrdinates * numberCurves</param>
+ /// <param name="numberOrdinates"></param>
+ /// <param name="numberCurves"></param>
+ /// <param name="unitsIndependent"></param>
+@@ -362,9 +364,9 @@
+ /// <param name="dss"></param>
+ /// <param name="pathname"></param>
+ /// <param name="doubleOrdinates"></param>
+-/// <param name="doubleOrdinatesLength"></param>
++/// <param name="doubleOrdinatesLength">capacity of doubleOrdinates; must be at least numberOrdinates</param>
+ /// <param name="doubleValues"></param>
+-/// <param name="doubleValuesLength"></param>
++/// <param name="doubleValuesLength">capacity of doubleValues; must be at least numberOrdinates * numberCurves</param>
+ /// <param name="numberOrdinates"></param>
+ /// <param name="numberCurves"></param>
+ /// <param name="unitsIndependent"></param>

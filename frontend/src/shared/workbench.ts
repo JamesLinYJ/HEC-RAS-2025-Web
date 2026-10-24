@@ -1,0 +1,141 @@
+/** Shared UI/session contracts. Backend operation names and payloads follow the retained C# Host. */
+export type Language = 'zh' | 'en';
+export type FeatureId = 'project' | 'editors' | 'geometry' | 'map' | 'results' | 'tools' | 'compute';
+export interface AssetReference {
+  path: string;
+  kind: string;
+  name: string;
+  revision?: string;
+  locator?: object;
+}
+export interface WorkbenchContext {
+  projectSessionID: string;
+  projectPath: string | null;
+  projectXml: string | null;
+  /** Revision of the .ras file, independent of the selected model's revision. */
+  projectRevision: string | null;
+  selectedAsset: AssetReference | null;
+}
+export interface BackendRequestOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: unknown) => void;
+  /** Transport-layer status only; these events never represent solver progress. */
+  onTransportState?: (state: BackendTransportState) => void;
+}
+export type BackendTransportState =
+  | { state: 'reconnecting'; operationId: string; attempt: number; retryInMilliseconds: number }
+  | { state: 'connected'; operationId: string; recoveredAfterAttempt: number }
+  | { state: 'cancelRequested'; operationId: string }
+  | { state: 'cancelRetrying'; operationId: string; attempt: number; retryInMilliseconds: number; code: string }
+  | { state: 'cancelSent'; operationId: string; accepted: boolean }
+  | { state: 'cancelFailed'; operationId: string; code: string; diagnosticMessage: string };
+export interface BackendGateway {
+  supports(method: string): boolean;
+  request<T = unknown>(method: string, parameters: unknown, options?: BackendRequestOptions): Promise<T>;
+  /** Fires after the advertised operation set changes, without replacing the gateway instance. */
+  subscribeCapabilities?(listener: (revision: number) => void): () => void;
+  /** Upload a workspace archive/directory through the host's dedicated import endpoint. */
+  uploadWorkspace?(files: File[], options?: Pick<BackendRequestOptions, 'signal'>): Promise<WorkspaceUploadResult>;
+  /** Browser download URL for a successfully uploaded workspace; the server streams the archive. */
+  workspaceArchiveUrl?(workspaceId: string): string;
+  /** Copies selected source files into the owning project before a separate map import commits. */
+  uploadMapSources?(context: WorkbenchContext, files: File[], options?: Pick<BackendRequestOptions, 'signal'> & { directory?: boolean }): Promise<MapSourceUploadResult>;
+}
+export interface UploadedMapSource {
+  sourcePath: string;
+  sourceCanonicalPath: string;
+  sourceRevision: string;
+  kind: 'geojson' | 'shapefile' | 'raster' | 'gdb';
+  fileName: string;
+}
+export interface MapSourceUploadResult {
+  uploadID: string;
+  projectPath: string;
+  projectRevision: string;
+  projectSessionID: string;
+  sources: UploadedMapSource[];
+}
+export interface WorkspaceUploadResult {
+  workspaceId: string;
+  rootPath: string;
+  projects: { path: string; name: string }[];
+  fileCount: number;
+}
+export interface FeaturePageProps {
+  language: Language;
+  context: WorkbenchContext;
+  backend: BackendGateway;
+  onContextChange: (context: WorkbenchContext) => void;
+  /** Adopt an acknowledged save only while its source is still the active context. */
+  onContextCommit?: (source: WorkbenchContext, committed: WorkbenchContext) => boolean;
+  onNavigate: (feature: FeatureId) => void;
+  onDirtyStateChange?: (owner: string, dirty: boolean) => void;
+  /** Changes when the server's advertised operation set is refreshed. */
+  backendRevision?: number;
+  hasUnsavedDrafts?: boolean;
+}
+export class BackendOperationUnavailableError extends Error {
+  readonly code = 'operationUnavailable';
+  constructor(readonly method: string) {
+    super(`后端尚未发布操作：${method}。`);
+    this.name = 'BackendOperationUnavailableError';
+  }
+
+  localizedMessage(language: Language): string {
+    return language === 'zh'
+      ? '当前 C# 服务暂不支持此项操作。'
+      : `The backend has not advertised the ${this.method} operation.`;
+  }
+}
+
+interface LocalizedError {
+  localizedMessage?: (language: Language) => string;
+}
+
+/** User-facing error text. Backend adapters may localize while retaining diagnostics on the error object. */
+export function message(error: unknown, language: Language = 'zh'): string {
+  if (error && typeof error === 'object') {
+    const localized = (error as LocalizedError).localizedMessage;
+    if (typeof localized === 'function') {
+      try { return localized.call(error, language); }
+      catch { /* Fall through to the stable Error message. */ }
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Raw diagnostics are for expandable details/logs, not primary UI copy. */
+export function errorDiagnostics(error: unknown): unknown {
+  if (!error || typeof error !== 'object') return error;
+  const candidate = error as {
+    code?: unknown; method?: unknown; status?: unknown; operation?: unknown; operationId?: unknown;
+    diagnosticMessage?: unknown; details?: unknown; diagnosticCause?: unknown; cause?: unknown;
+    terminalConfirmed?: unknown;
+  };
+  const diagnostics: Record<string, unknown> = {};
+  if (typeof candidate.code === 'string') diagnostics.code = candidate.code;
+  if (typeof candidate.method === 'string') diagnostics.method = candidate.method;
+  if (typeof candidate.status === 'number') diagnostics.status = candidate.status;
+  if (typeof candidate.operation === 'string') diagnostics.operation = candidate.operation;
+  if (typeof candidate.operationId === 'string') diagnostics.operationId = candidate.operationId;
+  if (typeof candidate.terminalConfirmed === 'boolean') diagnostics.terminalConfirmed = candidate.terminalConfirmed;
+  if (typeof candidate.diagnosticMessage === 'string') diagnostics.message = candidate.diagnosticMessage;
+  if (candidate.details !== undefined) diagnostics.details = candidate.details;
+  if (candidate.diagnosticCause !== undefined) diagnostics.cause = candidate.diagnosticCause;
+  else if (candidate.cause !== undefined) diagnostics.cause = candidate.cause;
+  return Object.keys(diagnostics).length > 0 ? diagnostics : error;
+}
+export function text(language: Language, zh: string, en: string): string {
+  return language === 'zh' ? zh : en;
+}
+
+export function assetKindLabel(kind: string, language: Language): string {
+  if (language === 'en') return kind;
+  return ({
+    Project: '工程', ProjectFile: '工程文件', Plan: '计算计划', Geometry: '几何模型',
+    Terrain: '地形', Result: '计算结果', Results: '计算结果',
+    'Boundary Conditions': '边界条件', BoundaryCondition: '边界条件',
+    'Surface Layers': '地表图层', NValues: '糙率图层', NValue: '糙率图层',
+    Classification: '地表分类',
+  } as Record<string, string>)[kind] ?? kind;
+}

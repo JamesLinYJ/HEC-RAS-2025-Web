@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Startup explicitly calls HEC GDALSetup; package binaries and copy targets remain active. -->
+    <MaxRevGdalCliEnablePathInitializer>false</MaxRevGdalCliEnablePathInitializer>
+  </PropertyGroup>
+</Project>

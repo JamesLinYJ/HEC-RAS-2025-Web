@@ -1,0 +1,88 @@
+# HEC-RAS 2025
+
+React and TypeScript provide the shared browser and Electron interface. ASP.NET Core hosts the built web UI and exposes the C# backend over same-origin HTTP. The default web and desktop workflow uses this server architecture; WebAssembly remains optional and is not required to build or start the app.
+
+界面默认使用简体中文，菜单、模型表单、地图、计算和结果页面共用中文资源。工程名称、文件路径和用户数据保持原值。
+
+地图的“导入工程图层”可保存 GeoJSON、完整 Shapefile 和栅格文件。“导入 GDB 目录”保留整个文件地理数据库的目录结构，使用 C# 的完整文件清单和 SHA 校验来源，再保存对应矢量与可渲染子栅格到 `.vis`。栅格读取保留单波段浮点与整数类别，以及 RGB/RGBA 影像的通道和空值语义。“结果速度箭头”读取所选计算结果与原生输出时刻的真实速度，默认关闭；箭头按屏幕间距抽样显示，不改变求解数据。
+
+界面仍在逐文件迁移。组件已挂载、编译通过、真实数据往返和浏览器/Electron 交互验收分别核对，不能把界面文件数量当作完整功能覆盖率。构建目录、依赖缓存、临时工程和验收记录不进入仓库。
+
+## Build and run on macOS
+
+Install Node.js 24 or newer and the .NET 10 SDK selected by `global.json`, then install the locked JavaScript dependencies:
+
+```sh
+npm ci
+npm run build:web
+npm run build:server
+```
+
+The server publish uses the checked-in packages in `backend/Packages` as an additional NuGet source and writes to the ignored `artifacts/server` directory. Set `HECRAS_DOTNET` to use a particular `dotnet` executable; that SDK may also need its matching `DOTNET_ROOT` and `DOTNET_CLI_HOME` environment. `HECRAS_NUGET_SOURCE` adds another local path or HTTP(S) feed without URL credentials. Use `HECRAS_NO_RESTORE=1` only when the projects already have a successful restore and an offline publish is needed.
+
+Serve the built UI and API together in a browser:
+
+```sh
+npm run serve:web
+```
+
+For Vite hot reload, keep the server on port 5080 (the Vite proxy default) in another terminal, then start Vite:
+
+```sh
+HECRAS_SERVER_PORT=5080 HECRAS_DEV_ORIGINS=http://127.0.0.1:5173 npm run serve:web
+npm run dev
+```
+
+Start the desktop app:
+
+```sh
+npm run desktop
+```
+
+Electron launches its own C# server process on a loopback port and closes only that process when the app exits. `HECRAS_SERVER_PORT` selects a fixed local port; unset or `0` requests a dynamic one. To connect to a server already running, set `HECRAS_SERVER_URL` to its HTTP(S) origin. In that mode the launcher only checks readiness and connects; it does not start or stop the external server. The URL must be an origin without a path or embedded credentials. For Vite development, set `HECRAS_SERVER_URL` to the origin printed by `npm run serve:web`; this also lets Electron and Vite share a server without the dynamic-port mismatch. `HECRAS_SERVER_DLL` can select a published server DLL, and `HECRAS_WEB_ROOT` can select the built UI directory for an owned local server.
+
+`npm run smoke:electron` builds the web app, publishes the server, and runs Electron in a hidden window. It checks real `/api/health` and `/api/runtime` responses, same-origin browser requests, feature navigation, and Chinese/English switching. Set `HECRAS_VERIFY_PROJECT` to a disposable fixture's absolute `.ras` path to also open its Plan, run the real CPU compute, and read the written HDF depth chart through the desktop UI. Without that variable the smoke does not run a hydraulic operation. `npm run test:ui` is a separate headless Chrome UI and file-import check.
+
+For Electron cancellation, set `HECRAS_VERIFY_CANCEL_PROJECT` to a separate fixture created with ServerChecks `--create-cancel-fixture`. The hidden desktop check waits for a real positive solver step, cancels, requires the matching canceled result and a fresh runnable inspection, then continues the normal `HECRAS_VERIFY_PROJECT` solve if provided. `HECRAS_VERIFY_CANCEL_PLAN_NAME` defaults to `Plan CPU`. Cancellation and completed HDF chart checks are reported separately.
+
+For the real project-file HTTP solve and HDF readback, see [ServerChecks](backend/ServerChecks/README.md). The browser check can use the same server with `HECRAS_VERIFY_SERVER_URL=http://127.0.0.1:5080`; set `HECRAS_VERIFY_PROJECT` to a disposable fixture's absolute `.ras` path to exercise editing and saving its Plan, closing/reopening it, running compute, and viewing the written HDF depth chart through the UI. `HECRAS_VERIFY_PLAN_NAME` defaults to `Plan CPU`. These checks modify the test Plan description and create actual result files in the selected fixture.
+
+Set `HECRAS_VERIFY_CANCEL_PROJECT` to a separate long-running fixture created with ServerChecks `--create-cancel-fixture` to also test real CPU cancellation twice. That browser check injects one temporary poll failure and one temporary DELETE failure, verifies recovery against the same operation, and requires a fresh source inspection before running again.
+
+`npm run test:gateway` checks the production HTTP gateway with controlled transport responses: temporary poll and cancellation failures, paged terminal events, completion during cancellation backoff, and unknown operation status. This protocol regression is separate from the real C# and UI solve checks.
+
+`HECRAS_VERIFY_WORKSPACE_ZIP` enables the real browser workspace check against `HECRAS_VERIFY_SERVER_URL`. Use an absolute path to a disposable ZIP containing one ServerChecks fixture project and no saved maps. The check uploads and opens it, creates two maps, closes/reopens the project, and downloads the updated workspace. It verifies that archive entries match the actual saved `.ras` and `.vis` bytes. This check uses the `unzip` command to read and validate the downloaded archive.
+
+`HECRAS_VERIFY_EDITOR_PROJECT` selects a disposable project created with ServerChecks `--create-editor-fixture`. The browser check appends and removes a real irregular rain-gauge row, validates a new row's numeric input, and checks both changes after HDF save/reopen. It also confirms draft transforms leave the source bytes and revision unchanged until Save. `HECRAS_VERIFY_EDITOR_BOUNDARY` may override the fixture's default `Boundary Conditions/Solver Boundary.h5` path. These checks modify their fixture files.
+
+`HECRAS_VERIFY_MAP_FIXTURE` selects the JSON manifest emitted by ServerChecks `--create-map-fixture`. With the real server, `npm run test:ui` also checks Geometry/Plan duplication, actual map-source uploads, saved vector and raster rendering, close/reopen persistence, 4 × 4 CPU computation, and native Result time selection and playback. `npm run smoke:electron` accepts a separate fresh manifest to run the same map check in its hidden sandboxed window. `HECRAS_VERIFY_OUTPUT` selects the evidence directory; use a disposable location outside the product source. Fixture creation and the separate source-format HTTP check are described in [ServerChecks](backend/ServerChecks/README.md).
+
+After a complete map run, `HECRAS_VERIFY_MAP_VIEW_ONLY=1` reopens that saved fixture to check Result visibility, the native timeline within the desktop viewport, and independently scrolling expanded layer trees. It verifies `.vis` byte stability and does not repeat model copying, map imports or computation. These layout/readback checks are reported separately from the complete calculation flow.
+
+For GDB and velocity acceptance, use `--create-velocity-map-fixture` instead of `--create-map-fixture` to add real constant wind forcing, then set `HECRAS_VERIFY_GDB_SOURCE` to a small actual `.gdb` directory. The shared browser/Electron check uploads that directory, reads Chinese fields and polygon holes, and verifies nonzero velocity direction and Result time/revision through the checkbox. `HECRAS_VERIFY_GDB_RASTER_SOURCE` selects the GDAL `gdal_test_data.gdb` reference dataset for a separate map with ten supported floating-point raster subdatasets and close/reopen pixel checks. `HECRAS_VERIFY_MAP_RASTER_ONLY=1` runs that raster round trip on an existing fixture without repeating model duplication or CPU computation.
+
+The initial runtime workflow is being verified on macOS. Linux and Windows runtime packaging and execution have not yet been accepted.
+
+## Optional WebAssembly path
+
+The earlier WebAssembly sources and checks remain available separately:
+
+```sh
+npm run build:wasm
+npm run test:wasm
+npm run smoke:electron:wasm
+```
+
+These commands require the matching .NET WebAssembly workload. They are not part of the default web or desktop build.
+
+## Code organization
+
+- `frontend/src/interface` and `frontend/src/features`: shared React application and feature pages.
+- `frontend/src/platform`: browser and server gateway adapters.
+- `desktop`: Electron startup, restricted preload, and server process lifecycle.
+- `backend/Server`: ASP.NET Core HTTP server and static UI hosting.
+- `backend/Host` and `backend/Source`: C# operation contracts, implementation, and solver code.
+- `backend/Packages`: fixed private NuGet packages used by the source projects.
+- `resources`: editor schemas and localized resources.
+
+This application is still under development. UI migration, individual backend operations, real model solving, and file-format round trips require their own verification; a successful app launch does not establish full HEC-RAS project compatibility.
