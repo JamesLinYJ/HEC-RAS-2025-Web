@@ -12,11 +12,13 @@ try {
     lib: { entry: {
       context: path.join(root, 'frontend/src/shared/sessionReferences.ts'),
       gateway: path.join(root, 'frontend/src/platform/SessionBackend.ts'),
+      mapMutation: path.join(root, 'frontend/src/shared/mapVisualizationMutation.ts'),
     }, formats: ['es'], fileName: (_format, name) => `${name}.mjs` },
     outDir: temporary, emptyOutDir: true, minify: false, sourcemap: false,
   } });
   const { withSessionReferenceContext, mergeSessionReferenceContext } = await import(pathToFileURL(path.join(temporary, 'context.mjs')).href);
   const { sessionBackend } = await import(pathToFileURL(path.join(temporary, 'gateway.mjs')).href);
+  const { captureMapVisualizationLease, matchesMapVisualizationReceipt } = await import(pathToFileURL(path.join(temporary, 'mapMutation.mjs')).href);
   const reference = { referenceID: 'retained-source', projectSessionID: 'session-a', projectPath: '/project.ras',
     kind: 'terrain', sourcePath: '/external.h5', canonicalSourcePath: '/external.h5',
     sourceRevision: 'b'.repeat(64), name: '外部地形', sessionOnly: true };
@@ -65,5 +67,37 @@ try {
   assert.equal(calls.at(-1).parameters.coreLayerContext, core, 'A late request retains its original immutable capability.');
   await nextGateway.request('model.load', { projectPath: source.projectPath });
   assert.equal(calls.at(-1).parameters.coreLayerContext, rebased);
-  console.log(JSON.stringify({ state: 'passed', checks: 17, scope: 'session-reference-ownership-and-request-isolation' }));
+  const target = { mapID: 'map-one', mapIndex: 0, name: '计算地图', mapType: 'Plan', visualizationRevision: 'a'.repeat(64) };
+  const toolDraft = new Set(['tools.geoprocessing']);
+  const lease = captureMapVisualizationLease(active, active, target, 'tools.geoprocessing', toolDraft);
+  assert.ok(lease, 'The originating tool may keep its parameters while reserving the map.');
+  assert.equal(captureMapVisualizationLease(active, active, target, 'tools.geoprocessing', new Set([...toolDraft, 'geometry:unsaved'])), null,
+    'An unrelated model draft must prevent reserving the map.');
+  assert.equal(captureMapVisualizationLease(active, { ...active, projectRevision: 'f'.repeat(64) }, target, 'tools.geoprocessing', toolDraft), null,
+    'A stale project revision must not obtain a lease.');
+  assert.equal(captureMapVisualizationLease(active, { ...active, projectSessionID: 'other-session' }, target, 'tools.geoprocessing', toolDraft), null,
+    'A different session must not obtain a lease for this project.');
+  assert.equal(captureMapVisualizationLease(active, active, { ...target, visualizationRevision: null }, 'tools.geoprocessing', toolDraft), null,
+    'An unsaved map has no visualization transaction to reserve.');
+  const mapReceipt = { mapIndex: 0, mapName: target.name, mapType: target.mapType,
+    previousVisualizationRevision: target.visualizationRevision.toUpperCase(), visualizationRevision: 'b'.repeat(64) };
+  assert.equal(matchesMapVisualizationReceipt(lease, active, active, target, mapReceipt), true,
+    'The exact acknowledged map receipt is accepted without losing the source context.');
+  assert.equal(matchesMapVisualizationReceipt(lease, active, active, target, { ...mapReceipt, mapIndex: 1 }), false,
+    'A receipt for another map cannot advance this map capture.');
+  assert.equal(matchesMapVisualizationReceipt(lease, active, active, target, { ...mapReceipt, previousVisualizationRevision: 'c'.repeat(64) }), false,
+    'A receipt for a later or earlier visualization revision cannot be adopted.');
+  assert.equal(matchesMapVisualizationReceipt(lease, active, active, target, { ...mapReceipt, visualizationRevision: 'unknown' }), false,
+    'A result without a real visualization revision cannot advance saved-map state.');
+  assert.equal(matchesMapVisualizationReceipt(lease, active, active, { ...target, name: '另一张地图' }, mapReceipt), false,
+    'The captured map may not be silently replaced by name.');
+  assert.equal(matchesMapVisualizationReceipt(lease, saved, active, target, mapReceipt), false,
+    'A late receipt cannot overwrite a context whose selected model has since been saved.');
+  assert.equal(matchesMapVisualizationReceipt(lease, active, { ...active, selectedAsset: { ...active.selectedAsset,
+    locator: { ...active.selectedAsset.locator, changedOwner: true } } }, target, mapReceipt), false,
+    'Even a same-path selection cannot substitute another source locator after reservation.');
+  const changedTarget = { ...target, mapID: 'another-map' };
+  assert.equal(matchesMapVisualizationReceipt(lease, active, active, changedTarget, mapReceipt), false,
+    'Map IDs remain distinct even when names and indices match.');
+  console.log(JSON.stringify({ state: 'passed', checks: 30, scope: 'session-reference-and-map-visualization-ownership' }));
 } finally { await rm(temporary, { recursive: true, force: true }); }

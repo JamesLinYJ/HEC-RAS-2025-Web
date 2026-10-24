@@ -978,7 +978,7 @@
       },
       {
         "id": "geoprocessing-parameter-validation",
-        "mount": "ToolsPageView → GeoprocessingToolControl → ToolGroupButton / ToolRichFlyoutControl → ToolOptionsFlyout / ToolParameterForm / ToolParameterField; saved-map vector input → GeoprocessingVectorSourcePicker → GeoprocessingPolylineExecutionDetails",
+        "mount": "ToolsPageView → GeoprocessingToolControl → ToolGroupButton / ToolRichFlyoutControl → ToolOptionsFlyout / ToolParameterForm / ToolParameterField; saved-map vector/point input → GeoprocessingVectorSourcePicker / GeoprocessingPointSourcePicker → GeoprocessingPolylineExecutionDetails; verified Shapefile map output → geoprocessingMapLayerWorkflow → parent map-visualization lease/receipt adoption",
         "source": [
           "frontend/src/features/tools/GeoprocessingToolControl.tsx",
           "frontend/src/features/tools/GeoprocessingToolBase.ts",
@@ -997,9 +997,16 @@
           "frontend/src/features/tools/vector-import/vectorImportTypes.ts",
           "frontend/src/features/tools/attributes/attributeTableTypes.ts",
           "backend/Host/MapVectorSourceContracts.cs",
-          "backend/Host/MapPolylineGeoprocessService.cs"
+          "backend/Host/MapPolylineGeoprocessService.cs",
+          "frontend/src/features/tools/index.tsx",
+          "frontend/src/features/tools/geoprocessing/GeoprocessingPointSourcePicker.tsx",
+          "frontend/src/features/tools/geoprocessing/geoprocessingMapLayerWorkflow.ts",
+          "frontend/src/shared/mapVisualizationMutation.ts",
+          "frontend/src/shared/workbench.ts",
+          "frontend/src/interface/RasMainWindow.tsx",
+          "frontend/src/features/map/MapFeaturePage.tsx"
         ],
-        "stateOwner": "Tool definitions, parameters and search remain in the geoprocessing page. Vector input comes from an explicitly selected saved-map CatalogTreeNodeLocator; map identity, project path/revision/XML SHA, .vis revision, canonical source path/SHA, file-family revision, feature identities and stable path identities are captured before execution. The source picker accepts GeoJSON polylines/polygons, Shapefile polylines and refuses Shapefile polygons because the service does not report the required polygon ring grouping. Shapefile lines also require a complete file-family capture and service-confirmed target project WKT. Changing tool/source invalidates prior requests and receipts.",
+        "stateOwner": "Tool definitions, parameters and search remain in the geoprocessing page. Vector input comes from an explicitly selected saved-map CatalogTreeNodeLocator; vector and point source captures retain the exact MapDocumentTab used to read the layer, plus project session/path/revision/XML SHA, map ID/index/name/type, .vis revision, canonical source path/SHA, file-family revision, feature identities and stable path identities. The Map Layer target is that captured document, never a map rematched by display name. The source picker accepts GeoJSON polylines/polygons, Shapefile polylines and refuses Shapefile polygons because the service does not report the required polygon ring grouping. Shapefile lines also require a complete file-family capture and service-confirmed target project WKT. Changing tool/source invalidates prior requests and receipts.",
         "readActions": [
           "map.document.list",
           "map.tree.load",
@@ -1008,7 +1015,11 @@
           "workspace.file.inspect",
           "map.vector.captureShapefile"
         ],
-        "writeBoundary": "The currently wired vector operation set includes the existing Filter, Smooth, Reverse, CullByLength, DensifyPolylines, MergePolylines and LineOffset operations, plus BufferPolyline, PolylineToPolygon, BufferPolygon, DensifyPolygons and PolygonToPolyline. geoprocessing.execute uses only the captured source path/revision and returned feature/path identities with the current project context; the client checks the response identities, counts and output geometry kind before presenting a result. Clipboard returns a service text preview that can be copied or downloaded. Shapefile output is confined to a direct child of the active project Exports folder and is accepted only after workspace.file.inspect and map.vector.captureShapefile verify the primary file and complete output family. Map Layer output remains disabled. This describes mounted source wiring and operation boundaries; validation alone is not execution, and unrelated catalog definitions do not become executable merely because they have parameter forms."
+        "writeBoundary": "The currently wired vector operation set includes the existing Filter, Smooth, Reverse, CullByLength, DensifyPolylines, MergePolylines and LineOffset operations, plus BufferPolyline, PolylineToPolygon, BufferPolygon, DensifyPolygons and PolygonToPolyline. geoprocessing.execute uses captured source identities and the current project context; the client checks response identities, counts and output geometry kind before presenting a result. Clipboard returns a service text preview. Shapefile output is confined to a direct child of the active project Exports folder and is accepted only after workspace.file.inspect and map.vector.captureShapefile verify the complete family. The original C# DefaultOutputHandlers.MapLayerOutput relationship is wired only for supported Point/Polyline/Polygon vector branches with an exact captured MapDocumentTab and verified Shapefile output; Raster/TIN remain disabled. The target is the captured map, not a display-name lookup. A parent map-write lease spans execution through receipt adoption; in-flight map writes, map creation and raster writes protect navigation, context changes and draft discard. geoprocessingMapLayerWorkflow rechecks the family and exact map owner, then calls map.vector.importShapefile to add the generated file without recreating or overwriting it. Parent receipt adoption validates target and previous .vis revision once, increments mapRevision, and causes MapFeaturePage to reread; a same-project refresh preserves the selected map by mapIndex/name/mapType. A project-scoped unresolved list supports exact-map reread and reconciliation. Retry is limited to an uncertain outcome where reread confirms the path is absent, the same .vis revision remains and the output family is still verified; retry imports the existing file only. receiptNotAdopted is reconciliation-only and cannot be retried. Cancellation before import prevents the map mutation; an uncertain submitted operation retains its path and diagnostics. These are source relationships, not runtime acceptance; validation alone is not execution, and unrelated catalog definitions do not become executable merely because they have parameter forms.",
+        "writeActions": [
+          "geoprocessing.execute",
+          "map.vector.importShapefile"
+        ]
       },
       {
         "id": "geometry-active-features",

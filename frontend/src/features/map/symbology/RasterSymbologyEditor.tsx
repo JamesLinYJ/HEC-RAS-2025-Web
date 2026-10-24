@@ -194,6 +194,9 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
       controller: new AbortController(),
     };
     activeRequestRef.current = request;
+    const writeOwner = [rasterSymbologyMethods.apply, rasterSymbologyMethods.savePalette, rasterSymbologyMethods.deletePalette]
+      .some(writeMethod => writeMethod === method) ? `map.raster-write:${contextKey}:${ownerKey}:${request.id}` : null;
+    if (writeOwner) onDirtyStateChange?.(writeOwner, true);
     setBusy(true);
     setRequestLabel(label);
     setEditorError(null);
@@ -206,13 +209,14 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
       if (isCurrentRequest(request)) setEditorError({ error });
       return undefined;
     } finally {
+      if (writeOwner) onDirtyStateChange?.(writeOwner, false);
       if (isCurrentRequest(request)) {
         activeRequestRef.current = null;
         setBusy(false);
         setRequestLabel('');
       }
     }
-  }, [backend, isCurrentRequest]);
+  }, [backend, isCurrentRequest, contextKey, ownerKey, onDirtyStateChange]);
 
   const contextCanInspect = Boolean(context.projectPath && context.projectXml && context.projectSessionID);
   const sourceRevisionKey = identity ? `${ownerKey}:${identity.visualizationRevision}:${identity.sourceRevision}` : '';

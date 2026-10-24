@@ -15,6 +15,8 @@ export interface GeoprocessingPointInput {
 
 export interface GeoprocessingPointCapture {
   owner: string;
+  /** Exact persisted map owner used to read this source; downstream mutations must target this captured tab. */
+  mapDocument: MapDocumentTab;
   sourcePath: string;
   sourceRevision: string;
   sourceFamily: AttributeTableSourceFamilyCapture | null;
@@ -145,7 +147,7 @@ function parsePointSource(value: unknown, context: WorkbenchContext, document: M
       coordinates: [vertex.x, vertex.y] });
   }
   if (!points.length) throw new Error('The saved point layer contains no non-empty point records.');
-  return { owner, sourcePath, sourceRevision: primary[0]!.revision!,
+  return { owner, mapDocument: document, sourcePath, sourceRevision: primary[0]!.revision!,
     sourceFamily: familyName === 'shapefile' ? family as unknown as AttributeTableSourceFamilyCapture : null,
     sourceFamilyKind: familyName, targetProjectionWKT: targetProjectionWKT as string | null,
     projectionStatus: data.projectionStatus, mapName: document.name, layerName: candidate.node.name, points };

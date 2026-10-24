@@ -68,6 +68,21 @@ export interface ContextChangeOptions {
   /** Selecting a catalog row can retain the current page; opening it can name its target. */
   navigation?: 'auto' | 'preserve' | FeatureId;
 }
+/** A saved map captured before a cross-workspace visualization transaction. */
+export interface MapVisualizationTarget {
+  mapID: string;
+  mapIndex: number;
+  name: string;
+  mapType: string;
+  visualizationRevision: string | null;
+}
+export interface MapVisualizationCommitReceipt {
+  mapIndex: number;
+  mapName: string;
+  mapType: string;
+  previousVisualizationRevision: string | null;
+  visualizationRevision: string;
+}
 export interface FeaturePageProps {
   language: Language;
   /** User preference; system is resolved by the top-level window. */
@@ -83,6 +98,12 @@ export interface FeaturePageProps {
   onBeginSessionReferenceMutation?: (source: WorkbenchContext) => string | null;
   onCommitSessionReferences?: (source: WorkbenchContext, nextContext: Record<string, unknown>, leaseID: string) => boolean;
   onEndSessionReferenceMutation?: (leaseID: string) => void;
+  /** Reserve the current project while a tool writes to one exact saved map. */
+  onBeginMapVisualizationMutation?: (source: WorkbenchContext, target: MapVisualizationTarget, draftOwner: string) => string | null;
+  onCommitMapVisualization?: (source: WorkbenchContext, target: MapVisualizationTarget, receipt: MapVisualizationCommitReceipt, leaseID: string) => boolean;
+  onEndMapVisualizationMutation?: (leaseID: string) => void;
+  /** Invalidates saved-map captures after an acknowledged write in another workspace. */
+  mapRevision?: number;
   onDirtyStateChange?: (owner: string, dirty: boolean) => void;
   /** Changes when the server's advertised operation set is refreshed. */
   backendRevision?: number;

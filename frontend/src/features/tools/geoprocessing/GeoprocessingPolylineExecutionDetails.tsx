@@ -3,6 +3,7 @@ import type { BackendTransportState, Language } from '../../../shared/workbench'
 import { errorDiagnostics, message, text } from '../../../shared/workbench';
 import type { GeoprocessingToolDefinition } from '../GeoprocessingToolBase';
 import type { AttributeTableSourceCapture, AttributeTableSourceFamilyCapture } from '../attributes/attributeTableTypes';
+import type { GeoprocessingMapLayerWorkflowResult } from './geoprocessingMapLayerWorkflow';
 
 export interface GeoprocessingPolylineOutput {
   featureIdentity: string;
@@ -34,6 +35,14 @@ export interface GeoprocessingShapefileOutputReceipt {
   error?: unknown;
 }
 
+export type GeoprocessingMapLayerOutputReceipt = GeoprocessingMapLayerWorkflowResult | {
+  status: 'notCommitted';
+  stage: 'output-inspect';
+  outputPath: string;
+  error: unknown;
+  diagnostics?: unknown;
+};
+
 export interface GeoprocessingPolylineResult {
   canExecute: boolean;
   operation: string;
@@ -53,18 +62,52 @@ export interface GeoprocessingPolylineResult {
   capturedPolygonPathIdentities: string[];
   capturedPointIdentities: string[];
   outputKind: string;
-  outputHandler: 'Clipboard' | 'Shapefile';
+  outputHandler: 'Clipboard' | 'Shapefile' | 'Map Layer';
   shapefileReceipt?: GeoprocessingShapefileOutputReceipt;
+  mapLayerReceipt?: GeoprocessingMapLayerOutputReceipt;
 }
 
 export type GeoprocessingExecutionView =
   | { kind: 'idle' }
-  | { kind: 'running'; progress?: unknown; transport?: BackendTransportState; cancelRequested: boolean; verifyingOutput?: boolean }
+  | { kind: 'running'; progress?: unknown; transport?: BackendTransportState; cancelRequested: boolean; verifyingOutput?: boolean; importingMapLayer?: boolean }
   | { kind: 'completed'; result: GeoprocessingPolylineResult }
   | { kind: 'rejected'; result: GeoprocessingPolylineResult }
   | { kind: 'cancelled' }
   | { kind: 'failed'; error: unknown; diagnostics?: unknown }
   | { kind: 'uncertain'; error: unknown; diagnostics?: unknown };
+
+function MapLayerReceiptDetails({ language, receipt }: { language: Language; receipt: GeoprocessingMapLayerOutputReceipt }) {
+  const zh = language === 'zh';
+  if (receipt.status === 'committed') {
+    return <div className="tools-notice is-success" role="status" data-testid="geoprocessing-map-layer-committed">
+      {zh ? `地图图层已提交到“${receipt.receipt.mapName}”（${receipt.receipt.mapType}，索引 ${receipt.receipt.mapIndex}）；可视化修订 ${receipt.receipt.visualizationRevision}。`
+        : `The map layer was committed to “${receipt.receipt.mapName}” (${receipt.receipt.mapType}, index ${receipt.receipt.mapIndex}); visualization revision ${receipt.receipt.visualizationRevision}.`}
+    </div>;
+  }
+  if (receipt.status === 'receiptNotAdopted') {
+    const diagnostic = receipt.diagnostics ?? ('adoptionError' in receipt ? receipt.adoptionError : undefined);
+    return <div className="tools-inline-error" role="alert" data-testid="geoprocessing-map-layer-receipt-not-adopted">
+      <p>{zh ? `服务已返回地图提交回执，但当前工作区没有接纳该回执。文件已生成；请刷新地图目录核对“${receipt.receipt.mapName}”，不要直接重试。`
+        : `The service returned a map commit receipt, but the current workbench did not adopt it. The file was generated; refresh the map catalog to reconcile “${receipt.receipt.mapName}” and do not retry directly.`}</p>
+      {diagnostic !== undefined && <details><summary>{zh ? '原始诊断' : 'Raw diagnostic'}</summary><pre>{JSON.stringify(errorDiagnostics(diagnostic), null, 2)}</pre></details>}
+    </div>;
+  }
+  if (receipt.status === 'uncertain') {
+    return <div className="tools-inline-error" role="alert" data-testid="geoprocessing-map-layer-uncertain">
+      <p>{zh ? `Shapefile 文件已生成，但地图提交终态未确认。目标为“${receipt.targetMap.name}”；请刷新地图目录核对后再决定下一步，切勿直接重试。`
+        : `The Shapefile was generated, but the map commit outcome is unconfirmed for “${receipt.targetMap.name}”. Refresh the map catalog before deciding what to do; do not retry directly.`}</p>
+      <p>{zh ? '输出路径' : 'Output path'} · {receipt.outputPath}</p>
+      <details><summary>{zh ? '原始诊断' : 'Raw diagnostic'}</summary><pre>{JSON.stringify(receipt.diagnostics ?? errorDiagnostics(receipt.error), null, 2)}</pre></details>
+    </div>;
+  }
+  return <div className="tools-inline-error" role="status" data-testid="geoprocessing-map-layer-not-added">
+    <p>{receipt.stage === 'output-inspect'
+      ? (zh ? '服务已返回 Shapefile 输出路径，但输出文件族没有通过核验；未将文件加入地图。' : 'The service returned a Shapefile output path, but the output family did not pass verification. It was not added to the map.')
+      : (zh ? 'Shapefile 文件已生成并通过文件族核验，但地图导入未提交；文件仍保存在服务器输出路径。' : 'The Shapefile was generated and its family was verified, but map import was not submitted. The file remains at the server output path.')}</p>
+    <p>{zh ? '输出路径' : 'Output path'} · {receipt.outputPath}</p>
+    <details><summary>{zh ? '原始诊断' : 'Raw diagnostic'}</summary><pre>{JSON.stringify(receipt.diagnostics ?? errorDiagnostics(receipt.error), null, 2)}</pre></details>
+  </div>;
+}
 
 function downloadText(value: string, tool: GeoprocessingToolDefinition, outputKind: string): void {
   const geoJson = outputKind === 'Polygon';
@@ -189,10 +232,12 @@ export function GeoprocessingPolylineExecutionDetails({ language, tool, view, op
       {progress?.label && <div className="tools-export-progress-label">{progress.label}</div>}
       {progress?.fraction !== undefined && <progress max={1} value={progress.fraction} />}
       {view.verifyingOutput && <p className="tools-field-help" role="status">{zh ? '地理处理已返回文件路径，正在核验 Shapefile 主文件 SHA-256 与完整文件族。' : 'The service returned an output path. Verifying the Shapefile primary SHA-256 and complete file family.'}</p>}
+      {view.importingMapLayer && <p className="tools-field-help" role="status">{zh ? '输出文件族已核验，正在把图层提交到本次捕获的地图。' : 'The output family was verified. Committing the layer to the map captured for this run.'}</p>}
       {view.transport && <p className="tools-field-help" role="status">{transportLabel(view.transport, language)}</p>}
       {operationID && <details><summary>{zh ? '操作诊断' : 'Operation diagnostics'}</summary><small>{operationID}</small></details>}
-      <button className="tools-button tools-button-danger" type="button" onClick={onCancel} disabled={view.cancelRequested || view.verifyingOutput}>
+      <button className="tools-button tools-button-danger" type="button" onClick={onCancel} disabled={view.cancelRequested || view.verifyingOutput || view.importingMapLayer}>
         {view.verifyingOutput ? (zh ? '正在核验输出…' : 'Verifying output…')
+          : view.importingMapLayer ? (zh ? '正在提交地图图层…' : 'Committing map layer…')
           : view.cancelRequested ? (zh ? '正在等待取消终态…' : 'Waiting for cancellation terminal state…') : (zh ? '请求取消' : 'Request cancellation')}
       </button>
     </>}
@@ -207,18 +252,20 @@ export function GeoprocessingPolylineExecutionDetails({ language, tool, view, op
           <dd>{tool.inputKind === 'Polygon' ? result.inputPolygonCount : tool.inputKind === 'Point' ? result.inputPointCount : result.inputLineCount}</dd></div>
         <div><dt>{zh ? (result.outputKind === 'Polygon' ? '输出多边形' : '输出折线路径') : (result.outputKind === 'Polygon' ? 'Output polygons' : 'Output paths')}</dt>
           <dd>{result.outputKind === 'Polygon' ? result.outputPolygonCount : result.outputLineCount}</dd></div>
-        <div><dt>{zh ? '输出方式' : 'Output'}</dt><dd>{result.outputHandler === 'Shapefile' ? 'Shapefile' : (zh ? '服务端文本预览' : 'Service text preview')}</dd></div>
+        <div><dt>{zh ? '输出方式' : 'Output'}</dt><dd>{result.outputHandler === 'Map Layer' ? (zh ? '地图图层（Shapefile）' : 'Map layer (Shapefile)') : result.outputHandler === 'Shapefile' ? 'Shapefile' : (zh ? '服务端文本预览' : 'Service text preview')}</dd></div>
       </dl>
       {result.validationIssues.length > 0 && <div className="tools-validation-result">
         {result.validationIssues.map((issue, index) => <div className={`tools-validation-item severity-${issue.severity.toLowerCase()}`} key={`${issue.field}-${index}`}>
           <strong>{fieldLabel(issue.field, language)}</strong><span>{issueMessage(issue.message, language)}</span><small>{language === 'zh' ? ({ error: '错误', typeerror: '类型错误', warning: '警告' }[issue.severity.toLowerCase()] ?? issue.severity) : issue.severity}</small>
         </div>)}
       </div>}
-      {result.canExecute && result.outputHandler === 'Shapefile' && <section className="gp-execution-preview gp-shapefile-output-receipt">
-        <div className="tools-subheading-row"><h4>{zh ? '服务器 Shapefile 输出' : 'Server Shapefile output'}</h4></div>
+      {result.canExecute && (result.outputHandler === 'Shapefile' || result.outputHandler === 'Map Layer') && <section className="gp-execution-preview gp-shapefile-output-receipt">
+        <div className="tools-subheading-row"><h4>{result.outputHandler === 'Map Layer' ? (zh ? '地图图层输出' : 'Map layer output') : (zh ? '服务器 Shapefile 输出' : 'Server Shapefile output')}</h4></div>
         {result.outputPath && <p className="tools-field-help">{zh ? '服务器输出路径' : 'Server output path'} · {result.outputPath}</p>}
         {result.shapefileReceipt?.status === 'verified' && result.shapefileReceipt.inspection && result.shapefileReceipt.family ? <>
-          <p className="tools-notice is-success">{zh ? '服务器已检查主文件 SHA-256 并捕获完整 Shapefile 文件族。文件保存在服务器路径，不会伪装成浏览器下载。' : 'The service inspected the primary SHA-256 and captured the complete Shapefile family. The file remains at its server path; it is not presented as a browser download.'}</p>
+          <p className="tools-notice is-success">{result.outputHandler === 'Map Layer'
+            ? (zh ? '已核对输出主文件 SHA-256 和完整 Shapefile 文件族。' : 'The output primary SHA-256 and complete Shapefile family were verified.')
+            : (zh ? '服务器已检查主文件 SHA-256 并捕获完整 Shapefile 文件族。文件保存在服务器路径，不会伪装成浏览器下载。' : 'The service inspected the primary SHA-256 and captured the complete Shapefile family. The file remains at its server path; it is not presented as a browser download.')}</p>
           <dl className="tools-result-grid"><div><dt>{zh ? '主文件 SHA-256' : 'Primary SHA-256'}</dt><dd>{result.shapefileReceipt.inspection.revision}</dd></div>
             <div><dt>{zh ? '主文件长度' : 'Primary file length'}</dt><dd>{result.shapefileReceipt.inspection.length} bytes</dd></div>
             <div><dt>{zh ? '文件族修订' : 'Family revision'}</dt><dd>{result.shapefileReceipt.family.revision}</dd></div></dl>
@@ -226,6 +273,8 @@ export function GeoprocessingPolylineExecutionDetails({ language, tool, view, op
         </> : <div className="tools-inline-error" role="alert">{zh ? '服务端操作已返回，但完整输出文件族未通过检查；本页面不确认该 Shapefile 可用。' : 'The operation returned, but the complete output family did not pass inspection. This page does not confirm that the Shapefile is usable.'}
           {result.shapefileReceipt?.error !== undefined && <details><summary>{zh ? '文件检查诊断' : 'File inspection diagnostic'}</summary><pre>{JSON.stringify(errorDiagnostics(result.shapefileReceipt.error), null, 2)}</pre></details>}
         </div>}
+        {result.outputHandler === 'Map Layer' && result.mapLayerReceipt && <MapLayerReceiptDetails language={language} receipt={result.mapLayerReceipt} />}
+        {result.outputHandler === 'Map Layer' && !result.mapLayerReceipt && <p className="tools-field-help" role="status">{zh ? '输出文件已生成；尚未提交到地图图层。' : 'The output file was generated; it has not been added to a map layer.'}</p>}
       </section>}
       {result.canExecute && result.outputHandler === 'Clipboard' && result.clipboardText !== null && <div className="gp-execution-preview">
         <div className="gp-execution-preview-actions"><strong>{zh ? '文本结果' : 'Text result'}</strong>

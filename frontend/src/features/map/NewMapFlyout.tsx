@@ -15,10 +15,11 @@ interface Props {
   loading: boolean;
   loadError: unknown;
   onCreated: (document: MapDocumentTab) => void;
+  onCreationStateChange?: (busy: boolean) => void;
 }
 
 /** The source flyout's blank/project actions share the saved-map transaction. */
-export function NewMapFlyout({ backend, context, language, visualizationRevision, loading, loadError, onCreated }: Props) {
+export function NewMapFlyout({ backend, context, language, visualizationRevision, loading, loadError, onCreated, onCreationStateChange }: Props) {
   const [kind, setKind] = useState<MapKind>('Project');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
@@ -43,6 +44,7 @@ export function NewMapFlyout({ backend, context, language, visualizationRevision
     busyRef.current = true;
     const capturedOwner = owner;
     const request = ++sequence.current;
+    onCreationStateChange?.(true);
     setCreating(true);
     setError('');
     try {
@@ -53,6 +55,7 @@ export function NewMapFlyout({ backend, context, language, visualizationRevision
     } catch (cause) {
       if (ownerRef.current === capturedOwner && sequence.current === request) setError(mapError(language, cause));
     } finally {
+      onCreationStateChange?.(false);
       if (ownerRef.current === capturedOwner && sequence.current === request) {
         busyRef.current = false;
         setCreating(false);

@@ -15,10 +15,11 @@ interface MapDocumentTabsProps {
   loadError: unknown;
   onSelect: (id: string | null) => void;
   onCreated: (document: MapDocumentTab) => void;
+  onCreationStateChange?: (busy: boolean) => void;
   language: 'zh' | 'en';
 }
 
-export function MapDocumentTabs({ context, backend, documents, activeID, visualizationRevision, loading, interactionDisabled = false, loadError, onSelect, onCreated, language }: MapDocumentTabsProps) {
+export function MapDocumentTabs({ context, backend, documents, activeID, visualizationRevision, loading, interactionDisabled = false, loadError, onSelect, onCreated, onCreationStateChange, language }: MapDocumentTabsProps) {
   const copy = {
     zh: { local: '本地预览', noProject: '打开工程后可创建持久化地图文档', loading: '正在读取工程中已保存的地图…', loadError: '无法读取已保存地图' },
     en: { local: 'Local preview', noProject: 'Open a project to create a saved map document', loading: 'Reading saved project maps…', loadError: 'Could not read saved maps' },
@@ -54,6 +55,7 @@ export function MapDocumentTabs({ context, backend, documents, activeID, visuali
         ))}
       </div>
       <NewMapFlyout context={context} backend={backend} visualizationRevision={visualizationRevision}
+        onCreationStateChange={onCreationStateChange}
         loading={loading || interactionDisabled} loadError={loadError} onCreated={onCreated} language={language} />
       {!context.projectPath && <span className="map-document-hint">{copy.noProject}</span>}
       {loading && <span className="map-document-hint" role="status">{copy.loading}</span>}

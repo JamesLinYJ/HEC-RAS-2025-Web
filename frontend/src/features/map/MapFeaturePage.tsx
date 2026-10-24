@@ -277,6 +277,12 @@ function MapPage(props: MapFeaturePageProps) {
   const activeDocument = documents.find((document) => document.id === activeDocumentID) ?? null;
   const activeDocumentRef = useRef(activeDocument);
   activeDocumentRef.current = activeDocument;
+  const loadedCatalogProjectRef = useRef<string | null>(null);
+  const rememberedMapSelectionRef = useRef<{ projectKey: string; mapIndex: number; name: string; mapType: string } | null>(null);
+  if (activeDocument && loadedCatalogProjectRef.current === projectContextKey) {
+    rememberedMapSelectionRef.current = { projectKey: projectContextKey, mapIndex: activeDocument.mapIndex,
+      name: activeDocument.name, mapType: activeDocument.mapType };
+  }
   const symbologySourceRef = useRef<{
     projectKey: string; documentID: string; nodeID: string;
     acceptedVisualizationRevision: string; source: Record<string, unknown>;
@@ -652,9 +658,14 @@ function MapPage(props: MapFeaturePageProps) {
   useEffect(() => {
     if (!onDirtyStateChange) return;
     const dirtyOwner = 'map:' + owner;
-    onDirtyStateChange(dirtyOwner, activeLayers.length > 0 || hasPersistentDraftPoints || backgroundDraftDirty || sourceImportBusy);
+    onDirtyStateChange(dirtyOwner, activeLayers.length > 0 || hasPersistentDraftPoints || backgroundDraftDirty);
     return () => onDirtyStateChange(dirtyOwner, false);
-  }, [activeLayers.length, backgroundDraftDirty, hasPersistentDraftPoints, onDirtyStateChange, owner, sourceImportBusy]);
+  }, [activeLayers.length, backgroundDraftDirty, hasPersistentDraftPoints, onDirtyStateChange, owner]);
+  useEffect(() => {
+    const writeOwner = 'map.write:' + projectContextKey;
+    onDirtyStateChange?.(writeOwner, sourceImportBusy || busyNodeID !== null || mapMetadataCommitBusy);
+    return () => onDirtyStateChange?.(writeOwner, false);
+  }, [sourceImportBusy, busyNodeID, mapMetadataCommitBusy, projectContextKey, onDirtyStateChange]);
 
   useEffect(() => {
     if (activeOwnerRef.current === null) {
@@ -684,6 +695,8 @@ function MapPage(props: MapFeaturePageProps) {
   useEffect(() => {
     const generation = ++mapCatalogGenerationRef.current;
     const requestContextKey = projectContextKey;
+    const rememberedSelection = rememberedMapSelectionRef.current?.projectKey === requestContextKey
+      ? rememberedMapSelectionRef.current : null;
     const isCurrent = () => generation === mapCatalogGenerationRef.current && projectContextKeyRef.current === requestContextKey;
     setMapCatalogError(null);
     setDocuments([]);
@@ -698,9 +711,13 @@ function MapPage(props: MapFeaturePageProps) {
     setMapCatalogLoading(true);
     void loadMapDocumentCatalog(backend, context, { signal: controller.signal }).then((catalog) => {
       if (!isCurrent()) return;
+      loadedCatalogProjectRef.current = requestContextKey;
       setDocuments(catalog.documents);
       setVisualizationRevision(catalog.visualizationRevision);
-      const active = catalog.documents.find((document) => document.mapIndex === catalog.activeMapIndex) ?? catalog.documents[0] ?? null;
+      const active = (rememberedSelection ? catalog.documents.find(document =>
+        document.mapIndex === rememberedSelection.mapIndex && document.name === rememberedSelection.name &&
+        document.mapType === rememberedSelection.mapType) : null) ??
+        catalog.documents.find((document) => document.mapIndex === catalog.activeMapIndex) ?? catalog.documents[0] ?? null;
       setActiveDocumentID(active?.id ?? null);
       setMapCatalogLoading(false);
     }).catch((error: unknown) => {
@@ -713,7 +730,7 @@ function MapPage(props: MapFeaturePageProps) {
       controller.abort();
       mapCatalogGenerationRef.current += 1;
     };
-  }, [backend, backendRevision, projectContextKey, selectedResultIdentity, mapReloadKey]);
+  }, [backend, backendRevision, projectContextKey, selectedResultIdentity, mapReloadKey, props.mapRevision]);
 
   const updateActiveLayers = (update: (layers: GeoJsonLayer[]) => GeoJsonLayer[]) => {
     setMapStateByOwner((current) => {
@@ -1323,6 +1340,7 @@ function MapPage(props: MapFeaturePageProps) {
           setContextMenu(null);
         }}
         onCreated={handleCreateDocument}
+        onCreationStateChange={busy => onDirtyStateChange?.('map.create:' + projectContextKey, busy)}
         language={language}
       />
 

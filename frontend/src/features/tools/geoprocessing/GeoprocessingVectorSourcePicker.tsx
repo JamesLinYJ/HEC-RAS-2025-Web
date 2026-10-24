@@ -31,6 +31,8 @@ export interface GeoprocessingPolygonInput {
 
 export interface GeoprocessingVectorSourceCapture {
   owner: string;
+  /** Exact saved-map identity inspected with this source; output imports must target this tab, not rematch by its display name. */
+  mapDocument: MapDocumentTab;
   sourcePath: string;
   sourceRevision: string;
   sourceFamily: AttributeTableSourceFamilyCapture | null;
@@ -295,7 +297,7 @@ function parseSourceLoad(value: unknown, context: WorkbenchContext, document: Ma
     throw new Error(`已保存地图中没有可执行的 GeoJSON/Shapefile ${expectedShapeType === 'Polyline' ? '折线路径' : '多边形组件'}。`);
   }
   return {
-    owner, sourcePath: familySourcePath, sourceRevision: sourceFiles[0]!.revision!,
+    owner, mapDocument: document, sourcePath: familySourcePath, sourceRevision: sourceFiles[0]!.revision!,
     sourceFamily: familyName === 'shapefile' ? family as unknown as AttributeTableSourceFamilyCapture : null,
     sourceFamilyKind: familyName, targetProjectionWKT: targetProjectionWKT as string | null,
     projectionStatus: data.projectionStatus, mapName: document.name, layerName,
