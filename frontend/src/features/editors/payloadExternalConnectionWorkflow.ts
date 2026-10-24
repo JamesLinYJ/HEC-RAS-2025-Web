@@ -102,8 +102,18 @@ function assertSameLineAndPayloadStructure(
     }
   }
 
-  if (nullableIdentity(refreshed.selectedLineId) !== nullableIdentity(current.selectedLineId) ||
-      nullableIdentity(refreshed.selectedPayloadId) !== nullableIdentity(current.selectedPayloadId)) {
+  const selectedLineID = nullableIdentity(current.selectedLineId);
+  const selectedPayloadID = nullableIdentity(current.selectedPayloadId);
+  const selectedLine = current.lines.find(line => line.id === selectedLineID);
+  if ((selectedLineID !== null && !selectedLine) ||
+      (selectedPayloadID !== null && !selectedLine?.payloads.some(payload => payload.id === selectedPayloadID))) {
+    throw new Error('当前边界草稿的选中项不属于已核对的边界线或载荷。');
+  }
+  // Read-only snapshots replay structural SourceState but do not carry the
+  // transient selection set by MutatePayload. Null therefore means unspecified,
+  // not a request to clear the local selection. Reject explicit substitutions.
+  if ((refreshed.selectedLineId != null && refreshed.selectedLineId !== selectedLineID) ||
+      (refreshed.selectedPayloadId != null && refreshed.selectedPayloadId !== selectedPayloadID)) {
     throw new Error('工程连接重放改变了边界线或载荷选择；未采用新的载荷投影。');
   }
 }
@@ -170,7 +180,9 @@ export function rebaseBoundaryExternalConnection(
   };
   const nextDraft: ModelDraft = {
     ...draft,
-    boundaryView: refreshedBoundary,
+    boundaryView: { ...refreshedBoundary,
+      selectedLineId: currentBoundary.selectedLineId ?? null,
+      selectedPayloadId: currentBoundary.selectedPayloadId ?? null },
     boundaryFieldGroups: Object.fromEntries(Object.entries(refreshed.fieldGroups)
       .map(([id, fields]) => [id, [...fields]])),
     boundaryReadOnlyFields: [...(refreshed.readOnlyFields ?? [])],

@@ -90,7 +90,17 @@ try {
   assert.throws(() => rebaseBoundaryExternalConnection(boundarySnapshot, boundaryDraft, { ...refreshed,
     boundary: { ...refreshed.boundary, lines: [{ ...refreshed.boundary.lines[0], payloads: [{ id: 'other', scope: 'other' }] }] } }, 'line-a', 'New connection'),
     'A project-only refresh cannot replace payload identities.');
-  console.log(JSON.stringify({ state: 'passed', checks: 18, scope: 'editor-validation-and-dirty-boundary-connection-rebase' }));
+  const noSelection = rebaseBoundaryExternalConnection(boundarySnapshot, boundaryDraft, { ...refreshed,
+    boundary: { ...refreshed.boundary, selectedLineId: null, selectedPayloadId: null } }, 'line-a', 'New connection');
+  assert.equal(noSelection.draft.boundaryView.selectedLineId, 'line-a', 'Read-only refresh must preserve the local selected line when Host has no action selection.');
+  assert.equal(noSelection.draft.boundaryView.selectedPayloadId, 'payload-a', 'Read-only refresh must preserve the local selected payload after a structural draft.');
+  assert.throws(() => rebaseBoundaryExternalConnection(boundarySnapshot, boundaryDraft, { ...refreshed,
+    boundary: { ...refreshed.boundary, selectedLineId: 'other-line' } }, 'line-a', 'New connection'),
+    'An explicit server selection substitution must still be rejected.');
+  assert.throws(() => rebaseBoundaryExternalConnection(boundarySnapshot, { ...boundaryDraft,
+    boundaryView: { ...boundarySnapshot.boundary, selectedPayloadId: 'missing' } }, refreshed, 'line-a', 'New connection'),
+    'A local selection outside the verified structural identities must be rejected.');
+  console.log(JSON.stringify({ state: 'passed', checks: 22, scope: 'editor-validation-and-dirty-boundary-connection-rebase' }));
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
