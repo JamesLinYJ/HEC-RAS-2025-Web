@@ -64,6 +64,39 @@ export interface PlanComputeInspection {
   sideEffects: string[];
 }
 
+export interface PlanComputeDiagnosticTarget {
+  kind: string;
+  projectPath: string;
+  projectRevision: string;
+  planPath: string;
+  planRevision: string;
+  assetPath: string;
+  assetRevision: string;
+  featureID?: string | null;
+  featureName?: string | null;
+}
+
+export interface PlanComputeLogDatum {
+  key: string;
+  value: string | null;
+  target?: PlanComputeDiagnosticTarget | null;
+}
+
+/** Exact message fields projected from source OperationResult/BatchJob messages. */
+export interface PlanComputeMessage {
+  code: string;
+  defaultSeverity: string;
+  evaluatedMessage: string;
+  logData: PlanComputeLogDatum[];
+  extraCount?: number;
+  index?: number;
+}
+
+export interface PlanComputeJobMessageUpdate {
+  runId: string;
+  messages: PlanComputeMessage[];
+}
+
 export interface PlanComputeExecutionResult {
   inspectionId: string;
   revision: string;
@@ -226,6 +259,84 @@ export function parsePlanComputeExecutionResult(value: unknown): PlanComputeExec
   if (value.summary !== undefined && value.summary !== null && !isRecord(value.summary)) return undefined;
   if (value.errorMessage !== undefined && value.errorMessage !== null && typeof value.errorMessage !== 'string') return undefined;
   return value as unknown as PlanComputeExecutionResult;
+}
+
+export function parsePlanComputeJobMessageUpdate(value: unknown): PlanComputeJobMessageUpdate | undefined {
+  if (!isRecord(value)) return undefined;
+  const update = value.planMessages ?? value.PlanMessages;
+  if (!isRecord(update)) return undefined;
+  const runId = update.runId ?? update.RunId;
+  const rawMessages = update.messages ?? update.Messages;
+  if (typeof runId !== 'string' || runId.length === 0 || !Array.isArray(rawMessages)) return undefined;
+  const messages: PlanComputeMessage[] = [];
+  for (const item of rawMessages) {
+    if (!isRecord(item)) return undefined;
+    const index = item.index ?? item.Index;
+    const code = item.code ?? item.Code;
+    const defaultSeverity = item.defaultSeverity ?? item.DefaultSeverity;
+    const evaluatedMessage = item.evaluatedMessage ?? item.EvaluatedMessage;
+    const logData = item.logData ?? item.LogData;
+    if (!Number.isInteger(index) || (index as number) < 0 || typeof code !== 'string'
+      || typeof defaultSeverity !== 'string' || typeof evaluatedMessage !== 'string') return undefined;
+    const parsedLogData = parsePlanComputeLogData(logData);
+    if (!parsedLogData) return undefined;
+    messages.push({ index: index as number, code, defaultSeverity, evaluatedMessage, logData: parsedLogData });
+  }
+  return { runId, messages };
+}
+
+export function parsePlanComputeMessages(value: unknown): PlanComputeMessage[] {
+  if (!Array.isArray(value)) return [];
+  const messages: PlanComputeMessage[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const code = item.code ?? item.Code;
+    const defaultSeverity = item.defaultSeverity ?? item.DefaultSeverity;
+    const evaluatedMessage = item.evaluatedMessage ?? item.EvaluatedMessage;
+    const logData = item.logData ?? item.LogData;
+    const extraCount = item.extraCount ?? item.ExtraCount;
+    if (typeof code !== 'string' || typeof defaultSeverity !== 'string' || typeof evaluatedMessage !== 'string'
+      || !Number.isInteger(extraCount) || (extraCount as number) < 0) continue;
+    const parsedLogData = parsePlanComputeLogData(logData);
+    if (!parsedLogData) continue;
+    messages.push({ code, defaultSeverity, evaluatedMessage, logData: parsedLogData, extraCount: extraCount as number });
+  }
+  return messages;
+}
+
+function parsePlanComputeLogData(value: unknown): PlanComputeLogDatum[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const output: PlanComputeLogDatum[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) return undefined;
+    const key = item.key ?? item.Key;
+    const rawValue = item.value ?? item.Value;
+    const target = item.target ?? item.Target;
+    if (typeof key !== 'string' || (rawValue !== null && rawValue !== undefined && typeof rawValue !== 'string')) return undefined;
+    const datum: PlanComputeLogDatum = { key, value: typeof rawValue === 'string' ? rawValue : null };
+    if (target !== undefined && target !== null) {
+      if (!isRecord(target)) return undefined;
+      const kind = target.kind ?? target.Kind;
+      const projectPath = target.projectPath ?? target.ProjectPath;
+      const projectRevision = target.projectRevision ?? target.ProjectRevision;
+      const planPath = target.planPath ?? target.PlanPath;
+      const planRevision = target.planRevision ?? target.PlanRevision;
+      const assetPath = target.assetPath ?? target.AssetPath;
+      const assetRevision = target.assetRevision ?? target.AssetRevision;
+      const featureID = target.featureID ?? target.FeatureID;
+      const featureName = target.featureName ?? target.FeatureName;
+      if (typeof kind !== 'string' || typeof projectPath !== 'string' || typeof projectRevision !== 'string'
+        || typeof planPath !== 'string' || typeof planRevision !== 'string' || typeof assetPath !== 'string'
+        || typeof assetRevision !== 'string'
+        || (featureID !== undefined && featureID !== null && typeof featureID !== 'string')
+        || (featureName !== undefined && featureName !== null && typeof featureName !== 'string')) return undefined;
+      datum.target = { kind, projectPath, projectRevision, planPath, planRevision, assetPath, assetRevision,
+        ...(typeof featureID === 'string' || featureID === null ? { featureID } : {}),
+        ...(typeof featureName === 'string' || featureName === null ? { featureName } : {}) };
+    }
+    output.push(datum);
+  }
+  return output;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

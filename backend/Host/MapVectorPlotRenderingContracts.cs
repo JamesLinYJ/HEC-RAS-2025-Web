@@ -22,8 +22,10 @@ public sealed record MapVectorPlotLabel(string Text, MapVectorPlotCoordinate Poi
 
 public sealed record MapVectorPlotRequest(MapTreeRequest Map, CatalogTreeNodeLocator Node,
     string LayerID, MapSourceFamilyCapture? ExpectedFamily, string SourceRevision, RasterMapViewExtent Viewport,
-    Dictionary<string, string> PlotOptions, MapVectorPlotStyle[] Styles, double RenderScale = 1.0);
+    Dictionary<string, string> PlotOptions, MapVectorPlotStyle[] Styles, double RenderScale = 1.0,
+    string? ExpectedGlobalSymbologyRevision = null);
 public sealed record MapVectorPlotRenderResponse(string MapID, string LayerID, string SourcePath,
     string SourceRevision, string VisualizationRevision, RasterMapViewExtent Viewport,
     int PixelWidth, int PixelHeight, byte[] Rgba, MapVectorPlotLabel[] Labels,
-    MapVectorPlotOptionDescriptor[] PlotOptions, double RenderScale = 1.0);
+    MapVectorPlotOptionDescriptor[] PlotOptions, double RenderScale = 1.0,
+    string PixelFormat = "rgba8-premultiplied");

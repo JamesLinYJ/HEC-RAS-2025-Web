@@ -1,10 +1,17 @@
 :root {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans CJK SC', 'PingFang SC', sans-serif;
-  color: #e5edf4;
-  background: #061721;
+  color-scheme: dark;
+  color: var(--app-text, #e5edf4);
+  background: var(--app-canvas, #061721);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  --app-canvas: #061721;
+  --app-text: #e5edf4;
+  --app-border: rgba(152, 185, 201, .18);
+  --app-surface: #13232f;
+  --app-surface-raised: #192d3b;
+  --app-muted: #8299a8;
   --muted: #8299a8;
   --muted-dim: #526a79;
   --border: rgba(152, 185, 201, .14);
@@ -14,9 +21,28 @@
   --amber: #e8bc73;
   --red: #ff8c86;
 }
+:root[data-theme='light'] {
+  color-scheme: light;
+  color: #263742;
+  background: #f1f5f8;
+  --app-canvas: #f1f5f8;
+  --app-text: #263742;
+  --app-border: rgba(54, 79, 94, .2);
+  --app-surface: #ffffff;
+  --app-surface-raised: #e8eef2;
+  --app-muted: #526b78;
+  --muted: #526b78;
+  --muted-dim: #71858e;
+  --border: rgba(54, 79, 94, .18);
+  --panel: rgba(255, 255, 255, .9);
+  --mint: #087f69;
+  --aqua: #137c99;
+  --amber: #9b6714;
+  --red: #b53c36;
+}
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(ellipse at 79% 5%, rgba(21, 95, 113, .2), transparent 28rem), radial-gradient(ellipse at 5% 53%, rgba(24, 80, 98, .18), transparent 30rem), #061721; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--app-canvas, #061721); color: var(--app-text, #e5edf4); }
 button { font: inherit; }
 .compute-tool-page { max-width: 1220px; margin: 0 auto; padding: 0 38px 26px; min-height: 100%; display: flex; flex-direction: column; }
 .topbar { height: 76px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(165, 197, 211, .1); }

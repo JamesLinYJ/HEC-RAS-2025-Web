@@ -1,4 +1,6 @@
 import type { EditorPageProps, SchemaChoice } from './model';
+import { ControlHeader } from '../../controls/ControlHeader';
+import { ExternalConnectionLinker } from '../../controls/ExternalConnectionLinker';
 
 type BoundaryLine = NonNullable<EditorPageProps['snapshot']['boundary']>['lines'][number];
 
@@ -22,6 +24,7 @@ export function NewPayloadPage({ line, values, setValue, readValue, error, disab
   const isTimeSeries = dataType === 'Tabular' || dataType === 'SpatiallyVariableTabular';
   const label = (text: string, english: string) => props.language === 'zh' ? text : english;
   const choiceTitle = (choice: SchemaChoice): string => {
+    if (choice.titleIsUserData) return choice.title;
     if (props.language !== 'zh') return choice.title;
     const translated: Record<string, string> = {
       Constant: '恒定值', Tabular: '时序表', SpatiallyVariableTabular: '空间变化时序表', Remote: '外部连接',
@@ -37,7 +40,7 @@ export function NewPayloadPage({ line, values, setValue, readValue, error, disab
   </div>;
   const currentFields = Object.fromEntries(Object.entries(values).map(([key, value]) => [key.replace(prefix, ''), value]));
   return <section className="editor-payload-card" aria-label={label('新建边界载荷', 'Create boundary payload')}>
-    <div className="editor-payload-heading"><h3>{label('新建边界载荷', 'New boundary payload')}</h3></div>
+    <div className="editor-payload-heading"><h3><ControlHeader title={label('新建边界载荷', 'New boundary payload')} /></h3></div>
     <div className="editor-field-grid">
       <div className="editor-field"><label htmlFor={`new-payload-${line.id}-name`}>{label('名称', 'Name')}</label><input id={`new-payload-${line.id}-name`} type="text" value={readValue('PayloadName')} readOnly={disabled} onChange={(event) => setValue('PayloadName', event.currentTarget.value)} /></div>
       {optionList('PayloadVariable', label('载荷变量', 'Payload variable'), choices[`${prefix}PayloadVariable`] ?? [])}
@@ -48,7 +51,18 @@ export function NewPayloadPage({ line, values, setValue, readValue, error, disab
         <label htmlFor={`new-payload-${line.id}-constant`}>{label('恒定值', 'Constant value')} <span className="editor-meteorology-unit">{line.newPayload?.constantUnits[variable] ?? ''}</span></label>
         <input id={`new-payload-${line.id}-constant`} type="number" step="any" inputMode="decimal" value={readValue('HydraulicConstantValue')} readOnly={disabled} onChange={(event) => setValue('HydraulicConstantValue', event.currentTarget.value)} />
       </div>}
-      {dataType === 'Remote' && optionList('SelectedExternalConnection', label('外部连接', 'External connection'), choices[`${prefix}SelectedExternalConnection`] ?? [])}
+      {dataType === 'Remote' && <ExternalConnectionLinker
+        id={`new-payload-${line.id}-SelectedExternalConnection`}
+        label={label('外部连接', 'External connection')}
+        selectedConnectionId={readValue('SelectedExternalConnection')}
+        choices={choices[`${prefix}SelectedExternalConnection`] ?? []}
+        disabled={disabled}
+        language={props.language}
+        placeholder={label('请选择外部连接…', 'Select an external connection…')}
+        emptyMessage={label('没有可用的外部连接。', 'No external connections are available.')}
+        formatChoice={choiceTitle}
+        onSelectionChange={(connectionId) => setValue('SelectedExternalConnection', connectionId)}
+      />}
       {dataType === 'Remote' && <div className="editor-field"><label htmlFor={`new-payload-${line.id}-path`}>{label('外部数据路径', 'External data path')}</label><input id={`new-payload-${line.id}-path`} type="text" value={readValue('Path')} readOnly={disabled} onChange={(event) => setValue('Path', event.currentTarget.value)} /></div>}
     </div>
     {error && <p className="editor-inline-error" role="alert">{error}</p>}

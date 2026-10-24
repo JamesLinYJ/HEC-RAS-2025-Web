@@ -910,6 +910,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
       {!hasCurrentProject ? (
         <ProjectExplorerMainPageTiled
           language={language}
+          themeMode={props.themeMode}
+          onThemeModeChange={props.onThemeModeChange}
           backend={backend}
           context={context}
           backendRevision={props.backendRevision}
@@ -933,6 +935,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         <div className="project-active-layout">
           <ProjectExplorerMainPageTiled
             language={language}
+            themeMode={props.themeMode}
+            onThemeModeChange={props.onThemeModeChange}
             backend={backend}
             context={context}
             backendRevision={props.backendRevision}

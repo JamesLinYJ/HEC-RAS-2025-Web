@@ -5,6 +5,7 @@ import type { LoadedMapDocumentCatalog } from '../../map/ProjectTreeListener';
 import type { MapDocumentTab } from '../../map/mapTypes';
 import { ShapefileAttributeTableViewer } from './ShapefileAttributeTableViewer';
 import { NewShapefileDialog } from './NewShapefileDialog';
+import { VectorImporterDialog } from './VectorImporterDialog';
 import { sameSourcePath } from '../attributes/attributeTableTypes';
 import { captureMapOwner, inspectShapefileFamily, isShapefileMapImportReceipt, isNewShapefileCreateReceipt,
   sameMapSourceFamily, type NewShapefileCreateReceipt, type ShapefileFamilyCapture, type ShapefileMapImportReceipt } from './vectorImportTypes';
@@ -322,13 +323,10 @@ export function VectorImporter({ open, language, context, backend, catalog, cata
     sameSourcePath(importOutcome.sourcePath, createdReceipt.family.sourcePath));
 
   return <>
-    <div className="vector-import-backdrop" hidden={!open} aria-hidden={!open}>
-      <section className="vector-import-dialog vector-import-workflow" role="dialog" aria-modal="true" aria-labelledby="vector-import-title">
-        <header><div><span className="tools-kicker">{zh ? '工程 / Shapefile' : 'PROJECT / SHAPEFILE'}</span>
-          <h3 id="vector-import-title">{zh ? '新建或导入矢量' : 'Create or import vector data'}</h3>
-          <p>{zh ? '使用服务端可访问路径；浏览器本地文件上传继续使用地图页现有功能。' : 'Use paths accessible to the service. Browser-local uploads remain in the existing map-page workflow.'}</p></div>
-          <button type="button" className="attribute-close" disabled={busy !== null} onClick={onClose} aria-label={zh ? '关闭' : 'Close'}>×</button></header>
-
+    <VectorImporterDialog open={open} busy={busy !== null} language={language}
+      title={text(language, '新建或导入矢量', 'Create or import vector data')}
+      description={text(language, '使用服务端可访问路径；浏览器本地文件上传继续使用地图页现有功能。', 'Use paths accessible to the service. Browser-local uploads remain in the existing map-page workflow.')}
+      onClose={onClose}>
         {!context.projectPath || !context.projectRevision || context.projectXml === null
           ? <p className="vector-import-warning">{zh ? '请先打开并保存工程。' : 'Open and save a project first.'}</p>
           : !catalog || catalog.projectRevision.toLocaleUpperCase() !== context.projectRevision.toLocaleUpperCase()
@@ -422,8 +420,7 @@ export function VectorImporter({ open, language, context, backend, catalog, cata
         </details>}
         {notice && <p className="vector-import-notice" role="status">{notice}</p>}
         {error && <div className="vector-import-error" role="alert"><strong>{error}</strong>{detail && <details><summary>{zh ? '原始 Host 诊断' : 'Raw Host diagnostic'}</summary><pre>{detail}</pre></details>}</div>}
-      </section>
-    </div>
+    </VectorImporterDialog>
     {newDialogMap && <NewShapefileDialog open={newDialogOpen && open} language={language} context={context} backend={backend}
       targetMap={newDialogMap} onClose={() => {
         setNewDialogOpen(false);

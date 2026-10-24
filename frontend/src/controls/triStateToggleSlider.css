@@ -1,0 +1,13 @@
+.editor-tristate-toggle{display:inline-flex;min-height:28px;align-items:center;gap:8px;cursor:pointer;font-size:12px}
+.editor-tristate-toggle>input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);clip-path:inset(50%);white-space:nowrap}
+.editor-tristate-track{display:inline-flex;width:32px;height:18px;align-items:center;padding:2px;border-radius:999px;background:#aab5bf;transition:background .15s ease}
+.editor-tristate-track>span{width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:transform .15s ease}
+.editor-tristate-toggle>input:checked+.editor-tristate-track{background:#287db7}
+.editor-tristate-toggle>input:checked+.editor-tristate-track>span{transform:translateX(14px)}
+.editor-tristate-toggle>input:indeterminate+.editor-tristate-track{background:#718293}
+.editor-tristate-toggle>input:indeterminate+.editor-tristate-track>span{transform:translateX(7px)}
+.editor-tristate-toggle>input:focus-visible+.editor-tristate-track{outline:2px solid #287db7;outline-offset:2px}
+.editor-tristate-toggle>input:disabled+.editor-tristate-track{opacity:.55}
+.editor-tristate-toggle>input:disabled~.editor-tristate-state{opacity:.65}
+.editor-control-header{display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.editor-control-header-subcontent{color:#758391;font-size:11px;font-weight:400}

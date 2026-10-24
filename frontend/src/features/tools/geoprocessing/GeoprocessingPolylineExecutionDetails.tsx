@@ -42,6 +42,7 @@ export interface GeoprocessingPolylineResult {
   outputLineCount: number;
   inputPolygonCount: number;
   outputPolygonCount: number;
+  inputPointCount: number;
   outputPath: string | null;
   clipboardText: string | null;
   outputFormat: string | null;
@@ -50,6 +51,7 @@ export interface GeoprocessingPolylineResult {
   validationIssues: Array<{ field: string; message: string; severity: string }>;
   capturedPathIdentities: string[];
   capturedPolygonPathIdentities: string[];
+  capturedPointIdentities: string[];
   outputKind: string;
   outputHandler: 'Clipboard' | 'Shapefile';
   shapefileReceipt?: GeoprocessingShapefileOutputReceipt;
@@ -175,7 +177,7 @@ export function GeoprocessingPolylineExecutionDetails({ language, tool, view, op
       {result && <button className="tools-text-button" type="button" onClick={() => downloadJson(result, tool)}>{zh ? '下载回执 JSON' : 'Download receipt JSON'}</button>}
     </div>
     <div className="tools-progress-line"><span className={`tools-state-dot ${running ? 'is-running' : view.kind === 'completed' ? 'is-ready' : ''}`} />
-      <strong>{running ? (zh ? `正在处理所选${tool.inputKind === 'Polygon' ? '多边形' : '折线'}…` : `Processing the selected ${tool.inputKind.toLowerCase()}…`)
+      <strong>{running ? (zh ? `正在处理所选${tool.inputKind === 'Polygon' ? '多边形' : tool.inputKind === 'Point' ? '点' : '折线'}…` : `Processing the selected ${tool.inputKind.toLowerCase()}…`)
         : view.kind === 'completed' ? (zh ? '服务端执行完成' : 'Service execution completed')
           : view.kind === 'rejected' ? (zh ? '服务端未执行' : 'The service rejected execution')
             : view.kind === 'cancelled' ? (zh ? '服务端已确认取消' : 'The service confirmed cancellation')
@@ -201,8 +203,8 @@ export function GeoprocessingPolylineExecutionDetails({ language, tool, view, op
     </div>}
     {result && <>
       <dl className="tools-result-grid"><div><dt>{zh ? '工具' : 'Tool'}</dt><dd>{tool.title[language]}</dd></div>
-        <div><dt>{zh ? (tool.inputKind === 'Polygon' ? '输入多边形组件' : '输入折线路径') : (tool.inputKind === 'Polygon' ? 'Input polygons' : 'Input paths')}</dt>
-          <dd>{tool.inputKind === 'Polygon' ? result.inputPolygonCount : result.inputLineCount}</dd></div>
+        <div><dt>{zh ? (tool.inputKind === 'Polygon' ? '输入多边形组件' : tool.inputKind === 'Point' ? '输入点' : '输入折线路径') : (tool.inputKind === 'Polygon' ? 'Input polygons' : tool.inputKind === 'Point' ? 'Input points' : 'Input paths')}</dt>
+          <dd>{tool.inputKind === 'Polygon' ? result.inputPolygonCount : tool.inputKind === 'Point' ? result.inputPointCount : result.inputLineCount}</dd></div>
         <div><dt>{zh ? (result.outputKind === 'Polygon' ? '输出多边形' : '输出折线路径') : (result.outputKind === 'Polygon' ? 'Output polygons' : 'Output paths')}</dt>
           <dd>{result.outputKind === 'Polygon' ? result.outputPolygonCount : result.outputLineCount}</dd></div>
         <div><dt>{zh ? '输出方式' : 'Output'}</dt><dd>{result.outputHandler === 'Shapefile' ? 'Shapefile' : (zh ? '服务端文本预览' : 'Service text preview')}</dd></div>
@@ -235,6 +237,6 @@ export function GeoprocessingPolylineExecutionDetails({ language, tool, view, op
       </div>}
       {view.kind === 'rejected' && <p className="tools-field-help" role="status">{zh ? '参数或输入校验未通过；此回执没有标记执行成功。' : 'Parameter or input validation failed; this receipt does not indicate successful execution.'}</p>}
     </>}
-    {view.kind === 'idle' && <p className="tools-muted">{zh ? '读取并核验已保存地图中的真实折线或多边形后，可提交服务端参数校验及执行。' : 'Load and verify a real saved-map polyline or polygon before requesting service validation or execution.'}</p>}
+    {view.kind === 'idle' && <p className="tools-muted">{zh ? '读取并核验已保存地图中的真实输入几何后，可提交服务端参数校验及执行。' : 'Load and verify real input geometry from a saved map before requesting service validation or execution.'}</p>}
   </section>;
 }

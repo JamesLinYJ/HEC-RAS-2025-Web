@@ -1,0 +1,156 @@
+.ras-data-grid {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.ras-data-grid-toolbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  color: #52636c;
+  font-size: 11px;
+}
+
+.ras-data-grid-search,
+.ras-data-grid-filter-column {
+  display: grid;
+  min-width: 145px;
+  gap: 3px;
+  font-weight: 600;
+}
+
+.ras-data-grid-search input,
+.ras-data-grid-filter-column select {
+  min-width: 145px;
+  min-height: 30px;
+  padding: 4px 7px;
+  border: 1px solid #cbd7dc;
+  border-radius: 5px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+}
+
+.ras-data-grid-count,
+.ras-data-grid-filter-hint {
+  margin-left: auto;
+  padding: 5px 0;
+  color: #71838a;
+  font-size: 10px;
+}
+
+.ras-data-grid-sort-button {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ras-data-grid-sort-button:hover,
+.ras-data-grid-sort-button:focus-visible {
+  background: #e7efef;
+}
+
+.ras-enum-filter {
+  position: relative;
+  min-width: 145px;
+  color: #52636c;
+  font-size: 10px;
+}
+
+.ras-enum-filter > summary {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 7px;
+  border: 1px solid #cbd7dc;
+  border-radius: 5px;
+  background: #fff;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.ras-enum-filter > summary span {
+  color: #71838a;
+}
+
+.ras-enum-filter-options {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  display: grid;
+  width: min(280px, 80vw);
+  max-height: 280px;
+  gap: 5px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #ccd8dc;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 5px 16px #20333b20;
+}
+
+.ras-enum-filter-options > button {
+  width: max-content;
+  min-height: 25px;
+  padding: 3px 7px;
+  border: 1px solid #d4dfe2;
+  border-radius: 4px;
+  background: #f7f9f9;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ras-enum-filter-options [role="group"] {
+  display: grid;
+  gap: 3px;
+}
+
+.ras-enum-filter-options label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  cursor: pointer;
+}
+
+.ras-enum-filter-options label input {
+  flex: 0 0 auto;
+}
+
+.ras-enum-filter-options label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ras-data-grid-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: #71838a;
+  font-size: 10px;
+}
+
+.ras-data-grid-footer button {
+  min-height: 27px;
+  padding: 4px 8px;
+}

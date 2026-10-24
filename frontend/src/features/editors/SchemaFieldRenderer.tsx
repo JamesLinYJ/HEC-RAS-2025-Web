@@ -20,13 +20,14 @@ import { SliderPropertyItem } from '../../controls/SliderPropertyItem';
 import { SliderTextPropertyItem } from '../../controls/SliderTextPropertyItem';
 import { TextPropertyItem } from '../../controls/TextPropertyItem';
 import { ToggleablePropertyItem } from '../../controls/ToggleablePropertyItem';
+import { TriStateTogglePropertyItem } from '../../controls/TriStateTogglePropertyItem';
 import { ValidateableTextBox } from '../../controls/ValidateableTextBox';
 import { ValidationErrorList } from '../../controls/ValidationErrorList';
 import { isValidDateTimeText } from '../../controls/dateTimeText';
-import { ContentPropertyItem } from '../../controls/ContentPropertyItem';
+import { Labeled } from '../../controls/Labeled';
 import { DescriptionGroupControl } from '../../controls/DescriptionGroupControl';
 import { EmbededImageGallery, embeddedImageCollectionBytes } from '../../controls/EmbededImageGallery';
-import { MetaDataGroup } from '../../controls/MetaDataGroup';
+import { CollapsibleContainer } from '../../controls/CollapsibleContainer';
 import { MetaDataPropertiesRepeater } from '../../controls/MetaDataPropertiesRepeater';
 import { RichDescription } from '../../controls/RichDescription';
 import '../../controls/propertyItems.css';
@@ -72,7 +73,7 @@ export function SchemaFieldRenderer({ schema, snapshot, values, images, canEdit 
         descriptionFieldKey={descriptionFieldKey} imageFieldKey={imageFieldKey}>{repeated}</DescriptionGroupControl>;
     }
     if (!section.title) return <div key={schema.id}>{repeated}</div>;
-    return <MetaDataGroup key={section.title} title={editorText(language, section.title)}>{repeated}</MetaDataGroup>;
+    return <CollapsibleContainer key={section.title} title={editorText(language, section.title)}>{repeated}</CollapsibleContainer>;
   });
   const remaining = schema.fields.filter((field) => !handled.has(field.id)).map((field) => (
     <FieldControl key={field.id} schema={schema} field={field} snapshot={snapshot} values={values} images={images} modelImageBytes={modelImageBytes} canEdit={canEdit} preview={preview} onFieldChange={onFieldChange} onImagesChange={onImagesChange} language={language} fieldKeyPrefix={fieldKeyPrefix} />
@@ -88,6 +89,12 @@ function FieldControl({ schema, field, snapshot, values, images, modelImageBytes
   const value = values?.[fieldKey] ?? snapshot?.fields[fieldKey] ?? '';
   const sourceControl = (field.sourceControl ?? '').toLowerCase();
   const radioBinding = (field as EditorFieldSchema & { radioBinding?: { route: string; value: string } | null }).radioBinding;
+  const mixedBy = (field as EditorFieldSchema & { mixedBy?: string | null }).mixedBy;
+  const mixedValueKey = mixedBy ? `${scopePrefix}/${mixedBy}` : undefined;
+  const mixedValue = mixedValueKey ? values?.[mixedValueKey] ?? snapshot?.fields[mixedValueKey] : undefined;
+  const mixedStateAvailable = Boolean(mixedBy) && mixedValue !== undefined;
+  const isIndeterminate = mixedStateAvailable && truthy(mixedValue);
+  const isTriStateToggle = /^tristatetoggle(?:slider|propertyitem)\d*$/.test(sourceControl);
   const radioTextControl = /^radiobuttoninputtextpropertyitem\d*$/.test(sourceControl) && Boolean(radioBinding?.route && radioBinding.value);
   const title = editorText(language, snapshot?.fieldTitles?.[fieldKey] ?? field.title);
   const isReadOnly = !canEdit || preview || field.readOnly === true || snapshot?.readOnlyFields?.includes(fieldKey) === true || ['display', 'catalogFile', 'catalogTitle'].includes(field.kind) || /^textpropertyitem\d*$/.test(sourceControl);
@@ -107,9 +114,12 @@ function FieldControl({ schema, field, snapshot, values, images, modelImageBytes
   const help = field.help ? <small className="editor-field-help">{editorText(language, field.help)}</small> : null;
   let control;
   if (field.kind === 'toggle') {
-    control = /^toggleablepropertyitem\d*$/.test(sourceControl)
-      ? <ToggleablePropertyItem id={generatedID} checked={truthy(value)} title={title} disabled={disabled} onChange={(checked) => onFieldChange?.(fieldKey, checked ? 'true' : 'false')} />
-      : <label className="editor-toggle"><input type="checkbox" checked={truthy(value)} disabled={disabled} onChange={(event) => onFieldChange?.(fieldKey, event.currentTarget.checked ? 'true' : 'false')} />{isChinese(language) ? '启用' : 'Enabled'}</label>;
+    control = isTriStateToggle
+      ? <TriStateTogglePropertyItem id={generatedID} checked={truthy(value)} indeterminate={isIndeterminate} accessibleLabel={title} language={language} disabled={disabled}
+        onChange={(checked) => onFieldChange?.(fieldKey, checked ? 'true' : 'false')} />
+      : /^toggleablepropertyitem\d*$/.test(sourceControl)
+        ? <ToggleablePropertyItem id={generatedID} checked={truthy(value)} title={title} disabled={disabled} onChange={(checked) => onFieldChange?.(fieldKey, checked ? 'true' : 'false')} />
+        : <label className="editor-toggle"><input type="checkbox" checked={truthy(value)} disabled={disabled} onChange={(event) => onFieldChange?.(fieldKey, event.currentTarget.checked ? 'true' : 'false')} />{isChinese(language) ? '启用' : 'Enabled'}</label>;
   } else if (field.kind === 'color' || /^colorpickerpropertyitem\d*$/.test(sourceControl)) {
     control = <ColorPickerPropertyItem id={generatedID} value={value} disabled={disabled} readOnly={isReadOnly} language={language} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
   } else if (['choice', 'recipe', 'connection', 'classificationMapping', 'layerSource'].includes(field.kind)) {
@@ -260,14 +270,15 @@ function FieldControl({ schema, field, snapshot, values, images, modelImageBytes
     </>;
   }
 
-  return <ContentPropertyItem id={generatedID} label={field.kind !== 'toggle' && !radioTextControl ? label : undefined}
-    className={`editor-field editor-field-${field.kind}`} help={help}
+  return <Labeled id={generatedID} label={(field.kind !== 'toggle' && !radioTextControl) || isTriStateToggle ? label : undefined}
+    labelFor={field.kind === 'images' || /^textpropertyitem\d*$/.test(sourceControl) ? null : generatedID}
+    className={`editor-field editor-field-${field.kind}`} disabled={disabled} help={help}
     unavailableMessage={Boolean(field.enabledBy?.length) && !enabled && !preview
       ? <small className="editor-field-muted">{isChinese(language) ? '当前计划模式下不可用' : 'Unavailable for the current plan mode'}</small> : undefined}
     conditionalMessage={preview && Boolean(field.enabledBy?.length || field.visibleBy?.length)
       ? <small className="editor-field-muted">{isChinese(language) ? '受原始控件条件控制' : 'Controlled by source UI conditions'}</small> : undefined}>
     {control}
-  </ContentPropertyItem>;
+  </Labeled>;
 }
 
 function fieldKeyFor(schema: EditorSchema, field: EditorFieldSchema, fieldKeyPrefix?: string): string {

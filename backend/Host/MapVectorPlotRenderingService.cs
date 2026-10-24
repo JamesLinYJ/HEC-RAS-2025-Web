@@ -79,7 +79,8 @@ public static class VectorMapPlotRenderingService
             var gdbOptions = SourceOptions(gdbCapture.Renderer);
             ApplyPlotOptions(gdbCapture.Renderer, gdbOptions, request.PlotOptions);
             MapVectorPlotOptionDescriptor[] descriptors = DescribeOptions(gdbCapture.Renderer, gdbOptions);
-            ApplyStyles(gdbCapture.Renderer, request.Styles, gdbCapture.SourceFeatureIndices, gdbCapture.GdbVectorType);
+            ApplyStyles(gdbCapture.Renderer, request.Styles, gdbCapture.SourceFeatureIndices,
+                gdbCapture.GdbVectorType, request.ExpectedGlobalSymbologyRevision);
             return RenderCaptured(request.Map.MapID, request.LayerID, gdb.SourcePath, gdb.SourceRevision,
                 gdb.Map.VisualizationRevision!, request.Viewport, request.RenderScale, gdbCapture, descriptors,
                 () => GdbMapSourceService.VerifyRendererCapture(request.Map, request.Node, gdb));
@@ -93,7 +94,8 @@ public static class VectorMapPlotRenderingService
         Dictionary<string, (PlotOption Option, PropertyInfo Property)> options = SourceOptions(capture.Renderer);
         ApplyPlotOptions(capture.Renderer, options, request.PlotOptions);
         MapVectorPlotOptionDescriptor[] optionDescriptors = DescribeOptions(capture.Renderer, options);
-        ApplyStyles(capture.Renderer, request.Styles, capture.SourceFeatureIndices, capture.GdbVectorType);
+        ApplyStyles(capture.Renderer, request.Styles, capture.SourceFeatureIndices,
+            capture.GdbVectorType, request.ExpectedGlobalSymbologyRevision);
 
         return RenderCaptured(request.Map.MapID, request.LayerID, context.SourcePath,
             context.SourceRevision, context.Map.VisualizationRevision!, request.Viewport,
@@ -382,11 +384,11 @@ public static class VectorMapPlotRenderingService
         property.Name != nameof(ComplexPolygonRenderLayer.UseExperimentalTinRenderer);
 
     private static void ApplyStyles(IRenderLayer renderer, MapVectorPlotStyle[] styles,
-        int[]? sourceFeatureIndices, string? gdbVectorType)
+        int[]? sourceFeatureIndices, string? gdbVectorType, string? expectedGlobalSymbologyRevision)
     {
         if (renderer is not VectorRenderLayer vector)
             throw new InvalidOperationException("The retained vector renderer does not expose source symbology.");
-        styles = ResolveGlobalFallbacks(styles);
+        styles = ResolveGlobalFallbacks(styles, expectedGlobalSymbologyRevision);
         string primaryID = gdbVectorType switch
         {
             "Point" or "PointCollection" when renderer is PointRenderLayer => "Gdb_Point_Symbology",
@@ -430,7 +432,8 @@ public static class VectorMapPlotRenderingService
             polygon.VertexSymbology = MakeSymbology(polygonVertex, sourceFeatureIndices);
     }
 
-    private static MapVectorPlotStyle[] ResolveGlobalFallbacks(MapVectorPlotStyle[] styles)
+    private static MapVectorPlotStyle[] ResolveGlobalFallbacks(MapVectorPlotStyle[] styles,
+        string? expectedGlobalSymbologyRevision)
     {
         if (styles.Any(style => style is null))
             throw new ArgumentException("The vector plot request contains an empty style entry.");
@@ -441,7 +444,8 @@ public static class VectorMapPlotRenderingService
             throw new ArgumentException("A global default fallback cannot carry project-specific source overrides.");
 
         IReadOnlyDictionary<string, GlobalSymbologyValues> defaults =
-            GlobalSymbologyService.LoadRenderDefaults(fallbackStyles.Select(style => style.DefinitionID));
+            GlobalSymbologyService.LoadRenderDefaults(fallbackStyles.Select(style => style.DefinitionID),
+                expectedGlobalSymbologyRevision);
         return styles.Select(style =>
         {
             if (style.IsProjectOverride != false) return style;

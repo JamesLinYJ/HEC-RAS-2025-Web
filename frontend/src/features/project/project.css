@@ -138,6 +138,89 @@
 .project-library-opening p { margin: 5px 0 0; color: #8299a6; font-size: 9px; line-height: 1.5; }
 .project-library-opening progress { width: min(330px, 100%); height: 5px; margin-top: 9px; accent-color: #61c8b2; }
 
+.project-explorer-home-settings { display: flex; justify-content: flex-end; padding-top: 12px; }
+.project-settings-page { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 24px clamp(16px, 4vw, 42px); color: var(--project-ink); background: var(--project-background, #071923); }
+.project-settings-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 18px; border-bottom: 1px solid var(--project-border); }
+.project-settings-header h2 { margin: 7px 0 0; color: var(--project-ink); font-size: 20px; font-weight: 600; }
+.project-settings-section { max-width: 780px; margin: 20px 0; padding: 17px; border: 1px solid var(--project-border); border-radius: 7px; background: var(--project-panel); }
+.project-settings-section > label,.project-settings-section h3 { display: block; margin: 0; color: var(--project-ink); font-size: 12px; font-weight: 600; }
+.project-settings-section p { margin: 6px 0 13px; color: var(--project-muted); font-size: 10px; line-height: 1.65; }
+.project-settings-section select { min-width: min(100%, 260px); height: 34px; padding: 0 9px; border: 1px solid var(--project-border); border-radius: 4px; color: var(--project-ink); background: var(--project-control, #081e29); }
+.project-settings-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.project-settings-count { min-width: 28px; padding: 4px 7px; border-radius: 12px; text-align: center; color: var(--project-ink); background: var(--project-control, #081e29); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.project-settings-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--project-ink); font-size: 10px; }
+.project-settings-confirm span { flex: 1 1 220px; }
+.project-settings-note { max-width: 780px; color: var(--project-muted); font-size: 10px; line-height: 1.65; }
+
+.project-search-popup { position: relative; min-width: 0; }
+.project-search-popup > .project-library-search { display: flex; flex-direction: column; gap: 5px; color: #718995; font-size: 9px; }
+.project-search-popup input { width: 100%; min-width: 0; height: 32px; padding: 0 9px; border: 1px solid rgba(137, 173, 189, .18); border-radius: 4px; outline: none; background: rgba(3, 19, 27, .65); color: #c7d6dc; font: 10px ui-monospace, 'SFMono-Regular', Consolas, monospace; }
+.project-search-popup input:focus { border-color: rgba(99, 223, 188, .48); }
+.project-search-popup-results { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; max-height: 300px; overflow: auto; border: 1px solid rgba(137, 173, 189, .2); border-radius: 5px; background: #0c202b; box-shadow: 0 10px 28px #0006; }
+.project-search-results { margin: 0; padding: 4px; list-style: none; }
+.project-search-results li + li { border-top: 1px solid rgba(137, 173, 189, .1); }
+.project-search-results button { width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 8px; text-align: left; border: 0; border-radius: 3px; color: #c7d6dc; background: transparent; cursor: pointer; }
+.project-search-results button:hover,.project-search-results button.is-active { background: rgba(75, 133, 132, .2); }
+.project-search-results strong { font-size: 10px; font-weight: 600; }
+.project-search-results span { color: #8299a6; font-size: 9px; line-height: 1.45; }
+.project-search-results small { color: #718995; font-size: 8px; }
+.project-search-empty { padding: 12px; color: #8299a6; font-size: 10px; }
+.project-example-summary { max-width: 880px; margin: 0 auto; padding: 10px 0 24px; color: var(--project-ink); }
+.project-example-summary-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--project-border); }
+.project-example-summary-header h2 { margin: 6px 0 0; color: var(--project-ink); font-size: 20px; font-weight: 600; }
+.project-example-summary-thumbnail { display: block; width: min(100%, 620px); max-height: 340px; margin: 18px auto; object-fit: contain; border: 1px solid var(--project-border); border-radius: 7px; background: var(--project-panel); }
+.project-example-summary-description { color: var(--project-muted); font-size: 11px; line-height: 1.75; white-space: pre-wrap; }
+.project-example-summary-facts { display: grid; gap: 8px; margin: 17px 0; }
+.project-example-summary-facts > div { display: grid; grid-template-columns: minmax(90px, 150px) minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.project-example-summary-facts dt { color: var(--project-muted); font-size: 9px; }
+.project-example-summary-facts dd { min-width: 0; margin: 0; color: var(--project-ink); font-size: 10px; overflow-wrap: anywhere; }
+.project-example-summary-facts code { font-size: 9px; }
+.project-example-summary-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+
+:root[data-theme='light'] .project-feature {
+  --project-ink: #273b46;
+  --project-muted: #566d78;
+  --project-dim: #71858e;
+  --project-border: rgba(54, 79, 94, .2);
+  --project-panel: rgba(255, 255, 255, .86);
+  --project-mint: #087f69;
+  --project-aqua: #137c99;
+  --project-background: #f2f6f8;
+  --project-control: #ffffff;
+  color: #273b46;
+  background: #f2f6f8;
+}
+:root[data-theme='light'] .project-feature .project-feature-toolbar,
+:root[data-theme='light'] .project-feature .project-tree-toolbar,
+:root[data-theme='light'] .project-feature .project-open-summary { background: #e9eff3; }
+:root[data-theme='light'] .project-feature .project-button-secondary { color: #3e5662 !important; border-color: rgba(54, 79, 94, .24); background: rgba(255, 255, 255, .82); }
+:root[data-theme='light'] .project-feature .project-button-secondary:hover:not(:disabled) { color: #183f4f !important; border-color: rgba(8, 127, 105, .45); }
+:root[data-theme='light'] .project-feature .project-library-heading h2,
+:root[data-theme='light'] .project-feature .project-library-card h3,
+:root[data-theme='light'] .project-feature .project-summary-title h1,
+:root[data-theme='light'] .project-feature .project-home-copy h1,
+:root[data-theme='light'] .project-feature .project-section-heading h2 { color: #263b46; }
+:root[data-theme='light'] .project-feature .project-library-heading p,
+:root[data-theme='light'] .project-feature .project-library-controls label,
+:root[data-theme='light'] .project-feature .project-library-card p,
+:root[data-theme='light'] .project-feature .project-home-copy p,
+:root[data-theme='light'] .project-feature .project-summary-title p { color: #5a707b; }
+:root[data-theme='light'] .project-feature .project-library-controls input,
+:root[data-theme='light'] .project-feature .project-search-popup input { color: #263b46; border-color: rgba(54, 79, 94, .24); background: #fff; }
+:root[data-theme='light'] .project-feature .project-library-card,
+:root[data-theme='light'] .project-feature .project-recent-list,
+:root[data-theme='light'] .project-feature .project-home-action,
+:root[data-theme='light'] .project-feature .project-recent-preview { border-color: rgba(54, 79, 94, .2); background: #fff; }
+:root[data-theme='light'] .project-feature .project-library-card footer,
+:root[data-theme='light'] .project-feature .project-recent-list li + li { border-color: rgba(54, 79, 94, .14); }
+:root[data-theme='light'] .project-feature .project-recent-item { color: #273b46; background: #fff; }
+:root[data-theme='light'] .project-feature .project-search-popup-results { border-color: rgba(54, 79, 94, .2); background: #fff; box-shadow: 0 10px 28px rgba(30, 48, 58, .18); }
+:root[data-theme='light'] .project-feature .project-search-results button { color: #273b46; }
+:root[data-theme='light'] .project-feature .project-search-results span,
+:root[data-theme='light'] .project-feature .project-search-empty { color: #566d78; }
+:root[data-theme='light'] .project-feature .project-search-results button:hover,
+:root[data-theme='light'] .project-feature .project-search-results button.is-active { background: #e7f2f1; }
+
 .project-active-layout { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; overflow: auto; }
 .project-open-summary { flex: 0 0 auto; padding: 13px 17px 12px; border-bottom: 1px solid rgba(151, 185, 201, .11); background: rgba(11, 32, 45, .57); }
 .project-summary-heading { display: flex; align-items: center; gap: 11px; min-width: 0; }

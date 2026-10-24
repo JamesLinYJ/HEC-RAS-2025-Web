@@ -1,6 +1,6 @@
 import type { AssetReference, BackendGateway, Language } from '../../shared/workbench';
 import { editorPageTitle } from './editorLocalization';
-import type { TerrainTopologyCommand, TerrainTopologyResponse } from './terrainTopologyTypes';
+import type { TerrainMapProjectOwner, TerrainTopologyCommand, TerrainTopologyResponse } from './terrainTopologyTypes';
 
 export interface SchemaChoice {
   id: string;
@@ -129,7 +129,7 @@ export interface ModelSnapshot {
     canRedoGeometry?: boolean;
   } | null;
   terrain?: {
-    inputs: Array<{ id: string; scope: string; name: string; type: string; filename?: string | null; schema?: string | null; error?: string | null; validExtent?: { minX: number; maxX: number; minY: number; maxY: number } | null; overviewCount?: number | null; overviews?: string[] | null }>;
+    inputs: Array<{ id: string; scope: string; name: string; type: string; filename?: string | null; schema?: string | null; error?: string | null; validExtent?: { minX: number; maxX: number; minY: number; maxY: number } | null; overviewCount?: number | null; overviews?: string[] | null; sourceVectorIndex?: number | null }>;
     selectedId?: string | null;
     rows?: Record<string, ModelRow[]> | null;
     tables?: Record<string, ModelTable> | null;
@@ -374,6 +374,7 @@ export interface TerrainTransformCommand {
 export interface EditorPageProps {
   backend?: BackendGateway;
   canEditTerrainTopology?: boolean;
+  terrainMapOwner?: TerrainMapProjectOwner;
   onTerrainTopology?: (command: TerrainTopologyCommand) => Promise<TerrainTopologyResponse | null>;
   language: Language;
   asset: AssetReference;

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { FeatureId, Language, WorkbenchContext } from '../shared/workbench';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { FeatureId, Language, ThemeMode, WorkbenchContext } from '../shared/workbench';
 import { assetKindLabel, message, text } from '../shared/workbench';
 import { ServerBackend } from '../platform/ServerBackend';
 import { RasContent } from './RasContent';
@@ -28,10 +28,22 @@ const initialLanguage = (): Language => {
   try { return localStorage.getItem('hecras.language') === 'en' ? 'en' : 'zh'; }
   catch { return 'zh'; }
 };
+const themePreferenceKey = 'hecras.theme.preference.v1';
+const initialThemeMode = (): ThemeMode => {
+  try {
+    const raw = localStorage.getItem(themePreferenceKey);
+    if (!raw) return 'system';
+    const value = JSON.parse(raw) as { version?: unknown; mode?: unknown };
+    return value.version === 1 && (value.mode === 'light' || value.mode === 'dark' || value.mode === 'system') ? value.mode : 'system';
+  } catch {
+    return 'system';
+  }
+};
 
 /** Web counterpart of RasMainWindow.cs; file/model mutations remain backend-owned. */
 export function RasMainWindow() {
   const [language, setLanguage] = useState<Language>(initialLanguage);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [activeFeature, setActiveFeature] = useState<FeatureId>(initialFeature);
   const [context, setContext] = useState<WorkbenchContext>(blankContext);
   const contextRef = useRef(context);
@@ -52,6 +64,17 @@ export function RasMainWindow() {
     try { localStorage.setItem('hecras.language', language); } catch { /* Optional preference storage. */ }
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
   }, [language]);
+  useLayoutEffect(() => {
+    try { localStorage.setItem(themePreferenceKey, JSON.stringify({ version: 1, mode: themeMode })); }
+    catch { /* Preferences are optional when browser storage is unavailable. */ }
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyTheme = (): void => {
+      document.documentElement.dataset.theme = themeMode === 'system' ? (media.matches ? 'dark' : 'light') : themeMode;
+    };
+    applyTheme();
+    media.addEventListener('change', applyTheme);
+    return () => media.removeEventListener('change', applyTheme);
+  }, [themeMode]);
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (dirtyOwnersRef.current.size > 0) { event.preventDefault(); event.returnValue = ''; }
@@ -123,7 +146,7 @@ export function RasMainWindow() {
     catch (error) { setRuntimeState('failed'); setRuntimeError(message(error)); }
   }, [backend]);
   useEffect(() => { void connect(); }, [connect]);
-  const props = { language, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0, dirtyOwners, onContextChange, onContextCommit, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
+  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0, dirtyOwners, onContextChange, onContextCommit, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
   const title = context.selectedAsset?.name ?? context.projectPath?.split(/[\\/]/).at(-1) ?? t('尚未打开工程', 'No project open');
 
   return <main className="ras-main-window">

@@ -10,6 +10,20 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-terrain-polygon-map-http", string polygonBaseUrl, string polygonOutputDirectory])
+            {
+                TextWriter protocol = Console.Out;
+                TerrainPolygonMapAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try
+                {
+                    report = await ServerAcceptance.RunTerrainPolygonMapAsync(
+                        new Uri(EnsureTrailingSlash(polygonBaseUrl)), polygonOutputDirectory);
+                }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-geometry-mesh-patch-http", string patchBaseUrl, string patchOutputDirectory])
             {
                 TextWriter protocol = Console.Out;

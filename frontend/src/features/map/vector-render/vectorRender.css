@@ -1,0 +1,171 @@
+.vector-layer-style-editor {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  color: var(--color-text, #20252b);
+}
+
+.vector-render-header,
+.vector-render-section-heading,
+.vector-render-style-heading,
+.vector-render-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.vector-render-header h3,
+.vector-render-section-heading h4,
+.vector-render-style-heading h4 {
+  margin: 2px 0 6px;
+}
+
+.vector-render-eyebrow,
+.vector-render-source-revision,
+.vector-render-muted,
+.vector-render-definition-name,
+.vector-render-provenance-revision {
+  color: var(--color-text-muted, #65717d);
+  font-size: 12px;
+}
+
+.vector-render-eyebrow { margin: 0; }
+.vector-render-status { color: var(--color-text-muted, #65717d); font-size: 12px; text-align: right; }
+.vector-render-source-path,
+.vector-render-source-revision { display: block; overflow-wrap: anywhere; }
+.vector-render-source-revision { margin-top: 4px; }
+
+.vector-render-identity {
+  display: grid;
+  gap: 5px;
+  padding: 9px 11px;
+  border: 1px solid var(--color-border, #d5dbe1);
+  border-radius: 7px;
+  background: var(--color-panel-muted, #f7f8fa);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.vector-render-style-list,
+.vector-render-plot-options {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.vector-render-section-heading { align-items: center; }
+.vector-render-section-heading p { margin: 0; color: var(--color-text-muted, #65717d); font-size: 12px; }
+.vector-render-provenance-revision { text-align: right; overflow-wrap: anywhere; }
+
+.vector-render-style-card,
+.vector-render-plot-options,
+.vector-render-options,
+.vector-render-conditions {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border, #d5dbe1);
+  border-radius: 8px;
+  background: var(--color-panel, #fff);
+}
+
+.vector-render-style-heading { align-items: center; }
+.vector-render-style-heading h4 { font-size: 14px; }
+.vector-render-style-heading code,
+.vector-render-definition-name { display: block; overflow-wrap: anywhere; }
+.vector-render-definition-name { margin-top: 3px; }
+.vector-render-source-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--color-panel-muted, #f0f2f4);
+  color: var(--color-text-muted, #65717d);
+  font-size: 11px;
+}
+.vector-render-source-badge.is-project-override { background: #fff0d7; color: #754900; }
+
+.vector-render-style-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 9px 12px;
+  min-width: 0;
+  margin: 10px 0;
+  padding: 0;
+  border: 0;
+}
+.vector-render-style-fields legend { margin-bottom: 5px; color: var(--color-text-muted, #65717d); font-size: 12px; }
+.vector-render-field,
+.vector-render-field label { display: grid; gap: 5px; min-width: 0; }
+.vector-render-field label > span:first-child { font-size: 12px; }
+.vector-render-field input[type="text"],
+.vector-render-field input[type="number"],
+.vector-render-option select {
+  width: 100%;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 4px 7px;
+  border: 1px solid var(--color-border, #cbd2d9);
+  border-radius: 5px;
+  background: var(--color-input, #fff);
+  color: inherit;
+}
+.vector-render-color-input { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.vector-render-color-input input { width: 38px; height: 30px; padding: 2px; }
+.vector-render-color-input code { overflow-wrap: anywhere; }
+.vector-render-alpha-field { display: grid; grid-template-columns: 1fr 72px; align-items: center; gap: 8px; }
+.vector-render-alpha-field > span { font-size: 11px; color: var(--color-text-muted, #65717d); }
+.vector-render-invalid-value { color: #a12222; overflow-wrap: anywhere; }
+
+.vector-render-option-list { display: grid; gap: 9px; }
+.vector-render-options { display: grid; gap: 9px; }
+.vector-render-options legend { font-weight: 600; }
+.vector-render-option { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, 180px); align-items: center; gap: 12px; }
+.vector-render-option-label { display: grid; gap: 2px; }
+.vector-render-option-label small { color: var(--color-text-muted, #65717d); }
+.vector-render-option-disabled { opacity: .58; }
+.vector-render-options-note { margin: 0; color: var(--color-text-muted, #65717d); font-size: 12px; }
+
+.vector-render-conditions summary { cursor: pointer; font-weight: 600; }
+.vector-render-condition { display: flex; flex-wrap: wrap; gap: 6px 10px; padding-top: 9px; overflow-wrap: anywhere; }
+.vector-render-condition code { font-size: 11px; }
+.vector-render-actions { flex-wrap: wrap; align-items: center; justify-content: flex-start; }
+.vector-render-primary-button,
+.vector-render-secondary-button {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border, #cbd2d9);
+  border-radius: 6px;
+  background: var(--color-panel, #fff);
+  color: inherit;
+  cursor: pointer;
+}
+.vector-render-primary-button { border-color: var(--color-accent, #1769aa); background: var(--color-accent, #1769aa); color: #fff; }
+.vector-render-primary-button:disabled,
+.vector-render-secondary-button:disabled { opacity: .48; cursor: not-allowed; }
+.vector-render-warning,
+.vector-render-error,
+.vector-render-empty-state,
+.vector-render-loading,
+.vector-render-empty-options {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.vector-render-warning { background: #fff6e6; color: #684700; }
+.vector-render-error { background: #fff0f0; color: #7d1c1c; }
+.vector-render-error details { margin-top: 7px; }
+.vector-render-error pre { max-height: 240px; overflow: auto; white-space: pre-wrap; }
+.vector-render-empty-state,
+.vector-render-empty-options,
+.vector-render-loading { background: var(--color-panel-muted, #f2f4f6); color: var(--color-text-muted, #65717d); }
+.vector-render-muted { margin: 0; }
+
+@media (max-width: 520px) {
+  .vector-render-header,
+  .vector-render-section-heading { flex-direction: column; }
+  .vector-render-status,
+  .vector-render-provenance-revision { text-align: left; }
+  .vector-render-option { grid-template-columns: 1fr; }
+}

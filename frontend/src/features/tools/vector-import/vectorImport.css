@@ -30,6 +30,8 @@
   width: min(72rem, 100%);
 }
 
+.vector-import-dialog-content { min-width: 0; }
+
 .vector-import-dialog > header,
 .vector-import-section-heading {
   display: flex;
@@ -48,6 +50,30 @@
 .vector-import-workflow p {
   line-height: 1.5;
 }
+
+.vector-drop-target {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem 1rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px dashed var(--border, #aebbc9);
+  border-radius: .75rem;
+  background: var(--surface-subtle, #f7f9fb);
+}
+.vector-drop-target.is-active { border-color: var(--accent, #1473e6); }
+.vector-drop-file-input { position: absolute; width: 1px !important; height: 1px; padding: 0 !important; opacity: 0; pointer-events: none; }
+.vector-drop-copy { display: grid; flex: 1 1 18rem; gap: .25rem; }
+.vector-drop-copy span, .vector-drop-file-list small { color: var(--muted, #596777); font-size: .85rem; line-height: 1.45; }
+.vector-drop-highlight { position: absolute; inset: 0; z-index: 1; display: none; align-items: center; justify-content: center; border-radius: inherit; background: rgb(20 115 230 / 12%); color: var(--accent, #1473e6); font-weight: 700; pointer-events: none; }
+.vector-drop-highlight.is-active { display: flex; }
+.vector-drop-file-list { flex: 1 1 100%; display: grid; gap: .35rem; margin: .4rem 0 0; padding: 0; list-style: none; }
+.vector-drop-file-list li { display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-width: 0; padding: .45rem .6rem; border: 1px solid var(--border, #d9e0e8); border-radius: .5rem; background: var(--surface, #fff); }
+.vector-drop-file-list li > span { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.vector-drop-remove { border: 0; padding: .3rem .5rem; background: transparent; color: var(--accent, #1473e6); cursor: pointer; }
+.vector-drop-remove:disabled { cursor: not-allowed; opacity: .5; }
 
 .vector-import-dialog > header p {
   margin: 0.4rem 0 0;

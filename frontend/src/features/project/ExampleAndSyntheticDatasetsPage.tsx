@@ -3,6 +3,8 @@ import type { BackendGateway, Language, WorkbenchContext } from '../../shared/wo
 import { errorDiagnostics, message, text } from '../../shared/workbench';
 import { isAbsoluteServerPath } from './ProjectTypes';
 import { OpeningProjectPage } from './OpeningProjectPage';
+import { ExampleProjectSummaryPage } from './ExampleProjectSummaryPage';
+import { SearchBarWithResultsPopup } from './SearchBarWithResultsPopup';
 
 interface ProjectLibraryRow {
   id: string;
@@ -73,6 +75,7 @@ export function ExampleAndSyntheticDatasetsPage({ language, backend, context, ba
   const [openError, setOpenError] = useState<{ message: string; details: string; detailsLabel?: string } | null>(null);
   const [destinationDirectory, setDestinationDirectory] = useState('');
   const [query, setQuery] = useState('');
+  const [selectedExample, setSelectedExample] = useState<ProjectLibraryRow | null>(null);
   const [opening, setOpening] = useState(false);
   const [progress, setProgress] = useState<number>();
   const catalogGeneration = useRef(0);
@@ -90,6 +93,12 @@ export function ExampleAndSyntheticDatasetsPage({ language, backend, context, ba
     if (!filter) return rows;
     return rows.filter((row) => [row.title, row.description, ...row.tags].join('\n').toLocaleLowerCase(language === 'zh' ? 'zh-CN' : 'en-US').includes(filter));
   }, [catalog?.examples, language, query]);
+  const searchResults = useMemo(() => visibleExamples.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    detail: row.tags.join(' · '),
+  })), [visibleExamples]);
 
   const loadCatalog = useCallback(async (): Promise<void> => {
     if (!backend.supports('projectLibrary.catalog')) {
@@ -187,6 +196,23 @@ export function ExampleAndSyntheticDatasetsPage({ language, backend, context, ba
     }
   };
 
+  if (selectedExample) {
+    return <section className="project-library-page">
+      <ExampleProjectSummaryPage
+        language={language}
+        definition={selectedExample}
+        busy={busy || opening} canOpen={canOpenSelection}
+        onBack={() => setSelectedExample(null)}
+        onOpen={() => void openExample(selectedExample)}
+      />
+      {!canOpenSelection && <p className="project-field-hint">{importBlockedReason ?? (!isAbsoluteServerPath(destinationDirectory.trim())
+        ? text(language, '请返回列表并填写服务器目标目录后再打开。', 'Return to the list and enter a server destination directory before opening.')
+        : text(language, '当前服务暂不能打开此示例工程。', 'The connected service cannot open this example project right now.'))}</p>}
+      {opening && <OpeningProjectPage language={language} fraction={progress} />}
+      {openError && <div className="project-library-error" role="alert"><strong>{text(language, '示例工程未打开', 'Example project was not opened')}</strong><p>{openError.message}</p><details><summary>{openError.detailsLabel ?? text(language, '原始诊断', 'Raw diagnostics')}</summary><pre>{openError.details}</pre></details></div>}
+    </section>;
+  }
+
   return (
     <section className="project-library-page">
       <header className="project-library-heading">
@@ -200,7 +226,17 @@ export function ExampleAndSyntheticDatasetsPage({ language, backend, context, ba
 
       {!canCatalog ? <div className="project-library-empty">{text(language, '当前后端未提供 projectLibrary.catalog。', 'The connected backend does not provide projectLibrary.catalog.')}</div> : <>
         <div className="project-library-controls">
-          <label className="project-library-search"><span>{text(language, '筛选示例', 'Filter examples')}</span><input value={query} disabled={catalogBusy || opening || busy} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={text(language, '名称、说明或标签', 'Title, description, or tag')} /></label>
+          <SearchBarWithResultsPopup
+            language={language}
+            query={query}
+            results={searchResults}
+            disabled={catalogBusy || opening || busy}
+            onQueryChange={setQuery}
+            onSelect={(result) => {
+              const match = visibleExamples.find((project) => project.id === result.id);
+              if (match) setSelectedExample(match);
+            }}
+          />
           <label className="project-library-destination"><span>{text(language, '服务器目标目录', 'Server destination directory')}</span><input value={destinationDirectory} disabled={opening || busy} onChange={(event) => setDestinationDirectory(event.currentTarget.value)} placeholder={text(language, '输入 Host 机器上已存在的绝对目录', 'Existing absolute directory on the Host machine')} /></label>
         </div>
         {!canLibraryOpen && <p className="project-field-hint">{text(language, '当前后端未发布 projectLibrary.open，目录可浏览但不能导入。', 'The backend has not advertised projectLibrary.open. The catalog is viewable, but entries cannot be imported.')}</p>}
@@ -226,7 +262,7 @@ export function ExampleAndSyntheticDatasetsPage({ language, backend, context, ba
                 {project.publishDate && <time dateTime={project.publishDate}>{new Date(project.publishDate).toLocaleDateString(language === 'zh' ? 'zh-CN' : 'en-US')}</time>}
                 {project.tags.length > 0 && <ul className="project-library-tags">{project.tags.map((tag, index) => <li key={`${tag}:${index}`}>{tag}</li>)}</ul>}
               </div>
-              <footer><code title={project.id}>{project.id}</code><button type="button" className="project-button project-button-primary" disabled={!canOpenSelection} onClick={() => void openExample(project)}>{text(language, '下载并打开', 'Download and open')}</button></footer>
+              <footer><code title={project.id}>{project.id}</code><button type="button" className="project-button project-button-primary" onClick={() => setSelectedExample(project)}>{text(language, '查看摘要', 'View summary')}</button></footer>
             </article>;
           })}</div>)}
       </>}

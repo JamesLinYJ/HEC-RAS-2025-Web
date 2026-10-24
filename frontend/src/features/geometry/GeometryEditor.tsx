@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FeaturePageProps } from '../../shared/workbench';
 import { GeometryCulvertsPage } from './GeometryCulvertsPage';
 import { GeometryMeshPage } from './GeometryMeshPage';
@@ -12,6 +12,7 @@ import { gfield, gkind, gt } from './geometryText';
 import { GeometryError } from './GeometryError';
 import { geometryDiagnosticMessage } from './geometryErrors';
 import type { GeometryFeatureKind, GeometryRow } from './geometryTypes';
+import { ArcImportDialog } from './ArcImportDialog';
 import { useGeometryWorkbench } from './useGeometryWorkbench';
 
 type GeometryPageID = 'summary' | 'topologySummary' | 'nodes' | 'arcs' | 'regions' | 'mesh' | 'culverts';
@@ -67,8 +68,10 @@ function operationLabel(language: 'zh' | 'en', operation: string): string {
 
 export default function GeometryPage(props: FeaturePageProps) {
   const [page, setPage] = useState<GeometryPageID>('summary');
+  const [arcImportOpen, setArcImportOpen] = useState(false);
   const workspace = useGeometryWorkbench(props);
   const { language } = props;
+  useEffect(() => { setArcImportOpen(false); }, [workspace.ownerKey]);
   const busy = !!workspace.busyOperation;
   const validation = useMemo(() => localValidation(language, workspace.draft), [language, workspace.draft]);
   const displayedTopology = workspace.topology;
@@ -185,6 +188,8 @@ export default function GeometryPage(props: FeaturePageProps) {
           <button className="geometry-icon-button" disabled={!canRedo || busy} onClick={redo} title={gt(language, 'redo')}>{gt(language, 'redo')}</button>
           <button className="geometry-secondary" disabled={busy || !workspace.asset} onClick={workspace.resetDrafts}>{gt(language, 'reset')}</button>
           <button className="geometry-primary" disabled={!workspace.canSave || busy} onClick={() => void workspace.saveAction()}>{busyOperationLabel(language, workspace.busyOperation, workspace.canSave)}</button>
+          <button className="geometry-secondary" disabled={!workspace.canInspectVectorImport || busy}
+            onClick={() => setArcImportOpen(true)}>{language === 'zh' ? '导入线 / 面' : 'Import lines / polygons'}</button>
           {workspace.asset && <button className="geometry-icon-button" disabled={busy || (workspace.dirty && !workspace.localOnly)} onClick={workspace.reload} title={gt(language, 'load')}>{gt(language, 'load')}</button>}
         </div>
       </header>
@@ -210,6 +215,10 @@ export default function GeometryPage(props: FeaturePageProps) {
       {workspace.errors.save && <GeometryError language={language} error={workspace.errors.save} style={{ marginTop: 12 }} />}
       {workspace.savedNotice && <div className="geometry-ok" role="status" style={{ marginTop: 10 }}>{gt(language, workspace.savedNotice === 'saved' ? 'saved' : 'idle')}</div>}
       <footer className="geometry-table-footer"><span>{gt(language, 'dirtyCaption')}</span><span>{gt(language, 'operation')}: {operationLabel(language, workspace.busyOperation)}</span></footer>
+      <ArcImportDialog key={workspace.ownerKey} open={arcImportOpen} language={language} context={props.context} backend={props.backend}
+        model={workspace.model} topology={workspace.topology} capture={workspace.vectorImportCapture}
+        canInspect={workspace.canInspectVectorImport} canApply={workspace.canApplyVectorImport}
+        onInspect={workspace.inspectVectorImport} onApply={workspace.applyVectorImport} onClose={() => setArcImportOpen(false)} />
     </div>
   );
 }

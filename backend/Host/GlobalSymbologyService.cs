@@ -103,10 +103,20 @@ public static class GlobalSymbologyService
     }
 
     /// <summary>Loads one consistent settings revision for explicit default-style fallbacks.</summary>
-    public static IReadOnlyDictionary<string, GlobalSymbologyValues> LoadRenderDefaults(IEnumerable<string> definitionIDs)
+    public static IReadOnlyDictionary<string, GlobalSymbologyValues> LoadRenderDefaults(
+        IEnumerable<string> definitionIDs, string? expectedRevision = null)
     {
         ArgumentNullException.ThrowIfNull(definitionIDs);
         Snapshot snapshot = ReadSnapshot();
+        if (expectedRevision is not null)
+        {
+            if (!IsRevision(expectedRevision))
+                throw new ArgumentException("The expected global symbology revision is invalid.");
+            if (!snapshot.Revision.Equals(expectedRevision, StringComparison.OrdinalIgnoreCase))
+                throw new GlobalSymbologyRevisionConflictException(
+                    "全局符号设置已在绘图检查后更新，请重新检查图层再预览。" +
+                    " Global symbology changed after inspection; reinspect the layer before previewing.");
+        }
         var requested = definitionIDs.Distinct(StringComparer.Ordinal).ToArray();
         var available = snapshot.Definitions.ToDictionary(item => item.Id, StringComparer.Ordinal);
         var result = new Dictionary<string, GlobalSymbologyValues>(StringComparer.Ordinal);

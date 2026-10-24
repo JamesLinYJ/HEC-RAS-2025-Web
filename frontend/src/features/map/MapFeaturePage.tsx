@@ -24,6 +24,10 @@ import { fitExtent, INITIAL_VIEWPORT, panViewport, screenToWorld, zoomAt } from 
 import type { MapViewport } from './mapViewport';
 import { RasProjectMap } from './RasProjectMap';
 import { usePersistedVectorLayers } from './usePersistedVectorLayers';
+import { useMapVectorRendering } from './useMapVectorRendering';
+import type { MapVectorPreview } from './useMapVectorRendering';
+import { VectorLayerStyleEditor } from './vector-render/VectorLayerStyleEditor';
+import type { VectorLayerSource } from './vector-render/vectorRenderTypes';
 import { usePersistedGdbLayers } from './usePersistedGdbLayers';
 import { useMapVelocityField } from './useMapVelocityField';
 import { usePersistedRasterLayers, mapRasterViewportFromCamera } from './usePersistedRasterLayers';
@@ -169,6 +173,10 @@ function MapPage(props: MapFeaturePageProps) {
   const [activeDocumentID, setActiveDocumentID] = useState<string | null>(null);
   const [mapCatalogLoading, setMapCatalogLoading] = useState(false);
   const [viewCommitBusy, setViewCommitBusy] = useState(false);
+  const [vectorCommitBusy, setVectorCommitBusy] = useState(false);
+  const mapMetadataCommitBusy = viewCommitBusy || vectorCommitBusy;
+  const [vectorPreview, setVectorPreview] = useState<MapVectorPreview | null>(null);
+  const [vectorSettingsEpoch, setVectorSettingsEpoch] = useState(0);
   const [mapCatalogError, setMapCatalogError] = useState<unknown>(null);
   const [visualizationRevision, setVisualizationRevision] = useState<string | null>(null);
   const [mapStateByOwner, setMapStateByOwner] = useState<Record<string, MapOwnerState>>({});
@@ -222,6 +230,44 @@ function MapPage(props: MapFeaturePageProps) {
   const persistedGdb = usePersistedGdbLayers({ backend, context, document: activeDocument, language });
   const persistedRasters = usePersistedRasterLayers({ backend, context, document: activeDocument, language });
   const resultViewport = useMemo(() => mapRasterViewportFromCamera(viewport, size), [viewport, size]);
+  const vectorCandidates = useMemo(() => {
+    if (!activeDocument || !context.projectPath || !context.projectRevision || !context.projectXml) return [];
+    const matching = (map: typeof persistedVectors.captures[number]['source']['map']) =>
+      map.isPersisted && map.projectPath === context.projectPath && map.projectRevision === context.projectRevision &&
+      map.mapID !== null && sameMapID(map.mapID, activeDocument.mapID) && map.mapIndex === activeDocument.mapIndex &&
+      map.mapName === activeDocument.name && map.mapType === activeDocument.mapType &&
+      map.visualizationRevision === activeDocument.visualizationRevision;
+    const capture = (layerID: string, nodeID: string, map: typeof persistedVectors.captures[number]['source']['map'],
+      node: VectorLayerSource['node'], expectedFamily: VectorLayerSource['expectedFamily'], sourceRevision: string) => {
+      const source: VectorLayerSource = {
+        key: JSON.stringify([projectContextKey, layerID, map, node, expectedFamily?.revision, sourceRevision]),
+        map: { projectPath: context.projectPath!, projectXml: context.projectXml, projectXmlSHA: map.projectXmlSHA,
+          mapID: activeDocument.mapID, mapIndex: activeDocument.mapIndex, mapName: activeDocument.name,
+          mapType: activeDocument.mapType, expectedVisualizationRevision: map.visualizationRevision,
+          projectSessionID: context.projectSessionID },
+        node, layerID, expectedProjectRevision: context.projectRevision!, expectedFamily, sourceRevision,
+      };
+      return { nodeID, source };
+    };
+    return [
+      ...persistedVectors.captures.flatMap(item => {
+        if (!matching(item.source.map)) return [];
+        const primary = item.source.family.files.find(file => file.role === 'source' && file.required &&
+          file.exists && file.path === item.source.family.sourcePath && file.revision);
+        return primary?.revision ? [capture(item.layerID, item.nodeID, item.source.map,
+          item.source.locator, item.source.family, primary.revision)] : [];
+      }),
+      ...persistedGdb.captures.flatMap(item => matching(item.map)
+        ? [capture(item.layerID, item.nodeID, item.map, item.locator, null, item.source.revision)] : []),
+    ];
+  }, [activeDocument, projectContextKey, context.projectPath, context.projectRevision, context.projectXml,
+    context.projectSessionID, persistedVectors.captures, persistedGdb.captures]);
+  const vectorSources = useMemo(() => vectorCandidates.map(candidate => candidate.source), [vectorCandidates]);
+  useEffect(() => {
+    setVectorPreview(current => current && !vectorSources.some(source => source.key === current.sourceKey) ? null : current);
+  }, [vectorSources]);
+  const vectorRendering = useMapVectorRendering({ backend, backendRevision, sources: vectorSources,
+    viewport: resultViewport, preview: vectorPreview, settingsEpoch: vectorSettingsEpoch, language });
   const resultFrames = useMapResultFrames({ backend, context, document: activeDocument, language, viewport: resultViewport, backendRevision });
   const associatedLayers = useAssociatedMapLayers({ backend, context, document: activeDocument,
     viewport: resultViewport, controller: resultFrames, language, backendRevision });
@@ -482,7 +528,7 @@ function MapPage(props: MapFeaturePageProps) {
   };
 
   const handleSourceImport = async (files: File[], options?: { directory?: boolean }) => {
-    if (viewCommitBusy || sourceImportBusy || mapCatalogLoading || mapCatalogError || !context.projectPath || (!activeDocument && documents.length > 0)) return;
+    if (mapMetadataCommitBusy || sourceImportBusy || mapCatalogLoading || mapCatalogError || !context.projectPath || (!activeDocument && documents.length > 0)) return;
     const controller = new AbortController();
     const capturedKey = projectContextKey;
     sourceImportRef.current = controller;
@@ -853,6 +899,8 @@ function MapPage(props: MapFeaturePageProps) {
       capture.source.map.mapIndex === activeDocument.mapIndex &&
       capture.source.map.mapName === activeDocument.name && capture.source.map.mapType === activeDocument.mapType)
     : undefined;
+  const selectedRenderSource = selectedBackend
+    ? vectorCandidates.find(candidate => candidate.nodeID === selectedBackend.nodeID)?.source ?? null : null;
   const selectedVectorFile = selectedVectorCapture?.source.family.files.find(file =>
     file.role === 'source' && file.required && file.exists && file.revision &&
     file.path === selectedVectorCapture.source.family.sourcePath);
@@ -929,9 +977,9 @@ function MapPage(props: MapFeaturePageProps) {
           </button>
           <small>{copy.importHint}</small>
           <MapSourceImportControl language={language} busy={sourceImportBusy}
-            enabled={Boolean(context.projectPath && context.projectRevision && backend.uploadMapSources && !viewCommitBusy && !mapCatalogLoading && !mapCatalogError && (activeDocument || documents.length === 0))}
+            enabled={Boolean(context.projectPath && context.projectRevision && backend.uploadMapSources && !mapMetadataCommitBusy && !mapCatalogLoading && !mapCatalogError && (activeDocument || documents.length === 0))}
             onImport={handleSourceImport} />
-          <button type="button" className="map-import-button" data-testid="map-refresh-sources" disabled={!context.projectPath || mapCatalogLoading || sourceImportBusy || viewCommitBusy}
+          <button type="button" className="map-import-button" data-testid="map-refresh-sources" disabled={!context.projectPath || mapCatalogLoading || sourceImportBusy || mapMetadataCommitBusy}
             onClick={() => setMapReloadKey((value) => value + 1)}>{text(language, '刷新图层', 'Refresh layers')}</button>
         </div>
       </header>
@@ -947,10 +995,10 @@ function MapPage(props: MapFeaturePageProps) {
         activeID={activeDocumentID}
         visualizationRevision={visualizationRevision}
         loading={mapCatalogLoading || sourceImportBusy}
-        interactionDisabled={viewCommitBusy}
+        interactionDisabled={mapMetadataCommitBusy}
         loadError={mapCatalogError}
         onSelect={(id) => {
-          if (sourceImportBusy || viewCommitBusy) return;
+          if (sourceImportBusy || mapMetadataCommitBusy) return;
           requestGenerationRef.current += 1;
           setActiveDocumentID(id);
           setSelectedFeature(null);
@@ -1044,6 +1092,7 @@ function MapPage(props: MapFeaturePageProps) {
             <RasProjectMap
               layers={allMapLayers}
               images={mapImages}
+              vectorFrames={vectorRendering.frames}
               velocityField={velocityField}
               viewport={viewport}
               onViewportChange={setViewport}
@@ -1100,7 +1149,7 @@ function MapPage(props: MapFeaturePageProps) {
           <MapViewsPanel {...props} activeDocument={activeDocument} visualizationRevision={visualizationRevision}
             onCommitStateChange={setViewCommitBusy}
             currentExtent={activeDocument ? resultViewport : null} shortcutScopeRef={viewportRef}
-            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading)}
+            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || vectorCommitBusy)}
             onNavigateToExtent={extent => setViewport(fitExtent(extent, size, 0))}
             onVisualizationCommit={(source, receipt) => {
               if (projectContextKeyRef.current !== projectContextKey || source.projectPath !== context.projectPath ||
@@ -1152,11 +1201,46 @@ function MapPage(props: MapFeaturePageProps) {
               setStatusMessage(text(language, '栅格符号已保存。', 'Raster symbology was saved.'));
             }}
           />}
+          {selectedRenderSource && <VectorLayerStyleEditor
+            backend={backend} language={language} sourceCapture={selectedRenderSource} viewport={resultViewport}
+            backendRevision={backendRevision} settingsEpoch={vectorSettingsEpoch}
+            onCommitStateChange={setVectorCommitBusy} onDirtyStateChange={onDirtyStateChange}
+            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || viewCommitBusy)}
+            dirtyOwners={props.dirtyOwners}
+            onPreviewChange={(source, draft) => {
+              if (!vectorSources.some(candidate => candidate.key === source.key)) return;
+              setVectorPreview(current => draft ? { sourceKey: source.key, draft }
+                : current?.sourceKey === source.key ? null : current);
+            }}
+            onReceipt={(source, receipt) => {
+              const current = activeDocumentRef.current;
+              if (projectContextKeyRef.current !== projectContextKey || !current || !activeDocument ||
+                  current.id !== activeDocument.id || source.map.projectPath !== context.projectPath ||
+                  source.expectedProjectRevision !== context.projectRevision || source.map.projectSessionID !== context.projectSessionID ||
+                  source.map.projectXml !== context.projectXml ||
+                  current.visualizationRevision?.toUpperCase() !== source.map.expectedVisualizationRevision?.toUpperCase() ||
+                  !receipt.visualizationRevision || !vectorSources.some(candidate => candidate.key === source.key)) return false;
+              setVectorPreview(null);
+              symbologySourceRef.current = null;
+              setAppliedLegend(null);
+              fittedSourceKey.current = JSON.stringify([owner, receipt.visualizationRevision, resultFrames.activeNodeKey,
+                resultFrames.selectedSource?.resultPath, resultFrames.selectedSource?.revision]);
+              setVisualizationRevision(receipt.visualizationRevision);
+              setDocuments(previous => previous.map(document => ({ ...document,
+                visualizationRevision: receipt.visualizationRevision, visibilityTransition: null })));
+              setStatusMessage(text(language, '矢量符号已保存。', 'Vector symbology was saved.'));
+              return true;
+            }} />}
+          {(vectorRendering.loading || vectorRendering.errors.length > 0) && <div role="status" data-testid="map-vector-render-status">
+            {vectorRendering.loading && <p>{text(language, '正在按当前视图绘制矢量符号…', 'Rendering vector styles for the current view…')}</p>}
+            {vectorRendering.errors.map((issue, index) => <p key={`${issue.layerID}:${index}`}>{issue.message}</p>)}
+          </div>}
           <MapSettingsPanel settings={settings} onChange={setSettings} language={language} />
           <details className="map-global-symbology-settings">
             <summary>{text(language, '全局矢量符号默认值', 'Global vector style defaults')}</summary>
             <GlobalSymbologyEditorPage backend={backend} backendRevision={props.backendRevision}
-              language={language} onDirtyStateChange={onDirtyStateChange} />
+              language={language} onDirtyStateChange={onDirtyStateChange}
+              onSaved={() => setVectorSettingsEpoch(value => value + 1)} />
           </details>
           {selectedVectorFile?.revision && selectedBackend && activeDocument && <VectorSymbologyEditor
             backend={backend} context={context} language={language}

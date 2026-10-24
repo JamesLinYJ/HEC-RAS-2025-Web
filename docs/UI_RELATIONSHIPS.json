@@ -65,7 +65,7 @@
       },
       {
         "id": "vector-conditional-symbology-preview",
-        "mount": "MapFeaturePage → VectorSymbologyEditor, only for the selected validated persisted vector node",
+        "mount": "MapFeaturePage → VectorSymbologyEditor (separate legacy conditional evaluator/preview control; persisted map rendering is described by map-vector-symbology-renderer)",
         "source": [
           "frontend/src/features/map/MapFeaturePage.tsx",
           "frontend/src/features/map/usePersistedVectorLayers.ts",
@@ -77,7 +77,7 @@
           "vector.symbology.inspect",
           "vector.symbology.evaluate"
         ],
-        "writeBoundary": "This is an inspection and C# evaluation preview. The UI explicitly does not write GeoJSON/Shapefile content or .map styles and does not persist/apply the preview to the map. Its dirty owner participates in draft switching checks, but no style-save receipt exists."
+        "writeBoundary": "vector.symbology.inspect/evaluate only inspects attributes and returns the legacy C# conditional-evaluation preview; this control does not save .vis styles or apply its result to the map. The separately mounted VectorLayerStyleEditor and useMapVectorRendering own persisted map styles and styled rendering. This control retains its local dirty-owner switching behavior."
       },
       {
         "id": "result-details-and-plan-description",
@@ -132,7 +132,7 @@
       },
       {
         "id": "boundary-condition-line-and-payload-editor",
-        "mount": "EditorWorkbench → BoundaryConditionEditor → BoundaryConditionLineEditorPage → DetailedBoundaryConditionHeader / BoundaryConditionTimeWindow / BoundaryConditionLineAndPayloadPickerPage → BCLinesLayerActiveFeatures / BoundaryConditionLineEditor → BCLineLayerLastSelectedFeatureLineEditor / BoundaryConditionLinePayloadsList / NewPayloadDialog / payload editors",
+        "mount": "EditorWorkbench → BoundaryConditionEditor → BoundaryConditionLineEditorPage → DetailedBoundaryConditionHeader / BoundaryConditionTimeWindow / BoundaryConditionLineAndPayloadPickerPage → BCLinesLayerActiveFeatures / BoundaryConditionLineEditor → BCLineLayerLastSelectedFeatureLineEditor / BoundaryConditionLinePayloadsList / NewPayloadDialog → NewPayloadPage → ExternalConnectionLinker / payload editors",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
           "frontend/src/features/editors/BoundaryConditionEditor.tsx",
@@ -153,13 +153,15 @@
           "frontend/src/features/editors/IrregularTimeSeriesPayloadEditor.tsx",
           "frontend/src/features/editors/RegularSpatiallyVariableTimeSeriesPayloadEditor.tsx",
           "frontend/src/features/editors/RegularTimeSeriesPayloadEditor.tsx",
-          "frontend/src/features/editors/SpatiallyVariableTimeSeriesPayloadEditor.tsx"
+          "frontend/src/features/editors/SpatiallyVariableTimeSeriesPayloadEditor.tsx",
+          "frontend/src/features/editors/NewPayloadPage.tsx",
+          "frontend/src/controls/ExternalConnectionLinker.tsx"
         ],
-        "stateOwner": "The selected model session, source path/revision and ModelDraft own line fields, aliases, rows, samples, payload values and transform sourceState. BoundaryConditionLineAndPayloadPickerPage derives selection from snapshot lines and keeps the current line in local view state using the stable snapshot line GUID; its detail projection does not mutate the parent draft or save baseline. PayloadListItem only highlights the snapshot/draft selectedPayloadId; it does not invent a selection callback. Selecting another line does not change the save baseline.",
+        "stateOwner": "The selected model session, source path/revision and ModelDraft own line fields, aliases, rows, samples, payload values and transform sourceState. BoundaryConditionLineAndPayloadPickerPage derives selection from snapshot lines and keeps the current line in local view state using the stable snapshot line GUID; its detail projection does not mutate the parent draft or save baseline. PayloadListItem only highlights the snapshot/draft selectedPayloadId; it does not invent a selection callback. For Remote payloads, ExternalConnectionLinker receives only the Host-provided NewPayloadPage/ViewModel_SelectedExternalConnection choices and holds no separate connection owner.",
         "readActions": [
           "model.load"
         ],
-        "writeBoundary": "The selected line name and payload fields/tables remain parent ModelDraft edits. Payload create/remove uses model.boundaryTransform and accepts only a revision-matched draft projection with changed sourceState and stable payload IDs; field, date/time, table and sample edits stay in the same draft. Line selection is view-only. Only the parent model.save commits the model HDF."
+        "writeBoundary": "The selected line name and payload fields/tables remain parent ModelDraft edits. Payload create/remove uses model.boundaryTransform and accepts only a revision-matched draft projection with changed sourceState and stable payload IDs; field, date/time, table and sample edits stay in the same draft. ExternalConnectionLinker selects an existing connection ID through the existing setValue(\"SelectedExternalConnection\", id) path; NewPayloadDialog validation, parent transform and model.save remain authoritative. The linker does not import or create connections and explicitly reports that limitation. Line selection is view-only. Only parent model.save commits the model HDF. Source-level contract only; no batch-9 build or runtime acceptance is claimed."
       },
       {
         "id": "geometry-culvert-editor",
@@ -178,7 +180,7 @@
       },
       {
         "id": "terrain-transform-draft",
-        "mount": "EditorWorkbench → TerrainLayersEditor → selected terrain-input detail/table editors; for a loaded ChannelMod input: ChannelModTerrainInputProperties → ChannelModTopologyEditor",
+        "mount": "EditorWorkbench → TerrainLayersEditor → selected terrain-input detail/table editors; loaded ChannelMod input → ChannelModTerrainInputProperties → ChannelModTopologyEditor; loaded PolygonRasterModTerrainInput → TerrainPolygonMapEditor",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
           "frontend/src/features/editors/model.ts",
@@ -197,15 +199,27 @@
           "backend/Host/TerrainTopologyService.cs",
           "backend/Host/TerrainTopologyContracts.cs",
           "backend/Host/TerrainEditorService.cs",
-          "backend/Host/BackendWorker.cs"
+          "backend/Host/BackendWorker.cs",
+          "frontend/src/features/editors/TerrainPolygonMapEditor.tsx",
+          "frontend/src/features/editors/TerrainModCreator.tsx",
+          "frontend/src/features/editors/TerrainModLayerViewer.tsx",
+          "frontend/src/features/editors/TerrainModPicker.tsx",
+          "frontend/src/features/editors/TerrainModStats.tsx",
+          "frontend/src/features/editors/terrain-polygon-editor.css",
+          "frontend/src/features/map/ProjectTreeListener.ts",
+          "backend/Host/MapTreeService.cs",
+          "backend/Host/TerrainInputMapContextService.cs"
         ],
-        "stateOwner": "The current model owner and ModelDraft hold terrainView, rows, selections, validation state and sourceState. Generic TerrainInputLayerPicker/TerrainAddControl (TerrainInputLayerCreator), TerrainInputStats and TerrainFeatureTable operate on the actual selected input/table data. For a ChannelMod input, ChannelModTopologyEditor mounts only after that input is the loaded Host selection; the standalone SVG holds its topology response, source coordinate view, feature selection, tool mode and manual X/Y points locally. Its reference extent comes from a Host-returned terrain input validExtent or returned geometry bounds; if neither supplies coordinates, the editor requires explicit X/Y entries and does not invent a project-map extent. The polygon feature table remains a source-backed table view; a polygon TerrainMod topology editor is not mounted.",
+        "stateOwner": "The current model owner and ModelDraft hold terrainView, rows, selections, validation state and sourceState. Generic terrain picker/creator, stats and feature-table controls operate on the selected Host input. ChannelModTopologyEditor mounts only after a ChannelMod input is loaded and draws Host source coordinates in its own SVG; its extent comes from Host geometry or validExtent, otherwise explicit X/Y is required. TerrainPolygonMapEditor mounts only for a selected, already-loaded PolygonRasterModTerrainInput. It separately captures the project map catalog/tree and the exact persisted PolygonRasterMod visual-context node matching the current Terrain path, sourceVectorIndex and .vis revision, then obtains polygons/CRS/extent through map.terrainInput.render. Its independent SVG camera, selection, tools and manual extent remain local to that view; it does not use the main map selection or fabricate an extent.",
         "readActions": [
           "model.load",
           "model.terrainTransform",
-          "model.terrainTopology"
+          "model.terrainTopology",
+          "map.document.list",
+          "map.tree.load",
+          "map.terrainInput.render"
         ],
-        "writeBoundary": "model.terrainTransform returns a terrain draft projection at the captured model revision with a new non-empty sourceState; the workbench retains it as draft state. The transformation is not a file save. For a loaded ChannelMod input, EditorWorkbench onTerrainTopology captures the complete current model request (including sourceState, rows and changedCells), selected input ID, model/source revision, owner and request generation before model.terrainTopology. It accepts only the current owner/generation and a response whose model revision/sourceState, selected input, topology sourceRevision/draftIdentity and unique/selected feature IDs and input IDs still match; the returned snapshot is projected into the parent ModelDraft. The ChannelMod editor wires load/select/draw/remove/undo/redo/split/moveNodes/moveVertex/insertVertex/deleteVertex/maskRegion/setMetadata to this callback. These edits remain in the parent terrain draft until model.save. The current polygon modification UI only exposes its returned feature table; TerrainMod polygon drawing, placement, selection and history controls are not mounted. Generic terrain picker/creator/stats/table files do not imply those polygon controls are implemented."
+        "writeBoundary": "model.terrainTransform and model.terrainTopology project only into the parent ModelDraft. Channel topology operations bind the complete model/sourceState/rows/changedCells, input ID, revision, owner and generation and validate snapshot/sourceRevision/draftIdentity/FIDs/input identity; its load/select/draw/remove/undo/redo/split/moveNodes/moveVertex/insertVertex/deleteVertex/maskRegion/setMetadata commands remain in the parent draft. Polygon map operations load/select/selectAt/stamp/draw/remove/undo/redo similarly bind map/project/XML/session/.vis capture, exact visual-context node, Terrain path/revision and sourceVectorIndex; matching returned topology snapshot/sourceRevision/draftIdentity/feature FIDs are projected into the parent ModelDraft. Host-provided polygon tools preserve source FIDs; unsupported shapes stay disabled, and vertex dragging/panning are not provided. Generic Terrain picker/creator/stats/table remain separate from TerrainMod map editing. Only explicit parent model.save writes Terrain HDF. Static source wiring only; no build or UI acceptance is claimed."
       },
       {
         "id": "usgs-terrain-import",
@@ -304,8 +318,31 @@
         "writeBoundary": "Changing mode updates the parent ModelDraft only and does not rewrite start/end. EditorWorkbench groups actual mode/start/end changes into planTimeWindowEdits on the parent model.save transaction. PlanSettings mounts the PropertyItem; NewPlanControl mounts the standalone PlanTimeWindowModePicker, matching the source C# composition. Result Plan fields remain read-only. Current React displays schema choices/current value but does not reproduce the source property header dynamic icon."
       },
       {
+        "id": "geometry-vector-shapefile-import",
+        "mount": "GeometryEditor toolbar → “导入线 / 面” → ArcImportDialog → DropTarget / ImportingPreviewList; GeometryEditor → useGeometryWorkbench.inspectVectorImport / applyVectorImport",
+        "source": [
+          "frontend/src/features/geometry/GeometryEditor.tsx",
+          "frontend/src/features/geometry/ArcImportDialog.tsx",
+          "frontend/src/features/geometry/useGeometryWorkbench.ts",
+          "frontend/src/features/geometry/geometryArcImport.css",
+          "frontend/src/features/geometry/vectorImportTypes.ts",
+          "frontend/src/features/geometry/ImportingPreviewList.tsx",
+          "frontend/src/features/geometry/geometryTypes.ts",
+          "frontend/src/features/tools/vector-import/DropTarget.tsx",
+          "frontend/src/shared/workbench.ts",
+          "backend/Host/GeometryVectorImportService.cs",
+          "backend/Host/GeometryTopologyContracts.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "GeometryEditor supplies the active model, topology snapshot/capture and inspect/apply callbacks from useGeometryWorkbench. ArcImportDialog keeps local browser/server path input, upload receipt, inspected source selection, Merge/NoMerge, MergeContiguousArcs and RemoveExternalArcs options plus request generation. The parent workbench owns topology revision, draftState, draftIdentity, undo and dirty state; responses are accepted only for that still-current capture and exact source family.",
+        "readActions": [
+          "geometry.vectorImport.inspect"
+        ],
+        "writeBoundary": "Browser File/FileList selection uses the existing uploadMapSources flow to copy complete Shapefile families into project sources; that upload receipt proves file copying only. Alternatively, users can enter server-visible absolute paths. geometry.vectorImport.inspect captures model/revision/draftState/draftIdentity/paths and Host returns its actual source/family/feature/issue receipt. geometry.vectorImport.apply rereads the selected source families, applies Merge/NoMerge plus MergeContiguousArcs/RemoveExternalArcs and returns a new GeometryTopologySnapshot that enters the same parent topology draft/undo/dirty flow. The Host/UI do not provide a layer attributes or metadata-priority option. Neither upload nor apply writes Geometry HDF; only the parent Geometry page Save persists the draft. This is not map-layer import. Static source wiring only; no batch-9 build or GUI acceptance is claimed."
+      },
+      {
         "id": "geometry-topology-specialized-controls",
-        "mount": "GeometryEditor → GeometryTopologySummaryPage / GeometryTopologyArcsPage / GeometryTopologyRegionsPage / GeometryTopologyNodesPage → type-specific topology editors",
+        "mount": "GeometryEditor → GeometryTopologySummaryPage / GeometryTopologyArcsPage / GeometryTopologyRegionsPage / GeometryTopologyNodesPage → type-specific topology editors; GeometryEditor callbacks → GeometryTopologyTablePage → ConceptualMeshTopologyRegionsEditor → TopologyRecipeBuilder → RecipeBuilder",
         "source": [
           "frontend/src/features/geometry/GeometryEditor.tsx",
           "frontend/src/features/geometry/useGeometryWorkbench.ts",
@@ -340,9 +377,18 @@
           "frontend/src/features/geometry/TopologyProperties.tsx",
           "frontend/src/features/geometry/TopologyStatus.tsx",
           "backend/Host/ModelEditorAdapter.cs",
-          "backend/Host/BackendWorker.cs"
+          "backend/Host/BackendWorker.cs",
+          "frontend/src/features/geometry/GeometryTopologyTablePage.tsx",
+          "frontend/src/features/geometry/RecipeBuilder.tsx",
+          "frontend/src/features/geometry/RecipeStepCard.tsx",
+          "frontend/src/features/geometry/RecipeStepParameterBase.tsx",
+          "frontend/src/features/geometry/RecipeStepParameterBoolean.tsx",
+          "frontend/src/features/geometry/RecipeStepParameterDouble.tsx",
+          "frontend/src/features/geometry/RecipeStepParameterInteger.tsx",
+          "frontend/src/features/geometry/RecipeStepParameterNone.tsx",
+          "frontend/src/features/geometry/IngredientCard.tsx"
         ],
-        "stateOwner": "The Geometry workbench owns the captured model/topology revision, server draftState, undo history and stable row/FID identities. The selected arc/region/node rows are shared with their mounted detail, quick-edit, error and recipe controls.",
+        "stateOwner": "The Geometry workbench owns the captured model/topology revision, server draftState, undo history and stable row/FID identities. Selected arc/region/node rows are shared with mounted detail and quick-edit controls. The recipe builder is mounted only for selected conceptual-mesh region rows and uses their control-point FIDs; its text/step editing state and inspect/apply request generation are local to that control while identity and draft ownership remain with the parent workbench.",
         "readActions": [
           "model.load",
           "topology.load",
@@ -351,7 +397,7 @@
           "topology.recipe",
           "topology.filter"
         ],
-        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations; Recipe application is tied to the inspected revision and draft identity. Tag create/set/remove uses selected source FIDs and the existing topology undo/save lifecycle. topology.filter validates owner, revision, draftState, feature kind and returned FIDs, then maps matches back to source rows for selection without changing the draft; only arcs and regions are filterable. The overview apply-factor control edits global arc/control-point size-related fields through the same draft; its arc-point count factor is inverse and keeps at least one point. Cross-page selection scope is unavailable. Node coordinates remain read-only; parent model.save commits the Geometry HDF. The Geometry workbench save sends fields: {} rather than replaying read-only catalog-summary fields; the Host stages from the original HDF and applies only the captured child draft states, retaining parent metadata without turning summary echoes into field writes. A successful save receipt is adopted through onContextCommit(source, committed), so its own dirty state does not intercept the confirmed revision as a navigation request; the new owner reloads clean snapshots and retires old undo/redo history."
+        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations. Recipe inspect calls topology.recipe with the captured model/revision/draftState/controlPointFIDs and optional recipe text; response revision, draftIdentity, FIDs, schema, steps and diagnostics are checked against the active owner. Apply uses topology.edit applyRecipe for the captured control-point FIDs; returned topology snapshot enters the parent draft and existing undo/redo lifecycle, and only parent model.save writes Geometry HDF. Recipe controls expose source-supported ingredient/parameter editors; unknown parameter types remain read-only because Host schema supplies no parameter description. Tag create/set/remove uses selected source FIDs; topology.filter validates owner/revision/draft/FIDs and changes selection only. The overview apply-factor control edits supported all-topology arc/control-point size fields in the same draft; cross-page selected scope is unavailable and node coordinates remain read-only. Geometry save sends fields: {} rather than replaying read-only catalog-summary fields, so Host applies only captured child drafts while preserving parent metadata. These facts are static source wiring; no recipe runtime acceptance is claimed."
       },
       {
         "id": "terrain-levee-composition",
@@ -568,10 +614,11 @@
       },
       {
         "id": "vector-shapefile-create-import",
-        "mount": "ToolsPageView → tools-tab-sources → SourceManagerControl → VectorImporterDialog → NewShapefileDialog / ShapefileAttributeTableViewer",
+        "mount": "ToolsPageView → tools-tab-sources → SourceManagerControl → VectorImporter → VectorImporterDialog → NewShapefileDialog / ShapefileAttributeTableViewer",
         "source": [
           "frontend/src/features/tools/SourceManagerControl.tsx",
           "frontend/src/features/tools/vector-import/VectorImporter.tsx",
+          "frontend/src/features/tools/vector-import/VectorImporterDialog.tsx",
           "frontend/src/features/tools/vector-import/NewShapefileDialog.tsx",
           "frontend/src/features/tools/vector-import/ShapefileAttributeTableViewer.tsx",
           "frontend/src/features/tools/vector-import/vectorImportTypes.ts",
@@ -643,26 +690,28 @@
       },
       {
         "id": "plan-compute-feedback",
-        "mount": "ComputeProofPage → PlanComputeControl → ProgressBarControl / ProgressBackground / ErrorWarningInfoIcon / TimeDifference; ComputeProofPage → RealTimeMonitor → LiveMessageList → MessageControl",
+        "mount": "ComputeProofPage → ComputeButton → PauseContinueStop; ComputeProofPage → PlanComputeControl / RealTimeMonitor; ComputeProofPage → OperationResultControl → MessageListControl",
         "source": [
           "frontend/src/features/compute/ComputeProofPage.tsx",
+          "frontend/src/features/compute/ComputeButton.tsx",
+          "frontend/src/features/compute/PauseContinueStop.tsx",
           "frontend/src/features/compute/PlanComputeControl.tsx",
           "frontend/src/features/compute/RealTimeMonitor.tsx",
+          "frontend/src/features/compute/OperationResultControl.tsx",
+          "frontend/src/features/compute/MessageListControl.tsx",
+          "frontend/src/features/compute/ComputeSummaryControl.tsx",
+          "frontend/src/features/compute/computeTypes.ts",
           "frontend/src/controls/ProgressBarControl.tsx",
-          "frontend/src/controls/ProgressBackground.tsx",
-          "frontend/src/controls/ErrorWarningInfoIcon.tsx",
           "frontend/src/controls/TimeDifference.tsx",
           "frontend/src/controls/LiveMessageList.tsx",
           "frontend/src/controls/MessageControl.tsx",
-          "frontend/src/controls/EmptySelectionOverlay.tsx",
-          "frontend/src/features/compute/compute.css",
           "backend/Host/BackendWorker.cs"
         ],
-        "stateOwner": "ComputeProofPage remains the owner of inspected model identity, operation state, cancellation, progress samples and terminal receipt. Feedback controls render that existing run state and real progress/message samples; they introduce no separate compute session.",
+        "stateOwner": "ComputeProofPage owns the inspected model identity, one run generation, transport/cancellation state, progress samples, streamed planMessages and terminal result. Streamed messages are accepted only for the active generation and RunId, merged by source message index, and reset on a new run or project/plan identity change. OperationResultControl prefers actual terminal result.messages when present; otherwise it shows the accepted streamed messages. All feedback remains in the current page/run state, with no separate persisted job/message store.",
         "readActions": [
           "plan.compute.inspect"
         ],
-        "writeBoundary": "plan.compute.execute remains the compute action and keeps the existing cancellation/terminal-receipt behavior. The feedback controls display actual sample message/sequence/timestamp and raw progress diagnostics; the linear remaining-time display is an estimate, not a solver completion promise. The list is time-window filtered and capped at the latest 200 samples with an omitted count. No pause/resume operation is introduced."
+        "writeBoundary": "plan.compute.inspect/execute remain the only inspect and execution operations. ComputeButton mounts PauseContinueStop: Stop uses the existing cooperative cancellation and waits for server terminal confirmation; Pause and Continue are visibly disabled because the current Host exposes no such operations. PlanComputeControl/RealTimeMonitor continue to show actual progress samples; remaining time is explicitly a linear estimate, and the progress-message list is capped to its latest 200 samples with an omitted count. OperationResultControl/MessageListControl show Host message severity, code, evaluated text, log data/target and repeat count; terminal result messages take priority. Raw terminal JSON remains in ComputeSummaryControl. No JobHub feed exists in this web client, so JobHubSummaryButton is not mounted; the source progress dialogs are not represented as solver controls, and chat remains deferred. These are source-wiring facts, not a claim of runtime acceptance."
       },
       {
         "id": "project-model-association-transaction",
@@ -706,7 +755,7 @@
       },
       {
         "id": "schema-description-and-embedded-images",
-        "mount": "EditorWorkbench model page → SchemaPage → SchemaFieldRenderer → DescriptionGroupControl / MetaDataPropertiesRepeater / EmbededImageGallery → EmbededImageControl",
+        "mount": "EditorWorkbench model page → SchemaPage → SchemaFieldRenderer → Labeled / TriStateTogglePropertyItem / DescriptionGroupControl / MetaDataPropertiesRepeater / CollapsibleContainer → ControlHeader / EmbededImageGallery → EmbededImageControl",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
           "frontend/src/features/editors/SchemaFieldRenderer.tsx",
@@ -718,13 +767,18 @@
           "backend/Host/ModelEditorAdapter.cs",
           "frontend/src/features/editors/PlanSettingsPage.tsx",
           "frontend/src/features/editors/BoundaryConditionsSummary.tsx",
-          "frontend/src/features/editors/TerrainLayersEditor.tsx"
+          "frontend/src/features/editors/TerrainLayersEditor.tsx",
+          "frontend/src/controls/Labeled.tsx",
+          "frontend/src/controls/TriStateTogglePropertyItem.tsx",
+          "frontend/src/controls/CollapsibleContainer.tsx",
+          "frontend/src/controls/ControlHeader.tsx",
+          "frontend/src/controls/TriStateToggleSlider.tsx"
         ],
-        "stateOwner": "SchemaFieldRenderer groups a description field with an images field only when both occur in the same schema group. Description values use the normal field key; image collections use the scoped image field key in ModelSnapshot/ModelDraft and update via onImagesChange. Gallery preview/upload/removal state is local to the field; image bytes and IDs remain in the model draft.",
+        "stateOwner": "SchemaFieldRenderer binds labels, help/condition hints, disabled state, source field IDs and scoped ModelSnapshot/ModelDraft values. TriStateTogglePropertyItem is shown as indeterminate only when runtime schema supplies a non-empty mixedBy key and that same-scope diagnostic value exists in snapshot/draft; the diagnostic marker is read-only and is not itself edited. Schema groups control local disclosure state. Description and embedded image fields are grouped only when both are in the same schema group; image bytes/IDs remain in the model draft.",
         "readActions": [
           "model.load"
         ],
-        "writeBoundary": "The gallery accepts signature-checked raster PNG/JPEG/GIF/WebP/BMP/AVIF payloads, rejects SVG, limits each new image to 2 MiB and the merged model image collection to 3 MiB, and permits preview/removal of existing over-budget content. Image changes remain in ModelDraft and are written only by model.save; the Host accepts image collections only for schema-declared image keys and replaces embedded images through the model adapter. There is no separate image-save operation."
+        "writeBoundary": "Labeled and CollapsibleContainer/ControlHeader add presentation only. A tri-state interaction writes true/false only to the original scoped field key via the existing field setter; it does not write the mixedBy marker. Description/image handling remains on its existing model.save path with Host schema-declared image keys, raster MIME signature checks, per-image 2 MiB and aggregate 3 MiB new-image limits, and no independent image save. Source-level contract only; no batch-9 build or runtime acceptance is claimed."
       },
       {
         "id": "result-time-window-controls",
@@ -940,6 +994,33 @@
         "writeBoundary": "map.views.commit creates, renames, deletes, resets extent or updates a shortcut in the saved .vis Views collection using its captured view SHA and visualization revision. MapViewsPanel reports its pending commit state to MapFeaturePage. While a view commit is in flight, the parent disables map-tab switching, new-map creation, refresh/import and guarded entry handlers, preventing a same-project map switch from invalidating the panel generation and dropping a completed receipt. Project-session changes still invalidate the old owner/state. After commit, the parent accepts a receipt only for the same project and active map and previous visualizationRevision, then advances map revisions, invalidates old raster symbology/legend/tree selection captures and reloads map data. Navigating to a saved extent fits the same canvas viewport; it does not open another map/window. This is source-level wiring only; it does not claim runtime acceptance."
       },
       {
+        "id": "map-vector-symbology-renderer",
+        "mount": "MapFeaturePage → useMapVectorRendering → map.vector.symbology.inspect / map.vector.plot.render → RasProjectMap vectorFrames; map inspector → VectorLayerStyleEditor",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/usePersistedVectorLayers.ts",
+          "frontend/src/features/map/usePersistedGdbLayers.ts",
+          "frontend/src/features/map/useMapVectorRendering.ts",
+          "frontend/src/features/map/RasProjectMap.tsx",
+          "frontend/src/features/map/mapImages.ts",
+          "frontend/src/features/map/vector-render/VectorLayerStyleEditor.tsx",
+          "frontend/src/features/map/vector-render/vectorRenderWorkflow.ts",
+          "frontend/src/features/map/vector-render/vectorRenderTypes.ts",
+          "backend/Host/BackendWorker.cs",
+          "backend/Host/MapTreeService.VectorSymbology.cs",
+          "backend/Host/MapVectorSymbologyContracts.cs",
+          "backend/Host/MapVectorPlotRenderingService.cs",
+          "backend/Host/MapVectorPlotRenderingContracts.cs"
+        ],
+        "stateOwner": "The renderer consumes saved vector and GDB layers captured for the active project session, project path/XML/revision, map ID/index/name/type and .vis visualizationRevision, exact tree locator/layer ID, source path/family/revision, and current viewport. useMapVectorRendering owns inspect/render generations and accepted frames. VectorLayerStyleEditor owns the selected layer base-style and PlotOptions drafts; MapFeaturePage owns the one temporary preview and the global-settings epoch.",
+        "readActions": [
+          "map.vector.symbology.inspect",
+          "global.symbology.inspect",
+          "map.vector.plot.render"
+        ],
+        "writeBoundary": "The Host inspects the exact saved layer and renders supported styles through map.vector.plot.render. A temporary Apply-to-view draft sends styles and runtime PlotOptions through the same render path; PlotOptions are never persisted to .vis. map.vector.symbology.save writes only sparse Base style values to the owning .vis node after validating sourceRevision, style SHA and global revision, preserves existing condition and unknown XML content, and re-inspects the result. MapFeaturePage adopts only the matching project/map/previous visualizationRevision receipt, advances map-document revisions, clears old captures/previews and rerenders while retaining the camera. Global defaults are used only when the style explicitly has isProjectOverride=false and the request supplies the expected global revision; saving settings increments the global epoch to re-inspect/re-render, deferring that refresh while the selected layer has a dirty draft. Known conditional rules are applied only when the Host can bind them to verified GeoJSON source feature IDs; unsupported source families, mismatched IDs/conditions, or unknown symbology XML produce a warning and keep geometry preview while styled rendering and temporary style preview are disabled. The map canvas overlays the accepted renderer image with source geometry hit targets and renderer labels; rgba8-premultiplied pixels are un-premultiplied before ImageData conversion. This records source wiring only; no build or runtime acceptance is claimed."
+      },
+      {
         "id": "map-global-vector-symbology-settings",
         "mount": "MapFeaturePage → map inspector → GlobalSymbologyEditorPage (collapsed Global vector style defaults section)",
         "source": [
@@ -957,7 +1038,44 @@
         "readActions": [
           "global.symbology.inspect"
         ],
-        "writeBoundary": "global.symbology.save submits the complete current style-definition set with expectedRevision; Host validates IDs/values and atomically persists sparse custom vector defaults to the user settings XML, rejecting stale revisions. A renderer uses these defaults only when its request explicitly opts into global fallback (isProjectOverride=false); legacy requests preserve project-style behavior. The current React SVG map canvas does not consume these settings, so saving them does not change its visible symbols. Source wiring only; no build or runtime acceptance is claimed."
+        "writeBoundary": "global.symbology.save submits the complete current style-definition set with expectedRevision; Host validates IDs/values and atomically persists sparse custom vector defaults to the user settings XML, rejecting stale revisions. The C# map renderer uses these defaults only when a layer style explicitly opts into global fallback (isProjectOverride=false) and the request matches the expected global revision; provenance is not guessed. On a confirmed settings save, MapFeaturePage advances a settings epoch so clean layer state is reinspected and rerendered; a dirty layer draft defers its own refresh until resolved. The renderer is now connected to the main map for supported persisted vector/GDB layers, while unsupported conditions or unknown project XML remain on the geometry-preview path. Source wiring only; no build or runtime acceptance is claimed."
+      },
+      {
+        "id": "generic-data-grid-sort-filter",
+        "mount": "ModelDataTable → DataGrid → GenericEnumFilterControl; SourceManagerControl → AttributeTableEditorControl → AttributeTableDataGrid → DataGrid → GenericEnumFilterControl",
+        "source": [
+          "frontend/src/controls/DataGrid.tsx",
+          "frontend/src/controls/GenericEnumFilterControl.tsx",
+          "frontend/src/features/editors/ModelDataTable.tsx",
+          "frontend/src/features/tools/attributes/AttributeTableEditorControl.tsx",
+          "frontend/src/features/tools/attributes/AttributeTableDataGrid.tsx",
+          "frontend/src/features/tools/attributes/attributeTableTypes.ts",
+          "backend/Host/AttributeTableService.cs"
+        ],
+        "stateOwner": "DataGrid owns only the current view search, selected discrete-value filter, sort and page index; it derives a filtered/sorted indexed row sequence without mutating source rows. Stable row.id and column.id remain the source identities, and row ordinals refer to original source order. ModelDataTable edits continue to be owned by the parent ModelDraft. AttributeTableDataGrid owns cell drafts keyed by [rowId,columnId] and a selected column; the attribute source capture remains owned by the existing SourceManager workflow.",
+        "readActions": [],
+        "writeBoundary": "GenericEnumFilterControl filters discrete values from the selected data column; it does not claim schema enum metadata. When more than 80 distinct values are present, the option list is hidden and text search remains available; data rows are not truncated by this limit. Sorting/filtering only changes the visible indexed sequence. ModelDataTable calls the existing onCellChange(tableID,rowID,columnID,rawString) path, retaining empty/intermediate/invalid numeric text for the parent draft and preserving existing row selectors. AttributeTableDataGrid keeps null distinct from strings and applies edits through the existing attributeTable.transform in-memory preview; no Shapefile write-back was added. This does not implement all C# DataGrid features (including paste, multi-cell selection, drag column resizing and row/column edit menus), nor TableOrList/ListDetail preference/detail surfaces. Source-level wiring only; no build or runtime acceptance is claimed."
+      },
+      {
+        "id": "project-settings-and-example-catalog",
+        "mount": "ProjectExplorerControl → ProjectExplorerMainPageTiled → ProjectExplorerSettingsPage; ProjectExplorerMainPageTiled → ExampleAndSyntheticDatasetsPage → SearchBarWithResultsPopup → SearchResultsControl / ExampleProjectSummaryPage",
+        "source": [
+          "frontend/src/interface/RasMainWindow.tsx",
+          "frontend/src/features/project/ProjectExplorerControl.tsx",
+          "frontend/src/features/project/ProjectExplorerMainPageTiled.tsx",
+          "frontend/src/features/project/ProjectExplorerSettingsPage.tsx",
+          "frontend/src/features/project/ExampleAndSyntheticDatasetsPage.tsx",
+          "frontend/src/features/project/SearchBarWithResultsPopup.tsx",
+          "frontend/src/features/project/SearchResultsControl.tsx",
+          "frontend/src/features/project/ExampleProjectSummaryPage.tsx",
+          "backend/Host/ProjectLibraryService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "RasMainWindow owns themeMode and stores version-1 Light/Dark/System preference in localStorage under hecras.theme.preference.v1; System follows matchMedia and removes its listener on cleanup. ProjectExplorerControl owns the existing recent-project list and clear callback. ExampleAndSyntheticDatasetsPage owns the current Host catalog, query, selected example, destination directory and open request generation; SearchBarWithResultsPopup/SearchResultsControl only filter and navigate that current catalog, and ExampleProjectSummaryPage presents the selected catalog item.",
+        "readActions": [
+          "projectLibrary.catalog"
+        ],
+        "writeBoundary": "Settings change only the application theme preference or clear the current app recent-project list; neither writes project files. The example catalog request uses debugMode=false and the UI retains only kind=example entries. Search is local over returned title/description/tags, with keyboard navigation. Opening an example uses projectLibrary.open with a user-entered Host absolute destination, then project.open and the existing parent context acceptance path. No default Host directory, credentials, filesystem enumeration or generic server search is available through this UI contract; the existing ProjectOpenProjectDialog upload/path workflow remains separate. Source wiring only; no build or GUI acceptance is claimed."
       }
     ],
     "stateInvariants": [

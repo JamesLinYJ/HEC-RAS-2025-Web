@@ -12,6 +12,7 @@ import { DetailedTerrainHeader } from './DetailedTerrainHeader';
 import { DetailedTerrainInputHeader } from './DetailedTerrainInputHeader';
 import { TerrainAddControl } from './TerrainAddControl';
 import { LeveeModTerrainInputEditor } from './LeveeModTerrainInputEditor';
+import { TerrainPolygonMapEditor } from './TerrainPolygonMapEditor';
 
 const selectedInputField = 'TerrainLayersEditor/SelectedInputWithMap';
 const channelFeatureTableID = 'ChannelModEditor/Features';
@@ -59,6 +60,7 @@ export function TerrainLayersEditor(props: EditorPageProps) {
     : [];
   const tableByID = terrain?.tables ?? {};
   const channelSchemaSelected = selected.schema === 'ChannelModTerrainInputProperties';
+  const polygonRasterModSelected = selected.type === 'PolygonRasterModTerrainInput' || selected.type.endsWith('.PolygonRasterModTerrainInput');
   const hasLeveeTables = selectedInputIsLoaded && (tableByID[leveeFeatureTableID] !== undefined || tableByID[leveePropertyTableID] !== undefined);
   const transform = props.onTerrainTransform;
 
@@ -91,6 +93,19 @@ export function TerrainLayersEditor(props: EditorPageProps) {
           </article>
 
           {hasLeveeTables && <LeveeModTerrainInputEditor {...projectedProps} selected={selected} />}
+
+          {polygonRasterModSelected && selectedInputIsLoaded && <TerrainPolygonMapEditor
+            key={`${selected.id}:${snapshot.revision}`}
+            backend={props.backend}
+            owner={props.terrainMapOwner}
+            terrainPath={props.asset.path}
+            inputId={selected.id}
+            inputName={draft.fields[selectedInputNameField] ?? selected.name}
+            inputIndex={selected.sourceVectorIndex}
+            sourceRevision={snapshot.revision}
+            canEdit={snapshot.canEdit && props.canEditTerrainTopology === true}
+            onRun={props.onTerrainTopology}
+          />}
 
           {tables.map(([tableID, table]) => {
             if (channelSchemaSelected && [channelFeatureTableID, channelProfileTableID, channelTerrainProfileTableID].includes(tableID)) return null;

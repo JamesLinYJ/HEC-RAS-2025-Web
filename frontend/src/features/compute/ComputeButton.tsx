@@ -1,4 +1,5 @@
 import type { Language } from '../../shared/workbench';
+import { PauseContinueStop } from './PauseContinueStop';
 
 export type ComputeRunState = 'idle' | 'running' | 'cancelling' | 'completed' | 'cancelled' | 'failed' | 'terminated' | 'unverified' | 'unconfirmed';
 
@@ -32,7 +33,7 @@ export function ComputeButton({ language, state, canRun, onRun, onCancel }: Comp
         <span className="button-symbol">{busy ? <span className="spinner" /> : <span className="play-triangle">▶</span>}</span>
         {busy ? t.starting : t.start}
       </button>
-      {busy && <button className="cancel-button" data-testid="compute-cancel" data-compute-action="cancel" onClick={onCancel}>{t.cancel}</button>}
+      {busy && <PauseContinueStop language={language} state={state} onStop={onCancel} />}
       <span className={`status status-${state}`} role="status" data-testid="compute-status">
         <span className="status-dot" />{t[state]}
       </span>

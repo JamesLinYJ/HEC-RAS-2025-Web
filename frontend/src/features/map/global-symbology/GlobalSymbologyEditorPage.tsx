@@ -24,13 +24,14 @@ export interface GlobalSymbologyEditorPageProps {
   backend: BackendGateway;
   language: Language;
   backendRevision?: number;
+  onSaved?: (revision: string) => void;
   onDirtyStateChange?: (owner: string, dirty: boolean) => void;
 }
 
 type Phase = 'loading' | 'ready' | 'failed';
 
-/** Edits the user's persisted defaults; the current SVG map canvas does not consume these styles yet. */
-export function GlobalSymbologyEditorPage({ backend, language, backendRevision, onDirtyStateChange }: GlobalSymbologyEditorPageProps) {
+/** Edits persisted defaults consumed by the map renderer for layers using global fallback. */
+export function GlobalSymbologyEditorPage({ backend, language, backendRevision, onDirtyStateChange, onSaved }: GlobalSymbologyEditorPageProps) {
   const zh = language === 'zh';
   const [phase, setPhase] = useState<Phase>('loading');
   const [busy, setBusy] = useState(false);
@@ -149,8 +150,9 @@ export function GlobalSymbologyEditorPage({ backend, language, backendRevision, 
       setGroups(saved.groups);
       setPhase('ready');
       setStatus(zh ? '已保存全局样式，配置以用户设置文件持久化。' : 'Global styles saved to the user settings file.');
+      onSaved?.(saved.revision);
     });
-  }, [dirty, groups, perform, snapshot, zh]);
+  }, [dirty, groups, perform, snapshot, zh, onSaved]);
 
   const resetAll = useCallback(() => {
     setGroups(current => resetGlobalSymbology(current));
@@ -200,8 +202,8 @@ export function GlobalSymbologyEditorPage({ backend, language, backendRevision, 
 
       <p className="global-symbology-limitation" role="note">
         {zh
-          ? '当前 Web 地图主画布仍使用其现有 SVG 符号；全局默认值目前由明确请求全局 fallback 的 C# 矢量绘图路径读取。'
-          : 'The current Web map canvas still uses its existing SVG symbols. Global defaults are currently read only by the C# vector renderer when a request explicitly selects global fallback.'}
+          ? '主地图中使用全局默认的图层会重新绘制；工程内已显式设置的样式保持各自配置。'
+          : 'Map layers using global defaults are redrawn. Explicit project styles keep their own settings.'}
       </p>
 
       {busy && <p className="global-symbology-loading" role="status">{requestLabel || (zh ? '处理中…' : 'Working…')}</p>}

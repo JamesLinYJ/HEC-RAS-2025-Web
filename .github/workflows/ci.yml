@@ -26,6 +26,7 @@ jobs:
       - run: npm run build:web
       - run: npm run test:gateway
       - run: npm run test:editors
+      - run: npm run test:recipes
       - run: node scripts/verify-map-result-hover.mjs
       - run: node scripts/verify-map-result-labels.mjs
 

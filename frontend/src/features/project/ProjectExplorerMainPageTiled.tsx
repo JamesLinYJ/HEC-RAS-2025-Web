@@ -1,13 +1,16 @@
 import { useState } from 'react';
-import type { BackendGateway, Language, WorkbenchContext } from '../../shared/workbench';
+import type { BackendGateway, Language, ThemeMode, WorkbenchContext } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
 import type { RecentProjectRecord, SelectedProjectFile } from './ProjectTypes';
 import { FirstLaunchScreen } from './FirstLaunchScreen';
 import { RecentProjectsList } from './RecentProjectsList';
 import { ExampleAndSyntheticDatasetsPage } from './ExampleAndSyntheticDatasetsPage';
+import { ProjectExplorerSettingsPage } from './ProjectExplorerSettingsPage';
 
 interface ProjectExplorerMainPageTiledProps {
   language: Language;
+  themeMode?: ThemeMode;
+  onThemeModeChange?: (mode: ThemeMode) => void;
   backend: BackendGateway;
   context: WorkbenchContext;
   backendRevision?: number;
@@ -36,6 +39,8 @@ function formatSize(bytes: number, language: Language): string {
 
 export function ProjectExplorerMainPageTiled({
   language,
+  themeMode = 'system',
+  onThemeModeChange,
   backend,
   context,
   backendRevision,
@@ -55,6 +60,18 @@ export function ProjectExplorerMainPageTiled({
   onCreateModel,
 }: ProjectExplorerMainPageTiledProps) {
   const [showProjectLibrary, setShowProjectLibrary] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  if (showSettings) {
+    return <ProjectExplorerSettingsPage
+      language={language}
+      themeMode={themeMode}
+      onThemeModeChange={onThemeModeChange}
+      recentProjectCount={recents.length}
+      onClearRecentProjects={onClearRecents}
+      busy={busy || importBusy}
+      onClose={() => setShowSettings(false)}
+    />;
+  }
   if (showProjectLibrary) {
     return <ExampleAndSyntheticDatasetsPage
       language={language}
@@ -85,6 +102,7 @@ export function ProjectExplorerMainPageTiled({
             <p>{currentProject ? text(language, '由 C# 工程模型从服务器路径实际打开', 'Opened by C# Project from the server path') : text(language, '工程路径来自当前工作台会话', 'Project path from the current workbench session')}</p>
           </div>
           <div className="project-summary-actions">
+            <button type="button" className="project-button project-button-secondary" onClick={() => setShowSettings(true)}>{text(language, '设置', 'Settings')}</button>
             {backend.supports('projectLibrary.catalog') && <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy} onClick={() => setShowProjectLibrary(true)}>{text(language, '示例工程', 'Examples')}</button>}
             {onCreateModel && <div className="project-summary-model-actions" aria-label={text(language, '创建工程模型', 'Create project models')}>
               <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy || Boolean(modelCreationDisabledReason)} title={modelCreationDisabledReason} onClick={() => onCreateModel('newGeometry')}>{text(language, '新建几何', 'New geometry')}</button>
@@ -115,6 +133,7 @@ export function ProjectExplorerMainPageTiled({
 
   return (
     <section className="project-explorer-home">
+      <div className="project-explorer-home-settings"><button type="button" className="project-button project-button-secondary" onClick={() => setShowSettings(true)}>{text(language, '设置', 'Settings')}</button></div>
       <FirstLaunchScreen
         language={language}
         busy={busy || importBusy}

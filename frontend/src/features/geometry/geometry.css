@@ -153,3 +153,28 @@
 @keyframes geometry-spin { to { transform: rotate(360deg); } }
 @media (max-width: 1050px) { .geometry-summary-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .geometry-page { padding: 14px 14px 26px; }.geometry-header { flex-direction: column; }.geometry-header-actions { justify-content: flex-start; }.geometry-grid.two, .geometry-grid.three, .geometry-kv-grid, .geometry-detail-fields, .geometry-recipe-parameters { grid-template-columns: 1fr; }.geometry-summary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }.geometry-kv { grid-template-columns: 110px minmax(0,1fr); }.geometry-recipe-step > header { align-items: flex-start; flex-direction: column; }.geometry-arc-tag { grid-template-columns: 1fr; }.geometry-arc-points-dialog { padding: 0; } }
+
+.geometry-recipe-layout { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 1.25fr); gap: 12px; padding: 12px 15px; }
+.geometry-recipe-catalog, .geometry-recipe-stage { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.geometry-recipe-catalog > header, .geometry-recipe-stage > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--geo-text); font-size: 11px; }
+.geometry-recipe-catalog > header > span, .geometry-recipe-stage > header > span { color: var(--geo-muted); font-size: 10px; }
+.geometry-recipe-ingredient-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid var(--geo-line); border-radius: 8px; background: rgba(7, 26, 38, .72); }
+.geometry-recipe-ingredient-copy { display: grid; gap: 3px; min-width: 0; color: var(--geo-muted); font-size: 10px; }
+.geometry-recipe-ingredient-copy strong { color: var(--geo-text); font-size: 11px; }
+.geometry-recipe-ingredient-copy > span { color: var(--geo-accent); font: 10px 'DM Mono', ui-monospace, monospace; }
+.geometry-recipe-ingredient-copy small { overflow-wrap: anywhere; }
+.geometry-recipe-step-select { display: grid; gap: 3px; justify-items: start; padding: 0; color: inherit; background: transparent; border: 0; text-align: left; cursor: pointer; }
+.geometry-recipe-step-select > small { color: var(--geo-muted); font: 10px 'DM Mono', ui-monospace, monospace; }
+.geometry-recipe-help { display: inline-flex; align-items: center; text-decoration: none; }
+.geometry-recipe-step.is-selected { border-color: rgba(97, 206, 194, .62); box-shadow: inset 3px 0 0 var(--geo-accent); }
+.geometry-recipe-step > header { align-items: flex-start; }
+.geometry-recipe-parameter > span { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.geometry-recipe-parameter > span > small { color: var(--geo-muted); font: 9px 'DM Mono', ui-monospace, monospace; }
+.geometry-recipe-parameter-description { color: var(--geo-muted); font-size: 10px; }
+.geometry-recipe-parameter-none { padding: 8px 10px; }
+.geometry-recipe-source { align-items: center; flex-wrap: wrap; }
+.geometry-recipe-source > span { color: var(--geo-muted); font-size: 10px; }
+.geometry-recipe-source > details { flex-basis: 100%; color: var(--geo-muted); font-size: 10px; }
+.geometry-recipe-source > details > summary { cursor: pointer; }
+.geometry-recipe-source > details > code { display: block; overflow-wrap: anywhere; margin-top: 5px; color: var(--geo-text); }
+@media (max-width: 760px) { .geometry-recipe-layout { grid-template-columns: 1fr; } }

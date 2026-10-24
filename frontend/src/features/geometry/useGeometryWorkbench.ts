@@ -3,6 +3,9 @@ import type { AssetReference, FeaturePageProps, WorkbenchContext } from '../../s
 import { BackendOperationUnavailableError } from '../../shared/workbench';
 import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshPatchEditContext, type GeometryMeshPatchMutation, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFactorSelection, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
 import { geometryDiagnosticMessage } from './geometryErrors';
+import { geometryVectorImportCapture, isGeometryVectorImportApplySnapshot, isGeometryVectorImportInspection,
+  isGeometryVectorImportSelectedSource, sameGeometryVectorImportCapture, type GeometryVectorImportCapture,
+  type GeometryVectorImportInspection, type GeometryVectorImportMode, type GeometryVectorImportSelectedSource } from './vectorImportTypes';
 
 interface OwnerValue<T> { owner: string; value: T }
 interface GeometryLocalDraft {
@@ -117,6 +120,12 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
   }
   const generationRef = useRef(0);
   const topologyFilterGenerationRef = useRef<Record<'arc' | 'region', number>>({ arc: 0, region: 0 });
+  const vectorImportGenerationRef = useRef(0);
+  const vectorImportBackendRef = useRef({ backend, revision: backendRevision });
+  if (vectorImportBackendRef.current.backend !== backend || vectorImportBackendRef.current.revision !== backendRevision) {
+    vectorImportBackendRef.current = { backend, revision: backendRevision };
+    vectorImportGenerationRef.current += 1;
+  }
   const previousLoad = useRef<{ identity: string; backend: typeof backend } | null>(null);
 
   const parent = parentEntry?.owner === sourceOwner ? parentEntry.value : undefined;
@@ -280,6 +289,77 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     if (result.revision !== snapshot.revision) throw new Error('The topology response revision does not match the captured source revision.');
     setTopology(result); setError('topology');
     return result;
+  });
+
+  const requireVectorImportCapture = (owner: string, expected: GeometryVectorImportCapture): GeometryTopologySnapshot => {
+    ensureCurrent(owner);
+    const current = topologyRef.current;
+    if (!model || !current || current.owner !== owner) throw new Error('Topology draft is not loaded for this asset.');
+    const snapshot = current.value;
+    const captured = geometryVectorImportCapture(snapshot);
+    if (!captured || !sameGeometryVectorImportCapture(captured, expected)) {
+      throw new DOMException('The vector import belongs to an earlier topology draft.', 'AbortError');
+    }
+    return snapshot;
+  };
+
+  const inspectVectorImport = async (paths: string[], expected: GeometryVectorImportCapture,
+    signal: AbortSignal): Promise<GeometryVectorImportInspection> => {
+    const owner = sourceOwner;
+    if (!model || !supports('geometry.vectorImport.inspect')) throw new BackendOperationUnavailableError('geometry.vectorImport.inspect');
+    if (!paths.length || paths.some((path) => !path.trim()) || new Set(paths).size !== paths.length) {
+      throw new Error('Vector import inspection requires distinct server-visible Shapefile paths.');
+    }
+    requireVectorImportCapture(owner, expected);
+    const requestGeneration = ++vectorImportGenerationRef.current;
+    if (signal.aborted) throw new DOMException('The vector import inspection was canceled.', 'AbortError');
+    const result = await send<unknown>('geometry.vectorImport.inspect', {
+      model, revision: expected.revision, draftState: expected.draftState,
+      draftIdentity: expected.draftIdentity, paths,
+    }, owner, { signal });
+    if (signal.aborted || vectorImportGenerationRef.current !== requestGeneration) {
+      throw new DOMException('The vector import inspection was canceled or superseded.', 'AbortError');
+    }
+    requireVectorImportCapture(owner, expected);
+    if (!isGeometryVectorImportInspection(result, expected, paths)) {
+      throw new Error('The vector import inspection does not match the captured source files and topology draft.');
+    }
+    return result;
+  };
+
+  const applyVectorImport = (sources: GeometryVectorImportSelectedSource[], mode: GeometryVectorImportMode,
+    mergeContiguousArcs: boolean, removeExternalArcs: boolean, expected: GeometryVectorImportCapture,
+    signal: AbortSignal): Promise<GeometryTopologySnapshot> => enqueue(topologyQueue, async () => {
+    const owner = sourceOwner;
+    if (!model || !supports('geometry.vectorImport.apply')) throw new BackendOperationUnavailableError('geometry.vectorImport.apply');
+    const snapshot = requireVectorImportCapture(owner, expected);
+    if (!snapshot.canEdit) throw new Error('The captured geometry does not support topology edits.');
+    if (mode !== 'Merge' && mode !== 'NoMerge') throw new Error('Choose a supported geometry vector import mode.');
+    if (!sources.length || sources.some((source) => !isGeometryVectorImportSelectedSource(source)) ||
+        new Set(sources.map((source) => source.path)).size !== sources.length) {
+      throw new Error('Choose distinct inspected Shapefile families before applying the geometry import.');
+    }
+    const requestGeneration = ++vectorImportGenerationRef.current;
+    try {
+      if (signal.aborted) throw new DOMException('The geometry vector import was canceled.', 'AbortError');
+      const result = await send<unknown>('geometry.vectorImport.apply', {
+        model, revision: expected.revision, draftState: expected.draftState,
+        draftIdentity: expected.draftIdentity, sources, mode, mergeContiguousArcs, removeExternalArcs,
+      }, owner, { signal });
+      if (signal.aborted || vectorImportGenerationRef.current !== requestGeneration) {
+        throw new DOMException('The geometry vector import was canceled or superseded.', 'AbortError');
+      }
+      requireVectorImportCapture(owner, expected);
+      if (!isGeometryVectorImportApplySnapshot(result, expected)) {
+        throw new Error('The geometry import result does not match the captured source revision or produce a new topology draft.');
+      }
+      const adopted = result as GeometryTopologySnapshot;
+      setTopology(adopted); setError('topology');
+      return adopted;
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setError('topology', geometryDiagnosticMessage(error));
+      throw error;
+    }
   });
 
   const loadArcPoints = async (arcFID: number): Promise<GeometryTopologyArcPointsSnapshot> => {
@@ -866,11 +946,14 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     topologyDirty, meshDirty, culvertDirty, localOnly, dirty, revision, dirtyOwner,
     supports, localRows, addLocalRow, onTopologyChange, onTopologyCommand, onTopologyDelete, undoTopology, redoTopology,
     loadArcPoints, loadRecipe, resizeTopology, applyTopologyFactor, editTopologyTag, createTopologyTag, filterTopology, editArcPointCoordinate, applyTopologyRecipe,
+    inspectVectorImport, applyVectorImport, vectorImportCapture: geometryVectorImportCapture(topology),
     onFlowAreaChange, onRegionSelection, applyPatchMutation, prepareMesh, generateMesh, degreeScan, propertyTables, undoMesh, redoMesh,
     onCulvertChange, onCulvertCommand, onCulvertSelection, onCulvertSelectionChange, onCulvertSelectionCommand, onCulvertDelete, addCulvertBarrel, addCulvertPropertySet, undoCulverts,
     resetDrafts, save, wrappedTopologyTable, wrappedCulvertTable, wrappedMeshRegions,
     reload: () => setRefreshToken((value) => value + 1), setError,
     canLoadTopology: supports('topology.load'), canLoadArcPoints: supports('topology.arcPoints'), canLoadRecipe: supports('topology.recipe'), canFilterTopology: supports('topology.filter'),
+    canInspectVectorImport: !!model && !!topology?.canEdit && !!geometryVectorImportCapture(topology) && supports('geometry.vectorImport.inspect'),
+    canApplyVectorImport: !!model && !!topology?.canEdit && !!geometryVectorImportCapture(topology) && supports('geometry.vectorImport.apply'),
     canLoadMesh: supports('geometry.mesh.load'), canLoadCulverts: supports('geometry.culverts.load'),
     canLoadParent: supports('model.load'), canSave: supports('model.save') && !!parent && !!context.projectPath && !!revision && dirty && !localOnly,
     canGenerate: supports('geometry.mesh.generate'), canPrepare: supports('geometry.mesh.edit'), canDegreeScan: supports('geometry.mesh.degreeErrors'), canPropertyTables: supports('geometry.mesh.computePropertyTables'),

@@ -11,10 +11,12 @@ import type { MapVelocityFieldState } from './useMapVelocityField';
 import { ToolTipAnnotation } from './ToolTipAnnotation';
 import type { MapHoverTooltip } from './useMapHoverIdentify';
 import { RasMapMinimap } from './RasMapMinimap';
+import type { MapVectorFrame } from './useMapVectorRendering';
 
 export interface RasProjectMapProps {
   layers: GeoJsonLayer[];
   images?: MapImageLayer[];
+  vectorFrames?: MapVectorFrame[];
   velocityField?: MapVelocityFieldState;
   viewport: MapViewport;
   size: { width: number; height: number };
@@ -62,6 +64,7 @@ function FeatureShape({
   selected,
   showLabel,
   activeTool,
+  rendered,
   onSelect,
   onContext,
 }: {
@@ -72,6 +75,7 @@ function FeatureShape({
   selected: boolean;
   showLabel: boolean;
   activeTool: MapToolID;
+  rendered: boolean;
   onSelect: () => void;
   onContext: (event: ReactMouseEvent<SVGGElement>) => void;
 }) {
@@ -104,10 +108,10 @@ function FeatureShape({
         <path
           key={'path-' + index}
           d={path.d}
-          fill={path.fill ? color + '30' : 'none'}
+          fill={path.fill ? rendered ? 'transparent' : color + '30' : 'none'}
           fillRule="evenodd"
-          stroke={selected ? '#143f68' : color}
-          strokeWidth={selected ? 2.4 : path.fill ? 1.7 : 2}
+          stroke={selected ? '#143f68' : rendered ? 'transparent' : color}
+          strokeWidth={selected ? 2.4 : rendered ? 8 : path.fill ? 1.7 : 2}
           strokeLinejoin="round"
           vectorEffect="non-scaling-stroke"
           className="map-feature-path"
@@ -121,8 +125,8 @@ function FeatureShape({
             cx={x}
             cy={y}
             r={selected ? 5.8 : 4.2}
-            fill="#fff"
-            stroke={selected ? '#143f68' : color}
+            fill={rendered ? 'transparent' : '#fff'}
+            stroke={selected ? '#143f68' : rendered ? 'transparent' : color}
             strokeWidth={selected ? 2.7 : 2}
             vectorEffect="non-scaling-stroke"
             className="map-feature-point"
@@ -169,6 +173,7 @@ function CoordinateGrid({ viewport, size }: { viewport: MapViewport; size: { wid
 export function RasProjectMap({
   layers,
   images = [],
+  vectorFrames = [],
   velocityField,
   viewport,
   size,
@@ -253,8 +258,20 @@ export function RasProjectMap({
             opacity={image.opacity ?? 1} preserveAspectRatio="none" pointerEvents="none"><title>{image.name}</title></image>;
         })}
         {settings.IsMapOverlayVisible && settings.showCoordinateGrid && <CoordinateGrid viewport={viewport} size={size} />}
-        {compatibleLayers.map((layer, layerIndex) => (
+        {compatibleLayers.map((layer, layerIndex) => {
+          const frame = vectorFrames.find(value => value.layerID === layer.id);
+          const origin = frame ? worldToScreen([frame.viewport.minX, frame.viewport.maxY], viewport) : null;
+          return (
           <g key={layer.id} opacity={layer.opacity}>
+            {frame && origin && <image data-testid="map-vector-image" data-layer-id={layer.id}
+              data-source-key={frame.sourceKey} data-source-path={frame.sourcePath}
+              data-source-revision={frame.sourceRevision} data-visualization-revision={frame.visualizationRevision}
+              data-style-revision={frame.styleRevision} data-global-revision={frame.globalRevision}
+              data-pixel-format={frame.pixelFormat} data-source-kind="vector"
+              href={frame.imageSrc} x={origin[0]} y={origin[1]}
+              width={(frame.viewport.maxX - frame.viewport.minX) * viewport.scale}
+              height={(frame.viewport.maxY - frame.viewport.minY) * viewport.scale}
+              preserveAspectRatio="none" pointerEvents="none" />}
             {layer.features.map((feature) => (
               <FeatureShape
                 key={feature.id}
@@ -265,12 +282,20 @@ export function RasProjectMap({
                 selected={selectedFeature?.layerID === layer.id && selectedFeature.featureID === feature.id}
                 showLabel={settings.showSelectionLabels}
                 activeTool={activeTool}
+                rendered={Boolean(frame)}
                 onSelect={() => onFeatureSelect(layer, feature)}
                 onContext={(event) => onFeatureContext(layer, feature, event)}
               />
             ))}
+            {frame?.labels.map((label, index) => {
+              const location = label.polyline.length ? label.polyline[Math.floor(label.polyline.length / 2)]! : label.point;
+              const point = worldToScreen([location.x, location.y], viewport);
+              return <text key={`label:${index}`} className="map-feature-label" data-testid="map-vector-label"
+                x={point[0]} y={point[1]} textAnchor="middle" dominantBaseline="central">{label.text}</text>;
+            })}
           </g>
-        ))}
+          );
+        })}
         {settings.IsMapOverlayVisible && settings.showVelocityArrows && velocityField &&
           (activeCRS === null || activeCRS === 'project') &&
           <MapVelocityArrows vectors={velocityField.vectors} capture={velocityField.capture} viewport={viewport} size={size} language={language} />}

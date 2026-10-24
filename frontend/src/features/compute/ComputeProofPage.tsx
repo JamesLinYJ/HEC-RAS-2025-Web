@@ -5,15 +5,18 @@ import type { ModelSnapshot } from '../editors/model';
 import { ComputeButton, type ComputeRunState } from './ComputeButton';
 import { ComputeSummaryControl } from './ComputeSummaryControl';
 import { PlanComputeControl } from './PlanComputeControl';
+import { OperationResultControl } from './OperationResultControl';
 import { RealTimeMonitor } from './RealTimeMonitor';
 import { ViewComputeResultsControl } from './ViewComputeResultsControl';
 import {
   parseComputeProgress,
   parsePlanComputeExecutionResult,
   parsePlanComputeInspection,
+  parsePlanComputeJobMessageUpdate,
   type ComputeProgressSample,
   type PlanComputeExecutionResult,
   type PlanComputeInspection,
+  type PlanComputeMessage,
 } from './computeTypes';
 import './compute.css';
 
@@ -106,6 +109,7 @@ export function ComputeProofPage({ language, context, backend, backendRevision =
   const [modelSnapshot, setModelSnapshot] = useState<PlanModelSaveRequest>();
   const [runState, setRunState] = useState<ComputeRunState>('idle');
   const [progressSamples, setProgressSamples] = useState<ComputeProgressSample[]>([]);
+  const [streamedMessages, setStreamedMessages] = useState<PlanComputeMessage[]>([]);
   const [latestRawProgress, setLatestRawProgress] = useState<string>();
   const [rawResult, setRawResult] = useState<string>();
   const [parsedResult, setParsedResult] = useState<PlanComputeExecutionResult>();
@@ -149,6 +153,7 @@ export function ComputeProofPage({ language, context, backend, backendRevision =
       setRawResult(undefined);
       setParsedResult(undefined);
       setProgressSamples([]);
+      setStreamedMessages([]);
       setLatestRawProgress(undefined);
       setRunState('idle');
       setCancelNote(undefined);
@@ -247,6 +252,7 @@ export function ComputeProofPage({ language, context, backend, backendRevision =
     runController.current?.abort();
     runController.current = controller;
     setProgressSamples([]);
+    setStreamedMessages([]);
     setLatestRawProgress(undefined);
     setRawResult(undefined);
     setParsedResult(undefined);
@@ -261,6 +267,7 @@ export function ComputeProofPage({ language, context, backend, backendRevision =
     setRunEndedAt(undefined);
     setRunState('running');
     let sequence = 0;
+    let activeMessageRunId: string | undefined;
     let terminalConfirmed = false;
 
     try {
@@ -276,6 +283,22 @@ export function ComputeProofPage({ language, context, backend, backendRevision =
           if (generation !== runGeneration.current) return;
           const raw = safeJson(progress);
           setLatestRawProgress(raw);
+          const update = parsePlanComputeJobMessageUpdate(progress);
+          if (update) {
+            if (activeMessageRunId === undefined) activeMessageRunId = update.runId;
+            if (activeMessageRunId === update.runId) {
+              setStreamedMessages((current) => {
+                const byIndex = new Map<number, PlanComputeMessage>();
+                for (const message of current) {
+                  if (message.index !== undefined) byIndex.set(message.index, message);
+                }
+                for (const message of update.messages) {
+                  if (message.index !== undefined) byIndex.set(message.index, message);
+                }
+                return [...byIndex.entries()].sort(([left], [right]) => left - right).map(([, message]) => message);
+              });
+            }
+          }
           const parsed = parseComputeProgress(raw);
           if (!parsed) return;
           const sample: ComputeProgressSample = { ...parsed, sequence: sequence++, timestamp: Date.now() };
@@ -436,6 +459,7 @@ export function ComputeProofPage({ language, context, backend, backendRevision =
           {!inspection && <div className="progress-empty">{t.noInspection}</div>}
           <PlanComputeControl language={language} state={runState} samples={progressSamples} latestRawProgress={latestRawProgress} startedAt={runStartedAt} endedAt={runEndedAt} />
           <ComputeSummaryControl language={language} state={runState} result={parsedResult} rawResult={rawResult} rawError={rawError} rawErrorDetail={rawErrorDetail} elapsedMilliseconds={elapsed} copied={copied} onCopy={() => void copyResult()} />
+          {(busy || parsedResult !== undefined || streamedMessages.length > 0) && <OperationResultControl language={language} state={runState} result={parsedResult} streamedMessages={streamedMessages} />}
           <ViewComputeResultsControl language={language} context={context} backend={backend} result={parsedResult} hasUnsavedDrafts={hasUnsavedDrafts} onContextChange={onContextChange} onNavigate={onNavigate} />
           {copyError && <div className="compute-field-error" role="status">{copyError}</div>}
         </article>

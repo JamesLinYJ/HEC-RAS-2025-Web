@@ -1,5 +1,6 @@
 /** Shared UI/session contracts. Backend operation names and payloads follow the retained C# Host. */
 export type Language = 'zh' | 'en';
+export type ThemeMode = 'light' | 'dark' | 'system';
 export type FeatureId = 'project' | 'editors' | 'geometry' | 'map' | 'results' | 'tools' | 'compute';
 export interface AssetReference {
   path: string;
@@ -63,6 +64,9 @@ export interface WorkspaceUploadResult {
 }
 export interface FeaturePageProps {
   language: Language;
+  /** User preference; system is resolved by the top-level window. */
+  themeMode?: ThemeMode;
+  onThemeModeChange?: (mode: ThemeMode) => void;
   context: WorkbenchContext;
   backend: BackendGateway;
   onContextChange: (context: WorkbenchContext) => void;
