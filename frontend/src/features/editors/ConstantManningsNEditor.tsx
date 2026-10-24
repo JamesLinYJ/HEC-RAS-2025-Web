@@ -11,8 +11,10 @@ export function ConstantManningsNEditor(props: EditorPageProps) {
         <label htmlFor="manning-constant-value">{props.language === 'zh' ? '常数糙率值 n' : "Constant Manning's n"}</label>
         <input
           id="manning-constant-value"
-          type="text"
+          type="number"
           inputMode="decimal"
+          min="0"
+          step="any"
           value={value}
           disabled={!props.snapshot.canEdit}
           onChange={(event) => props.onFieldChange(constantField, event.currentTarget.value)}

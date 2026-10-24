@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetReference, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { BackendOperationUnavailableError } from '../../shared/workbench';
-import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
+import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
 import { geometryDiagnosticMessage } from './geometryErrors';
 
 interface OwnerValue<T> { owner: string; value: T }
@@ -111,6 +111,7 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     culvertSelectionRef.current = { owner: sourceOwner, ids: [] };
   }
   const generationRef = useRef(0);
+  const topologyFilterGenerationRef = useRef<Record<'arc' | 'region', number>>({ arc: 0, region: 0 });
   const previousLoad = useRef<{ identity: string; backend: typeof backend } | null>(null);
 
   const parent = parentEntry?.owner === sourceOwner ? parentEntry.value : undefined;
@@ -319,6 +320,13 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     return editTopology({ operation, featureKind: kind, featureIDs: [row.fid], ...(axis ? { fieldID: axis } : {}) }).then(() => undefined);
   };
 
+  const applyTopologyFactor = (factor: number): Promise<void> => {
+    if (!Number.isFinite(factor) || factor <= 0) return Promise.reject(new Error('A positive finite topology factor is required.'));
+    if (!topology?.canEdit || !supports('topology.edit')) return Promise.reject(new BackendOperationUnavailableError('topology.edit'));
+    return editTopology({ operation: 'applyFactor', featureKind: 'topology', featureIDs: [], applyToSelectedOnly: false,
+      factorText: String(factor), arcFeatureIDs: [], controlPointFeatureIDs: [] }).then(() => undefined);
+  };
+
   const editTopologyTag = (kind: 'arc' | 'region', rows: GeometryRow[], tagName: string, value: string | null): Promise<void> => {
     const fids = rows.map((row) => row.fid);
     if (!tagName.trim() || !fids.length || fids.some((fid) => fid == null || fid < 0)
@@ -333,6 +341,38 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     if (!['String', 'Integer', 'Numeric', 'Boolean'].includes(tagType)) return Promise.reject(new Error('The tag type is not defined by the source editor.'));
     if (!topology?.canEdit || !supports('topology.edit')) return Promise.reject(new BackendOperationUnavailableError('topology.edit'));
     return editTopology({ operation: 'createTag', featureKind: kind, featureIDs: [], tagName, tagType }).then(() => undefined);
+  };
+
+  const filterTopology = async (kind: 'arc' | 'region', clauses: GeometryTopologyFilterClause[], signal?: AbortSignal): Promise<GeometryTopologyFilterSnapshot> => {
+    const owner = sourceOwner;
+    const current = topologyRef.current;
+    if (!model || !current || current.owner !== owner) throw new Error('Topology draft is not loaded for this asset.');
+    if (!supports('topology.filter')) throw new BackendOperationUnavailableError('topology.filter');
+    const captured = current.value;
+    const generation = ++topologyFilterGenerationRef.current[kind];
+    const result = await send<GeometryTopologyFilterSnapshot>('topology.filter', {
+      model,
+      revision: captured.revision,
+      draftState: captured.draftState,
+      featureKind: kind,
+      clauses,
+    }, owner, signal ? { signal } : undefined);
+    if (signal?.aborted) throw new DOMException('The topology filter request was canceled.', 'AbortError');
+    const latest = topologyRef.current;
+    if (topologyFilterGenerationRef.current[kind] !== generation
+      || sourceOwnerRef.current !== owner
+      || latest?.owner !== owner
+      || latest.value.revision !== captured.revision
+      || latest.value.draftState !== captured.draftState)
+      throw new DOMException('The topology filter response belongs to an earlier topology draft.', 'AbortError');
+    if (result.revision !== captured.revision || result.featureKind !== kind
+      || !Array.isArray(result.matchedFeatureIDs)
+      || result.matchedFeatureIDs.some((fid) => !Number.isInteger(fid) || fid < 0)
+      || new Set(result.matchedFeatureIDs).size !== result.matchedFeatureIDs.length)
+      throw new Error('The topology filter response does not match the selected source revision and feature kind.');
+    if (captured.completion?.draftIdentity && result.draftIdentity !== captured.completion.draftIdentity)
+      throw new DOMException('The topology filter response belongs to a different topology draft identity.', 'AbortError');
+    return result;
   };
 
   const editArcPointCoordinate = (arcFID: number, point: GeometryTopologyArcPointsSnapshot['rows'][number], axis: 'X' | 'Y', value: string,
@@ -723,12 +763,12 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     asset, ownerKey: sourceOwner, model, parent, topology, mesh, culverts, draft, loading, errors, busyOperation, savedNotice,
     topologyDirty, meshDirty, culvertDirty, localOnly, dirty, revision, dirtyOwner,
     supports, localRows, addLocalRow, onTopologyChange, onTopologyCommand, onTopologyDelete, undoTopology, redoTopology,
-    loadArcPoints, loadRecipe, resizeTopology, editTopologyTag, createTopologyTag, editArcPointCoordinate, applyTopologyRecipe,
+    loadArcPoints, loadRecipe, resizeTopology, applyTopologyFactor, editTopologyTag, createTopologyTag, filterTopology, editArcPointCoordinate, applyTopologyRecipe,
     onFlowAreaChange, onRegionSelection, prepareMesh, generateMesh, degreeScan, propertyTables, undoMesh, redoMesh,
     onCulvertChange, onCulvertCommand, onCulvertSelection, onCulvertSelectionChange, onCulvertSelectionCommand, onCulvertDelete, addCulvertBarrel, addCulvertPropertySet, undoCulverts,
     resetDrafts, save, wrappedTopologyTable, wrappedCulvertTable, wrappedMeshRegions,
     reload: () => setRefreshToken((value) => value + 1), setError,
-    canLoadTopology: supports('topology.load'), canLoadArcPoints: supports('topology.arcPoints'), canLoadRecipe: supports('topology.recipe'),
+    canLoadTopology: supports('topology.load'), canLoadArcPoints: supports('topology.arcPoints'), canLoadRecipe: supports('topology.recipe'), canFilterTopology: supports('topology.filter'),
     canLoadMesh: supports('geometry.mesh.load'), canLoadCulverts: supports('geometry.culverts.load'),
     canLoadParent: supports('model.load'), canSave: supports('model.save') && !!parent && !!context.projectPath && !!revision && dirty && !localOnly,
     canGenerate: supports('geometry.mesh.generate'), canPrepare: supports('geometry.mesh.edit'), canDegreeScan: supports('geometry.mesh.degreeErrors'), canPropertyTables: supports('geometry.mesh.computePropertyTables'),

@@ -10,6 +10,7 @@ import {
   type CoordinateRowDraft,
   type ProjectionOption,
 } from './geoprocessingUi';
+import { parseHostProjectionSummary, ProjectionSummary, type HostProjectionSummary } from './ProjectionSummary';
 
 interface ReprojectionToolControlProps {
   language: Language;
@@ -17,6 +18,7 @@ interface ReprojectionToolControlProps {
   backend: BackendGateway;
   onClose: () => void;
   onDirtyStateChange?: (owner: string, dirty: boolean) => void;
+  presentation?: 'page' | 'dialog';
 }
 
 interface ReprojectionRowResult {
@@ -32,20 +34,8 @@ interface ReprojectionSnapshot {
   errorCode?: string | null;
   errorMessage?: string | null;
   rows: ReprojectionRowResult[];
-  sourceProjectionSummary?: {
-    projectionName?: string | null;
-    validity?: string | null;
-    unitName?: string | null;
-    epsgCode?: string | null;
-    utmZone?: string | null;
-  } | null;
-  destinationProjectionSummary?: {
-    projectionName?: string | null;
-    validity?: string | null;
-    unitName?: string | null;
-    epsgCode?: string | null;
-    utmZone?: string | null;
-  } | null;
+  sourceProjectionSummary?: HostProjectionSummary | null;
+  destinationProjectionSummary?: HostProjectionSummary | null;
 }
 
 interface ProjectionSideProps {
@@ -128,18 +118,22 @@ function ProjectionSide({ side, language, backend, context, option, customText, 
   const [identifyBusy, setIdentifyBusy] = useState(false);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState<string>();
+  const [identified, setIdentified] = useState<{ path: string; summary: HostProjectionSummary | null } | null>(null);
   const identifyController = useRef<AbortController | null>(null);
   const canIdentify = backend.supports('reprojection.identify');
   const path = context.selectedAsset?.path;
-  const currentPath = useRef(path);
+  const identifyOwner = JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml,
+    context.selectedAsset?.kind ?? null, path ?? null, context.selectedAsset?.revision ?? null]);
+  const identifyOwnerRef = useRef(identifyOwner);
+  identifyOwnerRef.current = identifyOwner;
   const label = side === 'source' ? text(language, '源坐标系', 'Source projection') : text(language, '目标坐标系', 'Destination projection');
 
   useEffect(() => {
-    currentPath.current = path;
     identifyController.current?.abort();
     setIdentifyBusy(false);
     setError(undefined);
-  }, [path]);
+    setIdentified(null);
+  }, [backend, identifyOwner]);
 
   useEffect(() => () => identifyController.current?.abort(), []);
 
@@ -148,31 +142,32 @@ function ProjectionSide({ side, language, backend, context, option, customText, 
     identifyController.current?.abort();
     const controller = new AbortController();
     identifyController.current = controller;
+    const requestOwner = identifyOwner;
     setIdentifyBusy(true);
     setError(undefined);
     try {
-      const result = await backend.request<{
-        recognizedPath?: string | null;
-        wkt?: string | null;
-        projectionSummary?: { projectionName?: string | null } | null;
-        errorMessage?: string | null;
-      }>('reprojection.identify', { paths: [path] }, { signal: controller.signal });
-      if (controller.signal.aborted || currentPath.current !== path) return;
-      if (result.recognizedPath !== path) throw new Error(text(language, '投影识别回执没有指向请求的资产路径。', 'The projection identification response does not refer to the requested asset path.'));
-      if (!result.wkt) throw new Error(result.errorMessage || text(language, '后端未能从当前资产识别出投影。', 'The backend could not identify a projection from the selected asset.'));
+      const raw = await backend.request<unknown>('reprojection.identify', { paths: [path] }, { signal: controller.signal });
+      if (controller.signal.aborted || identifyOwnerRef.current !== requestOwner) return;
+      if (!isRecord(raw)) throw new Error('The projection identification response is not an object.');
+      if (raw.recognizedPath !== path) throw new Error(text(language, '投影识别回执没有指向请求的资产路径。', 'The projection identification response does not refer to the requested asset path.'));
+      if (typeof raw.wkt !== 'string' || !raw.wkt.trim()) throw new Error(typeof raw.errorMessage === 'string' && raw.errorMessage
+        ? raw.errorMessage : text(language, '后端未能从当前资产识别出投影。', 'The backend could not identify a projection from the selected asset.'));
+      const summary = parseHostProjectionSummary(raw.projectionSummary);
       onOptionChange('Custom');
-      onCustomTextChange(result.wkt);
+      onCustomTextChange(raw.wkt);
+      setIdentified({ path, summary });
       setError(undefined);
     } catch (requestError) {
-      if (!controller.signal.aborted) setError(message(requestError, language));
+      if (!controller.signal.aborted && identifyOwnerRef.current === requestOwner) setError(message(requestError, language));
     } finally {
-      if (!controller.signal.aborted) setIdentifyBusy(false);
+      if (!controller.signal.aborted && identifyOwnerRef.current === requestOwner) setIdentifyBusy(false);
     }
   };
 
   const readProjectionFile = async (file: File | undefined): Promise<void> => {
     if (!file) return;
     setError(undefined);
+    setIdentified(null);
     try {
       const value = await file.text();
       if (!value.trim()) throw new Error(text(language, '投影文件为空。', 'The projection file is empty.'));
@@ -190,6 +185,7 @@ function ProjectionSide({ side, language, backend, context, option, customText, 
       <span>{text(language, '坐标参考', 'Coordinate reference')}</span>
       <select value={option} onChange={event => {
         const next = event.currentTarget.value as ProjectionOption;
+        setIdentified(null);
         onOptionChange(next);
         if (next !== 'Custom') onCustomTextChange('');
         setError(undefined);
@@ -200,15 +196,15 @@ function ProjectionSide({ side, language, backend, context, option, customText, 
     </label>
     {option === 'Project' && <p className="gp-ui-hint">
       {context.projectPath
-        ? text(language, '工程投影来自当前 .ras 文件的 Projection 定义。', 'The project projection is read from the current .ras Projection definition.')
+        ? text(language, '工程投影将由 C# Host 评估；摘要仅显示 Host 返回的解析结果。', 'The C# Host evaluates the project definition; summaries display only its returned result.')
         : text(language, '当前没有打开工程；服务端会返回“无工程投影”，可切换到 WGS84、Web Mercator 或自定义。', 'No project is open. The server will report that the project projection is unavailable; choose WGS84, Web Mercator, or Custom.')}
     </p>}
     {option === 'Custom' && <>
       <label className="gp-ui-field">
         <span>{text(language, 'EPSG 代码、WKT 或 PROJ 字符串', 'EPSG code, WKT, or PROJ string')}</span>
-        <textarea rows={3} value={customText} onChange={event => onCustomTextChange(event.currentTarget.value)} placeholder="例如 26910、WKT[…] 或 +proj=…" />
+        <textarea rows={3} value={customText} onChange={event => { setIdentified(null); onCustomTextChange(event.currentTarget.value); }} placeholder="例如 26910、WKT[…] 或 +proj=…" />
       </label>
-      <ProjectionSearch language={language} backend={backend} onSelect={code => onCustomTextChange(code)} />
+      <ProjectionSearch language={language} backend={backend} onSelect={code => { setIdentified(null); onCustomTextChange(code); }} />
       <div className="gp-ui-projection-actions">
         <label className="gp-ui-file-read">
           {text(language, '读取本机 .prj 文本', 'Read a local .prj file')}
@@ -221,9 +217,15 @@ function ProjectionSide({ side, language, backend, context, option, customText, 
       </div>
       {fileName && <p className="gp-ui-hint">{text(language, '已读取：', 'Loaded: ')}{fileName}</p>}
       {path && <p className="gp-ui-hint" title={path}>{text(language, '当前资产路径：', 'Selected asset path: ')}{path}</p>}
+      {identified && identified.path === path && <ProjectionSummary language={language}
+        title={text(language, '资产投影识别结果', 'Identified asset projection')} summary={identified.summary} />}
     </>}
     {error && <div className="gp-ui-error" role="alert">{error}</div>}
   </section>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function parseSnapshot(value: unknown, expectedIDs: Set<string>): ReprojectionSnapshot {
@@ -251,8 +253,8 @@ function parseSnapshot(value: unknown, expectedIDs: Set<string>): ReprojectionSn
     errorCode: typeof raw.errorCode === 'string' ? raw.errorCode : null,
     errorMessage: typeof raw.errorMessage === 'string' ? raw.errorMessage : null,
     rows,
-    sourceProjectionSummary: raw.sourceProjectionSummary as ReprojectionSnapshot['sourceProjectionSummary'],
-    destinationProjectionSummary: raw.destinationProjectionSummary as ReprojectionSnapshot['destinationProjectionSummary'],
+    sourceProjectionSummary: parseHostProjectionSummary(raw.sourceProjectionSummary),
+    destinationProjectionSummary: parseHostProjectionSummary(raw.destinationProjectionSummary),
   };
 }
 
@@ -265,7 +267,7 @@ function rowStatusLabel(status: ReprojectionRowResult['status'] | undefined, lan
   return labels[status][language === 'zh' ? 0 : 1];
 }
 
-export function ReprojectionToolControl({ language, context, backend, onClose, onDirtyStateChange }: ReprojectionToolControlProps) {
+export function ReprojectionToolControl({ language, context, backend, onClose, onDirtyStateChange, presentation = 'page' }: ReprojectionToolControlProps) {
   const zh = language === 'zh';
   const projectProjection = useMemo(() => readProjectProjection(context.projectXml), [context.projectXml]);
   const [sourceOption, setSourceOption] = useState<ProjectionOption>('WGS84');
@@ -373,7 +375,7 @@ export function ReprojectionToolControl({ language, context, backend, onClose, o
         <h2 id="gp-ui-reprojection-title">{zh ? '坐标批量转换' : 'Coordinate reprojection'}</h2>
         <p>{zh ? '逐行输入 X / Y；结果由 C# 投影服务返回，行身份沿用原始表格。' : 'Enter X / Y coordinates by row. The C# projection service returns results using the original row identities.'}</p>
       </div>
-      <button className="gp-ui-button" type="button" onClick={onClose}>{zh ? '返回地理处理' : 'Back to geoprocessing'}</button>
+      <button className="gp-ui-button" type="button" onClick={onClose}>{presentation === 'dialog' ? text(language, '关闭', 'Close') : zh ? '返回地理处理' : 'Back to geoprocessing'}</button>
     </header>
 
     <div className="gp-ui-reprojection-grid">
@@ -393,11 +395,10 @@ export function ReprojectionToolControl({ language, context, backend, onClose, o
         <h3>{zh ? '坐标表' : 'Coordinate rows'}</h3>
         <small>{snapshot ? `${snapshot.sourceSummary} → ${snapshot.destinationSummary}` : text(language, '修改后自动调用后端', 'Transforms automatically after edits')}</small>
       </div>
-      {(sourceSummary || destinationSummary) && <p className="gp-ui-hint">
-        {[sourceSummary?.projectionName, sourceSummary?.epsgCode && `EPSG:${sourceSummary.epsgCode}`, sourceSummary?.unitName,
-          destinationSummary?.projectionName, destinationSummary?.epsgCode && `EPSG:${destinationSummary.epsgCode}`, destinationSummary?.unitName]
-          .filter(Boolean).join(' · ')}
-      </p>}
+      {snapshot && <div className="gp-ui-projection-summary-grid">
+        <ProjectionSummary language={language} title={text(language, '源坐标系解析结果', 'Evaluated source projection')} summary={sourceSummary} />
+        <ProjectionSummary language={language} title={text(language, '目标坐标系解析结果', 'Evaluated destination projection')} summary={destinationSummary} />
+      </div>}
       <div className="gp-ui-table-wrap">
         <table className="gp-ui-table">
       <thead><tr><th>#</th><th>SourceX</th><th>SourceY</th><th>DestX</th><th>DestY</th><th>{zh ? '状态' : 'Status'}</th></tr></thead>

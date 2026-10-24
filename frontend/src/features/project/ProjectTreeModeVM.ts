@@ -115,9 +115,15 @@ export function reconcileProjectTreeSnapshotState(
 ): ProjectTreeModeVMState {
   const nodes = walkCatalogTree(snapshot.roots);
   const nodeIds = new Set(nodes.map((node) => node.id));
+  const previousLocalSelection = state.selectedNode?.assetID ? null : state.selectedNode;
+  const localSelection = previousLocalSelection ? nodes.find(node => !node.assetID &&
+    node.id === previousLocalSelection.id && node.sourceClass === previousLocalSelection.sourceClass &&
+    node.name === previousLocalSelection.name && ['AbsolutePath', 'RelativePath', 'Type'].every(id =>
+      node.properties?.find(property => property.id === id)?.value ===
+      previousLocalSelection.properties?.find(property => property.id === id)?.value)) ?? null : null;
   const selectedNode = selectedAssetPath
     ? nodes.find((node) => node.assetID === selectedAssetPath) ?? null
-    : null;
+    : localSelection;
   const modePrefix = `${mode}:`;
   const selectedIds = new Set([...state.selectedIds].filter((key) => {
     if (!key.startsWith(modePrefix)) return true;

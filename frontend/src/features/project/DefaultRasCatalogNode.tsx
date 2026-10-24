@@ -4,6 +4,7 @@ import { text } from '../../shared/workbench';
 import type { CatalogTreeNode } from './CatalogTreeSnapshot';
 import { localizeProjectTreeSectionTitle, localizeProjectTreeSourceClass, localizeProjectTreeStatus } from './ProjectTreeModeSectionTitles';
 import type { ProjectTreeModeName } from './ProjectTreeModeVM';
+import { ExternalConnectionCatalogNode } from './ExternalConnectionCatalogNode';
 import { ExternalFileConnectionCatalogNode } from './ExternalFileConnectionCatalogNode';
 import { ResultCatalogNode } from './ResultCatalogNode';
 import { LayerErrorIndicator } from './LayerErrorIndicator';
@@ -67,6 +68,8 @@ export function DefaultRasCatalogNode({
         <button className="project-tree-node" type="button" aria-selected={selected} onClick={(event) => onSelect(event, node)} onDoubleClick={() => node.assetID && onOpen(node)} onContextMenu={(event) => onContextMenu(event, node)}>
           {node.sourceClass === 'ExternalFileConnectionCatalogNode'
             ? <ExternalFileConnectionCatalogNode node={node} icon={icon} />
+            : node.sourceClass === 'ExternalConnectionCatalogNode'
+              ? <ExternalConnectionCatalogNode node={node} icon={icon} />
             : <span className={`project-tree-node-icon ${isGroup ? 'is-group' : ''}`}>{icon}</span>}
           <span className="project-tree-node-name" title={node.name}>{visibleName}</span>
           {node.diagnosticStatus && <span className={`project-diagnostic-dot is-${node.diagnosticStatus.toLowerCase()}`} title={localizeProjectTreeStatus(language, node.diagnosticStatus, 'diagnostic')} />}

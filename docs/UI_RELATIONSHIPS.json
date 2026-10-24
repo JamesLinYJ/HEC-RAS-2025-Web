@@ -235,11 +235,18 @@
       },
       {
         "id": "spatial-boundary-grid-and-draft",
-        "mount": "EditorWorkbench → SpatialDataSummaryPage → SpatialDataSummary / SpatialBoundaryConditionsPage / SpatialBoundaryConditionRasterImporter",
+        "mount": "EditorWorkbench → SpatialDataSummaryPage → SpatialDataSummary / SpatialBoundaryConditionsPage → GriddedDataControl → GriddedDataImporter / GriddedDataImporterDialog / GriddedDataImporterSlider / GriddedDataImporterTimeline; SpatialBoundaryConditionRasterImporter uses the importer dialog",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
           "frontend/src/features/editors/SpatialDataSummaryPage.tsx",
+          "frontend/src/features/editors/SpatialDataSummary.tsx",
+          "frontend/src/features/editors/SpatialBoundaryConditions.tsx",
           "frontend/src/features/editors/SpatialBoundaryConditionRasterImporter.tsx",
+          "frontend/src/features/editors/GriddedDataControl.tsx",
+          "frontend/src/features/editors/GriddedDataImporter.tsx",
+          "frontend/src/features/editors/GriddedDataImporterDialog.tsx",
+          "frontend/src/features/editors/GriddedDataImporterSlider.tsx",
+          "frontend/src/features/editors/GriddedDataImporterTimeline.tsx",
           "backend/Host/SpatialGridService.cs",
           "backend/Host/ModelEditorAdapter.cs"
         ],
@@ -248,7 +255,7 @@
           "model.gridInspect",
           "model.gridFrame"
         ],
-        "writeBoundary": "model.gridInspect and model.gridFrame inspect sources and read Host frames. model.gridImport is an immediate saved-model operation against the snapshot: it refuses dirty/invalid drafts, requires a changed model revision and imported-grid read-back, then refreshes the parent baseline after context receipt acceptance. Station/gauge structure changes use model.spatialTransform and remain in the parent draft until model.save."
+        "writeBoundary": "model.gridInspect/model.gridFrame inspect sources and read Host frames. Frame selection remains the existing onGridFrame owner. The importer asks for explicit user confirmation and closes only after the workbench confirms. model.gridImport is an immediate saved-model operation against the captured snapshot: it refuses dirty/invalid drafts, requires a changed model revision and imported-grid read-back, then refreshes the parent baseline only after context receipt acceptance. Station/input structure uses model.spatialTransform and remains in the parent draft until model.save. DSS and authenticated Cumulus import are unavailable."
       },
       {
         "id": "plan-time-window-mode",
@@ -294,7 +301,17 @@
           "frontend/src/features/geometry/ArcEditor.tsx",
           "frontend/src/features/geometry/TopologyArcQuickEditPicker.tsx",
           "frontend/src/features/geometry/TopologyRegionQuickEditPicker.tsx",
-          "frontend/src/features/geometry/TopologyRecipeBuilder.tsx"
+          "frontend/src/features/geometry/TopologyRecipeBuilder.tsx",
+          "frontend/src/features/geometry/CreateTagControl.tsx",
+          "frontend/src/features/geometry/SetTagValueControl.tsx",
+          "frontend/src/features/geometry/TagControl.tsx",
+          "frontend/src/features/geometry/TagFilterControl.tsx",
+          "frontend/src/features/geometry/TagFilterItemControl.tsx",
+          "frontend/src/features/geometry/TagList.tsx",
+          "frontend/src/features/geometry/TagPreviewControl.tsx",
+          "frontend/src/features/geometry/TopologyBuildResultViewer.tsx",
+          "frontend/src/features/geometry/TopologyProperties.tsx",
+          "frontend/src/features/geometry/TopologyStatus.tsx"
         ],
         "stateOwner": "The Geometry workbench owns the captured model/topology revision, server draftState, undo history and stable row/FID identities. The selected arc/region/node rows are shared with their mounted detail, quick-edit, error and recipe controls.",
         "readActions": [
@@ -302,9 +319,10 @@
           "topology.load",
           "geometry.mesh.load",
           "topology.arcPoints",
-          "topology.recipe"
+          "topology.recipe",
+          "topology.filter"
         ],
-        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations; Recipe application is tied to the inspected revision and draft identity. Node coordinates remain read-only because the current Host route has no node-move command. Parent model.save commits the Geometry HDF; child editors do not save independently."
+        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations; Recipe application is tied to the inspected revision and draft identity. Tag create/set/remove uses selected source FIDs and the existing topology undo/save lifecycle. topology.filter validates owner, revision, draftState, feature kind and returned FIDs, then maps matches back to source rows for selection without changing the draft; only arcs and regions are filterable. The overview apply-factor control edits global arc/control-point size-related fields through the same draft; its arc-point count factor is inverse and keeps at least one point. Cross-page selection scope is unavailable. Node coordinates remain read-only; parent model.save commits the Geometry HDF."
       },
       {
         "id": "terrain-levee-composition",
@@ -403,6 +421,201 @@
           "rasterExport.preview"
         ],
         "writeBoundary": "depthExport.execute writes a Shapefile family and rasterExport.execute writes RGB GeoTIFF only after explicit export action and matching preview. Output paths are absolute paths resolved by the C# Host; Host completion/cancellation receipts describe server-side artifacts and do not imply a browser-local download. This entry records the wired source flow, not runtime validation."
+      },
+      {
+        "id": "project-external-connections",
+        "mount": "ProjectExplorerControl toolbar → ExternalConnectionManager; RasCatalogInfoPane → ExternalConnectionDetails / DssExternalConnectionPreview; project tree → ExternalConnectionCatalogNode",
+        "source": [
+          "frontend/src/features/project/ProjectExplorerControl.tsx",
+          "frontend/src/features/project/CatalogTreeSnapshot.ts",
+          "frontend/src/features/project/ExternalConnectionManager.tsx",
+          "frontend/src/features/project/ExternalConnectionWorkflow.ts",
+          "frontend/src/features/project/ExternalConnectionDetails.tsx",
+          "frontend/src/features/project/ExternalConnectionCatalogNode.tsx",
+          "frontend/src/features/project/DssExternalConnectionPreview.tsx",
+          "frontend/src/features/project/NewExternalConnectionPage.tsx",
+          "frontend/src/features/project/NewFileExternalConnectionPage.tsx",
+          "frontend/src/features/project/NewResultExternalConnectionPage.tsx",
+          "frontend/src/features/project/WellKnownExternalPathEditor.tsx",
+          "frontend/src/features/project/RasCatalogInfoPane.tsx",
+          "frontend/src/features/project/ProjectTreeMode.tsx",
+          "backend/Host/ProjectConnectionService.cs",
+          "backend/Host/BackendWorker.cs",
+          "backend/Host/CatalogTreeService.cs"
+        ],
+        "stateOwner": "The active project context owns the XML/session/revision identity; external-connection rows and details come from catalog.tree.load in Catalog mode, not the separate project.tree.load project tree. Add/update/remove forms capture the target connection identity and source fields; Result choices come from actual ObservableResult nodes. File paths resolve on the Host machine. Nodes without assetID retain a local tree selection when the active asset is cleared; snapshot reconciliation checks node ID/class/name/path/type, and each project session owns an isolated tree state.",
+        "readActions": [
+          "catalog.tree.load",
+          "project.connection.inspect",
+          "dss.catalog",
+          "dss.read"
+        ],
+        "writeBoundary": "Add/update/remove use project.connection.inspect then project.connection.commit. Both bind projectPath, projectXml, projectXmlSHA, projectRevision and projectSessionID; commit additionally supplies expectedConnectionSHA256, expectedSourceSHA256 and required expectedSourceReferencesSHA256, plus expectedNormalizedName for add. Inspect returns canCommit/validationMessage, canonicalPath, source and source-reference capture/count, normalizedName, and before/after identities. A Result is written as a native File external connection to its actual Result HDF. Before returning a receipt, Host reopens the project and confirms the connection through CatalogTreeService.LoadCatalog(Mode=Catalog), corresponding to catalog.tree.load; project.tree.load does not contain external connection nodes. The commit receipt carries the new project snapshot and previous revision, before/after identity, sourceCapture, previousSourceReferencesSHA256 and sourceReferencesSHA256; the client validates it before onContextCommit. A remove may capture a disconnected source with nullable path/SHA. DSS preview is read-only."
+      },
+      {
+        "id": "classification-and-manning-editors",
+        "mount": "EditorWorkbench → ClassificationEditor / NValueEditor → ClassificationLayersEditor / ManningsNEditor → source-specific raster, mapping, polygon, constant and classification-layer controls",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/ClassificationEditor.tsx",
+          "frontend/src/features/editors/ClassificationLayersEditor.tsx",
+          "frontend/src/features/editors/ClassificationRasterEditor.tsx",
+          "frontend/src/features/editors/ClassificationMappingEditor.tsx",
+          "frontend/src/features/editors/ClassificationGeometryEditor.tsx",
+          "frontend/src/features/editors/PolygonClassificationInputProperties.tsx",
+          "frontend/src/features/editors/ClassificationVisualizationOptions.tsx",
+          "frontend/src/features/editors/DetailedClassificationHeader.tsx",
+          "frontend/src/features/editors/NValueEditor.tsx",
+          "frontend/src/features/editors/ManningsNEditor.tsx",
+          "frontend/src/features/editors/ConstantManningsNEditor.tsx",
+          "frontend/src/features/editors/ClassificationLayerManningNEditor.tsx",
+          "frontend/src/features/editors/DetailedManningsNHeader.tsx",
+          "backend/Host/ClassificationEditorService.cs",
+          "backend/Host/ClassificationGeometryService.cs",
+          "backend/Host/ManningEditorService.cs",
+          "backend/Host/NValuePreviewService.cs"
+        ],
+        "stateOwner": "Classification and Manning views are derived from the current model snapshot plus ModelDraft fields/rows and the selected input/mode. Classification mapping and polygon values and existing Manning interpretation rows stay attached to that parent draft.",
+        "readActions": [
+          "model.load",
+          "nvalue.preview"
+        ],
+        "writeBoundary": "model.classificationTransform reconciles classification fields and mapping rows against the captured snapshot and returns a draft projection; model.manningTransform applies the supported Manning operation against the same model identity. Ordinary edits and accepted projections remain in ModelDraft until model.save. nvalue.preview is read-only. Classification import, mapping-row add/remove, map-click polygon editing, and persisted visualization transparency are not connected."
+      },
+      {
+        "id": "air-pressure-boundary-editor",
+        "mount": "BoundaryConditionEditor → AirPressurePage → AirPressureHeader / AirPressureControl",
+        "source": [
+          "frontend/src/features/editors/BoundaryConditionEditor.tsx",
+          "frontend/src/features/editors/AirPressurePage.tsx",
+          "frontend/src/features/editors/AirPressureHeader.tsx",
+          "frontend/src/features/editors/AirPressureControl.tsx",
+          "frontend/src/features/editors/AirPressureUnits.ts",
+          "frontend/src/features/editors/EditorWorkbench.tsx"
+        ],
+        "stateOwner": "The selected Boundary Conditions model snapshot and ModelDraft own the header fields, air-pressure inputs and units. Header and value controls share the same parent field-change callbacks.",
+        "readActions": [
+          "model.load"
+        ],
+        "writeBoundary": "The controls only edit the parent ModelDraft; model.save is the persistence boundary. Unit conversion is local display/input handling and does not create a separate saved asset."
+      },
+      {
+        "id": "classic-cross-section-and-sample-line",
+        "mount": "ResultsWorkspace → CrossSectionEditorWindow / CrossSectionEditorControl; ResultsWorkspace → DynamicProfilePlot → ProfileSampleLinePlot / ScrubbedDataDisplay",
+        "source": [
+          "frontend/src/features/results/ResultsWorkspace.tsx",
+          "frontend/src/features/results/controls/CrossSectionEditorWindow.tsx",
+          "frontend/src/features/results/controls/CrossSectionEditorControl.tsx",
+          "frontend/src/features/results/controls/DynamicProfilePlot.tsx",
+          "frontend/src/features/results/controls/ProfileSampleLinePlot.tsx",
+          "frontend/src/features/results/controls/ScrubbedDataDisplay.tsx",
+          "frontend/src/features/results/controls/classicCrossSectionTypes.ts",
+          "backend/Host/ClassicCrossSectionService.cs",
+          "backend/Host/ResultProfileSampleLineContracts.cs",
+          "backend/Host/ResultProfileSampleLineService.cs"
+        ],
+        "stateOwner": "The standalone cross-section view is bound to the selected project/Geometry source and its classic-geometry file identity; the sample-line view captures the active Result sources and explicit project XY inputs. The scrubber reads the selected result time sample.",
+        "readActions": [
+          "classic.crossSections.catalog",
+          "classic.crossSections.profile",
+          "result.profileSources",
+          "result.profileSampleLine"
+        ],
+        "writeBoundary": "Classic cross sections are read-only station/elevation and bank samples. Dynamic sample lines request Flow or CumulativeVolume at explicit XY points and display each result at its own native times, units and NoData; they do not edit or save a model, do not mean a spatial mesh profile, and do not depend on map clicks. The scrubber displays the actual time/value/unit/NoData sample."
+      },
+      {
+        "id": "vector-shapefile-create-import",
+        "mount": "ToolsPageView → tools-tab-sources → SourceManagerControl → VectorImporterDialog → NewShapefileDialog / ShapefileAttributeTableViewer",
+        "source": [
+          "frontend/src/features/tools/SourceManagerControl.tsx",
+          "frontend/src/features/tools/vector-import/VectorImporter.tsx",
+          "frontend/src/features/tools/vector-import/NewShapefileDialog.tsx",
+          "frontend/src/features/tools/vector-import/ShapefileAttributeTableViewer.tsx",
+          "frontend/src/features/tools/vector-import/vectorImportTypes.ts",
+          "backend/Host/NewShapefileService.cs",
+          "backend/Host/NewShapefileContracts.cs",
+          "backend/Host/MapTreeService.cs",
+          "backend/Host/AttributeTableService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The workflow requires a current project map catalog and an explicitly selected saved map. Create requests capture project session/revision, map identity and visualization revision, operation ID, normalized Host destination, shape type and projection. Existing-file import captures the canonical path and complete Shapefile family, including required .shp/.shx/.dbf and optional .prj revisions.",
+        "readActions": [
+          "map.document.list",
+          "map.tree.load",
+          "workspace.file.inspect",
+          "map.vector.captureShapefile",
+          "attributeTable.load"
+        ],
+        "writeBoundary": "map.shapefile.create creates a source file and returns a retained creation receipt; that receipt does not mean the map contains the source. map.vector.importShapefile re-captures the exact family and map owner before writing .vis. The UI adopts an imported outcome only after map.document.list/map.tree.load confirms the exact tree locator; stale or uncertain outcomes require a refresh and cannot trigger duplicate creation/import. AttributeTable transform remains a read-only in-memory preview without file write-back. Paths are Host-side, not browser-local. This is a source relation, not runtime acceptance."
+      },
+      {
+        "id": "plan-export-and-reprojection-dialogs",
+        "mount": "ImportExportToolControl → PlanExporterDialog / PlanPickerDialog and ReprojectionToolDialog → ReprojectionToolControl / ProjectionSummary",
+        "source": [
+          "frontend/src/features/tools/ImportExportToolControl.tsx",
+          "frontend/src/features/tools/PlanExporterDialog.tsx",
+          "frontend/src/features/tools/PlanPickerDialog.tsx",
+          "frontend/src/features/tools/PlanExporterControl.tsx",
+          "frontend/src/features/tools/ReprojectionToolDialog.tsx",
+          "frontend/src/features/tools/ReprojectionToolControl.tsx",
+          "frontend/src/features/tools/ProjectionSummary.tsx",
+          "backend/Host/PlanExportService.cs",
+          "backend/Host/ReprojectionService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "Plan export captures current project session, selected Plan path, parameters and Host source SHA/revision. Reprojection owns editable coordinate rows and source/target projection choices; identify/transform receipts are validated against row identity and project context.",
+        "readActions": [
+          "planExport.inspect",
+          "projection.search",
+          "reprojection.identify"
+        ],
+        "writeBoundary": "planExport.executeDuplex runs only after an explicit export action and rechecks the captured project/Plan/parameters and Host SHA; output path resolution belongs to the Host. reprojection.transform returns coordinate rows and a Host projection receipt but does not write a file. Projection summaries display Host identification/conversion results and never infer a CRS from text. This entry records source wiring, not runtime acceptance."
+      },
+      {
+        "id": "map-legend-and-properties-pane",
+        "mount": "MapFeaturePage → RasMapElementsOverlay → RasMapLegend → OverlayItem / MapOverlayChrome; MapFeaturePage contextual menu → RasContextualActionsBar; inspector → RasLayerPropertiesPane; MapFeaturePage → RasterSymbologyEditor",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/MapOverlayChrome.tsx",
+          "frontend/src/features/map/OverlayItem.tsx",
+          "frontend/src/features/map/RasContextualActionsBar.tsx",
+          "frontend/src/features/map/RasMapElementsOverlay.tsx",
+          "frontend/src/features/map/RasMapLegend.tsx",
+          "frontend/src/features/map/RasLayerPropertiesPane.tsx",
+          "frontend/src/features/map/symbology/RasterSymbologyEditor.tsx",
+          "frontend/src/features/map/symbology/rasterSymbologyWorkflow.ts",
+          "frontend/src/features/map/mapOverlay.css",
+          "backend/Host/RasterSymbologyService.cs"
+        ],
+        "stateOwner": "The legend is scoped to the active map and exact validated raster source and is populated only from the latest successfully applied Host snapshot. Overlay visibility/folding follows map display settings. The properties pane uses either the selected local feature and its actual layer properties or the selected backend tree node identity/diagnostic.",
+        "readActions": [
+          "rasterSymbology.inspect",
+          "rasterSymbology.histogram"
+        ],
+        "writeBoundary": "rasterSymbology.apply commits a matching .vis revision and source identity before publishing a legend; palette save/delete are separate from the applied stops, which remain visible until a new apply receipt is accepted. The local feature pane can zoom to that feature and show its CRS/properties; a backend node pane shows type/name/diagnostics and can zoom only when a loaded extent exists. Property inspection does not mutate project data. Source wiring is not runtime acceptance."
+      },
+      {
+        "id": "plan-compute-feedback",
+        "mount": "ComputeProofPage → PlanComputeControl → ProgressBarControl / ProgressBackground / ErrorWarningInfoIcon / TimeDifference; ComputeProofPage → RealTimeMonitor → LiveMessageList → MessageControl",
+        "source": [
+          "frontend/src/features/compute/ComputeProofPage.tsx",
+          "frontend/src/features/compute/PlanComputeControl.tsx",
+          "frontend/src/features/compute/RealTimeMonitor.tsx",
+          "frontend/src/controls/ProgressBarControl.tsx",
+          "frontend/src/controls/ProgressBackground.tsx",
+          "frontend/src/controls/ErrorWarningInfoIcon.tsx",
+          "frontend/src/controls/TimeDifference.tsx",
+          "frontend/src/controls/LiveMessageList.tsx",
+          "frontend/src/controls/MessageControl.tsx",
+          "frontend/src/controls/EmptySelectionOverlay.tsx",
+          "frontend/src/features/compute/compute.css",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "ComputeProofPage remains the owner of inspected model identity, operation state, cancellation, progress samples and terminal receipt. Feedback controls render that existing run state and real progress/message samples; they introduce no separate compute session.",
+        "readActions": [
+          "plan.compute.inspect"
+        ],
+        "writeBoundary": "plan.compute.execute remains the compute action and keeps the existing cancellation/terminal-receipt behavior. The feedback controls display actual sample message/sequence/timestamp and raw progress diagnostics; the linear remaining-time display is an estimate, not a solver completion promise. The list is time-window filtered and capped at the latest 200 samples with an omitted count. No pause/resume operation is introduced."
       }
     ],
     "stateInvariants": [
@@ -421,7 +634,8 @@
       "Map-source uploads, source revision checks and each .vis commit have distinct receipts.",
       "Geometry and Plan duplication adopts a receipt only after HDF publication and project association commit."
     ],
-    "completionEvidence": "Verify each React interaction and its real data path independently; module presence is not acceptance."
+    "completionEvidence": "Verify each React interaction and its real data path independently; module presence is not acceptance.",
+    "sourceBoundary": "Current uiMounts describe source-level React component mounts, operation names, state owners and persistence boundaries. They are a relationship map, not evidence of a successful build, browser/Electron interaction, live Host execution, or real-file acceptance. Legacy domainRelations and retained C#/SwiftUI descriptions remain migration-source references and do not establish current React coverage."
   },
   "referenceContractScope": {
     "collections": ["domainRelations", "stateScopes", "invariants", "flows", "fieldIdentity", "platformBoundary", "tableContracts", "mapToolReferences"],

@@ -1,0 +1,47 @@
+.tools-task-dialog-backdrop { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; overflow: auto; padding: 22px; background: rgba(13, 22, 34, .58); }
+.tools-task-dialog { box-sizing: border-box; display: grid; gap: 14px; width: min(100%, 920px); max-height: min(92vh, 1000px); overflow: auto; border: 1px solid #dce4ed; border-radius: 14px; background: #fff; box-shadow: 0 24px 80px rgba(13, 30, 52, .28); padding: 18px; }
+.tools-task-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-bottom: 1px solid #e7edf3; padding-bottom: 12px; }
+.tools-task-dialog-header h2 { margin: 4px 0 0; color: var(--tool-ink, #1c2838); font-size: 20px; }
+.tools-task-dialog .tools-button { min-height: 34px; border: 1px solid #d8e1eb; border-radius: 7px; padding: 7px 12px; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.tools-task-dialog .tools-button:disabled { cursor: not-allowed; opacity: .52; }
+.tools-task-dialog .tools-button-primary { border-color: #1f69ad; background: #1f69ad; color: #fff; }
+.tools-task-dialog .tools-button-secondary { background: #f2f6fa; color: #31445c; }
+.tools-plan-export-dialog { width: min(100%, 1040px); }
+.tools-plan-export-dialog .export-plan-panel { border: 0; background: transparent; padding: 0; }
+.tools-plan-export-dialog .export-plan-panel > .tools-subpanel-heading { display: none; }
+.tools-plan-selection-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
+.tools-plan-selection-field > span, .tools-plan-selection-field > small { grid-column: 1 / -1; }
+.tools-plan-selection-value { display: grid; gap: 3px; min-width: 0; color: #26364a; font-size: 12px; }
+.tools-plan-selection-value code, .tools-plan-picker-context code, .tools-plan-picker-choice code { overflow-wrap: anywhere; color: #58697e; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tools-plan-picker-dialog { width: min(100%, 740px); }
+.tools-plan-picker-context { display: grid; gap: 5px; color: #58697e; font-size: 11px; }
+.tools-plan-picker-list { display: grid; gap: 7px; max-height: 48vh; overflow: auto; border: 1px solid #e0e7ef; border-radius: 9px; padding: 8px; }
+.tools-plan-picker-choice { display: flex; align-items: flex-start; gap: 9px; border: 1px solid transparent; border-radius: 7px; background: #f7f9fb; padding: 9px; cursor: pointer; }
+.tools-plan-picker-choice.is-selected { border-color: #8db4dc; background: #f0f7ff; }
+.tools-plan-picker-choice input { margin: 2px 0 0; accent-color: #2368ad; }
+.tools-plan-picker-choice span { display: grid; gap: 4px; min-width: 0; }
+.tools-task-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.tools-reprojection-dialog { width: min(100%, 1180px); padding: 0; }
+.tools-reprojection-dialog .gp-ui-reprojection { padding: 18px; }
+.gp-ui-projection-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
+.gp-ui-projection-summary { display: grid; gap: 9px; min-width: 0; border: 1px solid rgba(129, 162, 177, .2); border-radius: 8px; background: rgba(255, 255, 255, .65); padding: 10px; }
+.gp-ui-projection-summary .gp-ui-panel-heading { margin: 0; }
+.gp-ui-projection-summary .gp-ui-panel-heading h4 { margin: 0; font-size: 12px; }
+.gp-ui-projection-summary-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; }
+.gp-ui-projection-summary-fields div { min-width: 0; }
+.gp-ui-projection-summary-fields dt { color: var(--text-muted, #718393); font-size: 10px; }
+.gp-ui-projection-summary-fields dd { margin: 2px 0 0; color: var(--text-main, #263746); font-size: 11px; overflow-wrap: anywhere; }
+.gp-ui-projection-area { color: var(--text-muted, #718393); font-size: 10px; }
+.gp-ui-projection-area > div { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; margin-top: 5px; }
+.gp-ui-projection-area span { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tools-export-plan-launcher { display: grid; gap: 12px; }
+
+@media (max-width: 760px) {
+  .tools-task-dialog-backdrop { padding: 10px; }
+  .tools-task-dialog { max-height: 96vh; padding: 12px; }
+  .tools-reprojection-dialog { padding: 0; }
+  .tools-reprojection-dialog .gp-ui-reprojection { padding: 12px; }
+  .gp-ui-projection-summary-grid { grid-template-columns: minmax(0, 1fr); }
+  .tools-plan-selection-field { grid-template-columns: minmax(0, 1fr); }
+  .tools-plan-selection-field > button { width: fit-content; }
+}

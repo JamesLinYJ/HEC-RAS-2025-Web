@@ -1,5 +1,5 @@
 import type { MouseEvent } from 'react';
-import type { Language } from '../../shared/workbench';
+import type { BackendGateway, Language } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
 import type { CatalogTreeNode, CatalogTreeSnapshot } from './CatalogTreeSnapshot';
 import type { ProjectTreeAction, ProjectTreeCategory, ProjectTreeModeName } from './ProjectTreeModeVM';
@@ -16,6 +16,7 @@ export interface ProjectTreeContextMenu {
 
 export interface RasCatalogProps {
   language: Language;
+  backend: BackendGateway;
   mode: ProjectTreeModeName;
   snapshot: CatalogTreeSnapshot | null;
   loading: boolean;
@@ -47,6 +48,7 @@ export interface RasCatalogProps {
 /** Catalog shell keeps the existing tree pane, context menu, inspector, and selected-asset readout together. */
 export function RasCatalog({
   language,
+  backend,
   mode,
   snapshot,
   loading,
@@ -92,7 +94,7 @@ export function RasCatalog({
                   : <div className="project-tree-scroll">{visibleRoots.map((node) => <DefaultRasCatalogNode key={node.id} node={node} depth={0} language={language} collapsedIds={collapsedIds} selectedNodeId={selectedNode?.id ?? null} selectedIds={selectedIds} mode={mode} onToggle={onToggle} onSelect={onSelect} onOpen={onOpen} onContextMenu={onContextMenu} />)}</div>}
           {selectedIds.size > 1 && <div className="project-selection-count">{selectedIds.size} {text(language, '项已选', 'selected')}</div>}
         </div>
-        <aside className="project-tree-inspector"><RasCatalogInfoPane language={language} node={selectedNode} /></aside>
+        <aside className="project-tree-inspector"><RasCatalogInfoPane language={language} backend={backend} node={selectedNode} /></aside>
       </div>
 
       {selectedForMenu && contextMenu && <div className="project-node-context" style={{ left: Math.min(contextMenu.x, window.innerWidth - 205), top: Math.min(contextMenu.y, window.innerHeight - 105) }} onClick={(event) => event.stopPropagation()}>

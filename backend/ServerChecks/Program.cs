@@ -165,6 +165,16 @@ internal static class Program
                 return 0;
             }
 
+            if (args is ["--run-project-connections-http", string connectionBaseUrl,
+                    string connectionResultHoverManifest, string connectionOutputDirectory])
+            {
+                ProjectConnectionAcceptanceReport report = await ServerAcceptance.RunProjectConnectionsAsync(
+                    new Uri(EnsureTrailingSlash(connectionBaseUrl)), connectionResultHoverManifest,
+                    connectionOutputDirectory);
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+
             if (args is ["--create-gdb-vector-fixture", string gdbVectorPath])
             {
                 TextWriter protocol = Console.Out;
@@ -203,6 +213,7 @@ internal static class Program
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --complete-result-hover-fixture <loopback-base-url> <existing-map-fixture.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-terrain-association-http <loopback-base-url> <map-fixture.json> <result-hover-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-model-creation-http <loopback-base-url> <result-hover-manifest.json> <new-output-directory>");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-project-connections-http <loopback-base-url> <result-hover-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --create-gdb-vector-fixture <new-absolute-gdb-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-gdb-source-http <loopback-base-url> <new-fixture-directory>");
             return 2;

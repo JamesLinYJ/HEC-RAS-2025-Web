@@ -115,7 +115,12 @@ export function sameSourceFamilyCapture(left: AttributeTableSourceFamilyCapture,
 }
 
 export function sameSourcePath(left: string, right: string): boolean {
-  return left.replaceAll('\\', '/') === right.replaceAll('\\', '/');
+  const normalizedLeft = left.replaceAll('\\', '/');
+  const normalizedRight = right.replaceAll('\\', '/');
+  if (normalizedLeft === normalizedRight) return true;
+  const windowsPath = (value: string): boolean => /^[a-z]:\//i.test(value) || value.startsWith('//');
+  return windowsPath(normalizedLeft) && windowsPath(normalizedRight) &&
+    normalizedLeft.toLowerCase() === normalizedRight.toLowerCase();
 }
 
 export function isAttributeTableData(value: unknown): value is AttributeTableData {

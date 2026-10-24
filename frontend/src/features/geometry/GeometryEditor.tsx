@@ -107,6 +107,8 @@ export default function GeometryPage(props: FeaturePageProps) {
     onLoadRecipe: workspace.loadRecipe,
     onTopologyTagChange: workspace.editTopologyTag,
     onTopologyTagCreate: workspace.createTopologyTag,
+    canFilterTopology: workspace.canFilterTopology,
+    onTopologyFilter: workspace.filterTopology,
     onArcPointCoordinateChange: workspace.editArcPointCoordinate,
     onApplyRecipe: workspace.applyTopologyRecipe,
     onTopologyResize: (featureKind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => {
@@ -120,7 +122,8 @@ export default function GeometryPage(props: FeaturePageProps) {
   const renderFeature = () => {
     switch (page) {
       case 'summary': return <GeometrySummaryPage language={language} asset={workspace.asset} projectPath={props.context.projectPath} sessionID={props.context.projectSessionID} topology={workspace.topology} mesh={workspace.mesh} culverts={workspace.culverts} parent={workspace.parent} loading={Object.values(workspace.loading).some(Boolean)} />;
-      case 'topologySummary': return <GeometryTopologySummaryPage language={language} snapshot={displayedTopology} onNavigate={(target) => setPage(target)} />;
+      case 'topologySummary': return <GeometryTopologySummaryPage language={language} snapshot={displayedTopology} onNavigate={(target) => setPage(target)}
+        canEdit={!!workspace.topology?.canEdit && workspace.supports('topology.edit')} busy={busy} onApplyFactor={workspace.applyTopologyFactor} />;
       case 'nodes': return <GeometryTopologyNodesPage key={workspace.ownerKey} {...topologyPageProps('node')} />;
       case 'arcs': return <GeometryTopologyArcsPage key={workspace.ownerKey} {...topologyPageProps('arc')} />;
       case 'regions': return <GeometryTopologyRegionsPage key={workspace.ownerKey} {...topologyPageProps('region')} />;

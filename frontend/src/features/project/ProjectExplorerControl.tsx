@@ -26,6 +26,8 @@ import type { CreatedModel } from './ProjectModelCreationWorkflow';
 import type { RecentProjectRecord, SelectedProjectFile } from './ProjectTypes';
 import { isAbsoluteServerPath, MAX_RECENT_PROJECTS, RECENT_PROJECTS_STORAGE_KEY } from './ProjectTypes';
 import { ProjectOpenProjectDialog } from './ProjectOpenProjectDialog';
+import { ExternalConnectionManager } from './ExternalConnectionManager';
+import type { ExternalConnectionCommitReceipt } from './ExternalConnectionWorkflow';
 import './project.css';
 
 export type ProjectCommandKind = 'open' | 'new';
@@ -170,6 +172,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const [migrationOpen, setMigrationOpen] = useState(false);
   const [modelCreationDialog, setModelCreationDialog] = useState<'newGeometry' | 'newPlan' | 'newBoundary' | null>(null);
   const [openProjectDialog, setOpenProjectDialog] = useState(false);
+  const [externalConnectionsOpen, setExternalConnectionsOpen] = useState(false);
   const [uploadedWorkspace, setUploadedWorkspace] = useState<UploadedWorkspaceState | null>(null);
   const [savingProject, setSavingProject] = useState(false);
   const [newProjectDirty, setNewProjectDirty] = useState(false);
@@ -832,6 +835,34 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     }
   };
 
+  const onExternalConnectionsCommitted = (
+    source: WorkbenchContext,
+    committed: WorkbenchContext,
+    _receipt: ExternalConnectionCommitReceipt,
+  ): void => {
+    if ((!sameProjectSource(contextRef.current, source) && !sameProjectSource(contextRef.current, committed)) ||
+        !committed.projectPath || !committed.projectXml || !committed.projectRevision) return;
+    const refreshedFile: SelectedProjectFile = {
+      identity: committed.projectPath,
+      fileName: currentFile?.fileName ?? displayFileName(committed.projectPath),
+      byteLength: new TextEncoder().encode(committed.projectXml).byteLength,
+      lastModified: currentFile?.lastModified ?? null,
+      digest: committed.projectRevision,
+      xmlSource: committed.projectXml,
+      isWellFormedXml: isWellFormedXml(committed.projectXml),
+    };
+    setCurrentFile(refreshedFile);
+    const recent: RecentProjectRecord = {
+      id: committed.projectPath,
+      projectPath: committed.projectPath,
+      fileName: refreshedFile.fileName,
+      revision: committed.projectRevision,
+      openedAt: Date.now(),
+    };
+    setRecentProjects((current) => [recent, ...current.filter((item) => item.projectPath !== committed.projectPath)].slice(0, MAX_RECENT_PROJECTS));
+    retryTrees();
+  };
+
   const treeError = treeMode === 'project' ? treeErrors.project : treeErrors.catalog;
   const snapshotForCurrentMode = treeMode === 'project' ? projectSnapshot : catalogSnapshot;
   const currentProjectSummary = useMemo(() => currentFile, [currentFile]);
@@ -865,6 +896,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         <div className="project-toolbar-breadcrumb"><span className="project-toolbar-mark">RAS</span><span>{text(language, '工程管理器', 'Project Explorer')}</span>{title && <><i>/</i><strong title={title}>{title}</strong></>}</div>
         <div className="project-toolbar-actions">
           {headerAction}
+          {hasBackendFileIdentity && <button type="button" className="project-button project-button-secondary" data-testid="project-external-connections-open" onClick={() => setExternalConnectionsOpen(true)}>{text(language, '外部连接', 'Connections')}</button>}
           {workspaceArchiveUrl && downloadableWorkspace && <a className="project-button project-button-secondary" data-testid="project-download-workspace" aria-label={text(language, '请求下载当前工程所属的完整上传工作区 ZIP', 'Request the complete uploaded workspace ZIP that contains the current project')} href={workspaceArchiveUrl} download title={text(language, '请求下载当前工程所属的完整上传工作区 ZIP。', 'Request the complete uploaded workspace ZIP that contains the current project.')}>{text(language, '下载工作区 ZIP', 'Download workspace ZIP')}</a>}
           <button type="button" className="project-button project-button-secondary" disabled={fileBusy || libraryImportBusy} onClick={() => setOpenProjectDialog(true)}>{text(language, '打开工程', 'Open project')}</button>
           <button type="button" className="project-button project-button-secondary" disabled={fileBusy || libraryImportBusy || !backend.supports('projectMigration.inspect')} title={!backend.supports('projectMigration.inspect') ? text(language, '当前 C# 后端未发布工程迁移检查。', 'The C# backend has not advertised project migration inspection.') : undefined} onClick={() => setMigrationOpen(true)}>{text(language, '迁移 v6 工程', 'Migrate v6 project')}</button>
@@ -924,7 +956,9 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
             onCreateModel={openModelCreationDialog}
           />
           {hasBackendFileIdentity && <ProjectTreeMode
+            key={JSON.stringify([context.projectSessionID, context.projectPath])}
             language={language}
+            backend={backend}
             mode={treeMode}
             projectSnapshot={projectSnapshot}
             catalogSnapshot={catalogSnapshot}
@@ -968,6 +1002,18 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         onOpenUploadedProject={requestProjectPathOpen}
         onUploadWorkspace={uploadWorkspace}
         onClearWorkspace={() => setUploadedWorkspace(null)}
+      />
+
+      <ExternalConnectionManager
+        language={language}
+        backend={backend}
+        context={context}
+        snapshot={catalogSnapshot}
+        open={externalConnectionsOpen}
+        hasUnsavedDrafts={hasUnsavedDrafts}
+        onContextCommit={props.onContextCommit}
+        onClose={() => setExternalConnectionsOpen(false)}
+        onCommitted={onExternalConnectionsCommitted}
       />
 
       <MigrateProjectControl

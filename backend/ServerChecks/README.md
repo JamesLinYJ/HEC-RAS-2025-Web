@@ -46,6 +46,14 @@ dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --r
 
 The runner copies the referenced project to a new output directory before calling `modelCreation.inspect/commit`. It verifies the created HDF files, exact Geometry/Plan association rows, `project.open` and project-tree readback, unchanged existing HDF bytes, and rejection of an outdated project revision without publishing another model. Boundary Conditions are discovered from their standard directory by the retained C# loader; the format has no Boundary Conditions XML section. A successful creation can therefore keep the project SHA unchanged. The legacy `modelCreation.create` operation remains HDF-only; the React creation dialogs use the project-commit operation.
 
+Verify real external Project connection add, update and remove transactions using the completed Result-hover fixture:
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --run-project-connections-http http://127.0.0.1:5080 /tmp/hecras-result-hover/result-hover-manifest.json /tmp/hecras-project-connections
+```
+
+This check copies the completed fixture into a new output directory, then exercises ordinary File (`.txt`) add, update and remove through `project.connection.inspect/commit`. It verifies canonical path and source SHA readback, rejects a changed target source and a stale Project revision without modifying the Project, and confirms each commit through `project.open` and `catalog.tree.load`. Original and copied HDF files are checked byte-for-byte; only files and XML in the new output copy are modified. The command requires an already-running loopback server and does not launch one.
+
 Create a separate fixture for the React meteorological time-series editor:
 
 ```sh

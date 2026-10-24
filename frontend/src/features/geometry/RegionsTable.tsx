@@ -5,6 +5,7 @@ import type { GeometryRow } from './geometryTypes';
 
 export type RegionsTableProps = Omit<GeometryTopologyTablePageProps, 'kind'> & {
   onSelectionChange?: (rows: GeometryRow[]) => void;
+  selectedRowIDs?: string[];
 };
 
 /** Source-backed control-point/region list with row identity preserved for property and recipe tools. */
@@ -21,6 +22,7 @@ export function RegionsTable(props: RegionsTableProps) {
     onChange={props.onChange}
     onDelete={props.onDelete}
     onLocalAdd={props.onLocalAdd}
+    selectedRowIDs={props.selectedRowIDs}
     onSelect={(ids) => props.onSelectionChange?.(rows.filter((row) => ids.includes(row.id)))}
   />;
 }

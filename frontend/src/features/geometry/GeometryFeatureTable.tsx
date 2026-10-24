@@ -15,6 +15,7 @@ interface GeometryFeatureTableProps {
   onDelete?: (rows: GeometryRow[]) => void;
   onLocalAdd?: () => void;
   onSelect?: (ids: string[]) => void;
+  selectedRowIDs?: string[];
 }
 
 function CellEditor({
@@ -89,9 +90,11 @@ export function GeometryFeatureTable({
   onDelete,
   onLocalAdd,
   onSelect,
+  selectedRowIDs,
 }: GeometryFeatureTableProps) {
   const [filter, setFilter] = useState('');
-  const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
+  const [internalSelectedIDs, setInternalSelectedIDs] = useState<string[]>([]);
+  const selectedIDs = selectedRowIDs ?? internalSelectedIDs;
   const sourceRows = table?.rows ?? [];
   const allRows = useMemo(() => [...sourceRows, ...localRows], [sourceRows, localRows]);
   const columns = table?.columns ?? [];
@@ -107,10 +110,14 @@ export function GeometryFeatureTable({
   const selectedRows = allRows.filter((row) => selectedIDs.includes(row.id));
   const localIDSet = new Set(localRows.map((row) => row.id));
 
+  const updateSelection = (ids: string[]): void => {
+    if (selectedRowIDs === undefined) setInternalSelectedIDs(ids);
+    onSelect?.(ids);
+  };
+
   const toggleRow = (id: string): void => {
     const next = selectedIDs.includes(id) ? selectedIDs.filter((current) => current !== id) : [...selectedIDs, id];
-    setSelectedIDs(next);
-    onSelect?.(next);
+    updateSelection(next);
   };
 
   const toggleVisible = (): void => {
@@ -118,16 +125,14 @@ export function GeometryFeatureTable({
     const next = allVisibleSelected
       ? selectedIDs.filter((id) => !visibleIDSet.has(id))
       : [...new Set([...selectedIDs, ...visibleRows.map((row) => row.id)])];
-    setSelectedIDs(next);
-    onSelect?.(next);
+    updateSelection(next);
   };
 
   const commitDelete = (): void => {
     if (!selectedRows.length || busy) return;
     onDelete?.(selectedRows);
     const selected = selectedIDs.filter((id) => !selectedRows.some((row) => row.id === id));
-    setSelectedIDs(selected);
-    onSelect?.(selected);
+    updateSelection(selected);
   };
 
   return (

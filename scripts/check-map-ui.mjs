@@ -56,6 +56,16 @@ export async function checkMapUI({ fixture, output, evaluate, waitFor, command, 
   };
   await open();
   process.stdout.write('Map UI: real project opened.\n');
+  if (!resultHoverOnly && !terrainOnly) {
+    // A group has no asset path. Selecting it after an actual model must retain
+    // the local catalog selection when the active workbench asset is cleared.
+    await evaluate("Array.from(document.querySelectorAll('.project-tree-node')).find(n=>n.querySelector('.project-tree-node-name')?.textContent==='Plan CPU').click()");
+    await waitFor("document.querySelector('.project-tree-inspector').innerText.includes('Plan CPU')", 'source model selection before local group');
+    await navigate('project');
+    await evaluate("document.querySelector('.project-tree-node').click()");
+    await waitFor("document.querySelector('.project-tree-node').getAttribute('aria-selected')==='true' && !document.querySelector('.project-tree-detail-empty')", 'non-asset catalog selection remains mounted');
+    report.checks.push('non-asset catalog selection survives clearing the prior model asset without unmounting its detail pane');
+  }
   if (terrainOnly) {
     const manifestPath = process.env.HECRAS_VERIFY_TERRAIN_FIXTURE?.trim();
     assert.ok(manifestPath && path.isAbsolute(manifestPath), 'Terrain acceptance requires an absolute manifest path.');
@@ -127,7 +137,7 @@ export async function checkMapUI({ fixture, output, evaluate, waitFor, command, 
     copiedGeometrySHA: sha(await readFile(path.join(path.dirname(fixture.geometryPath), geometryCopies[0]))),
     copiedPlanSHA: sha(await readFile(path.join(path.dirname(fixture.planPath), planCopies[0]))) };
   await evaluate("Array.from(document.querySelectorAll('.project-tree-node')).find(n=>n.querySelector('.project-tree-node-name')?.textContent==='Plan CPU (1)').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
-  await waitFor("document.querySelector('.ras-document-title').textContent.includes('Plan CPU (1)') && Array.from(document.querySelectorAll('[data-feature=editors] option')).some(n=>n.value==='CPU')", 'copied Plan reopens through actual HDF model reader', 60_000);
+  await waitFor("document.querySelector('.ras-document-title').textContent.includes('Plan CPU (1)') && Array.from(document.querySelectorAll('[data-feature=editors] [role=combobox]')).some(n=>/^CPU\\b/.test(n.textContent.trim()))", 'copied Plan reopens through actual HDF model reader', 60_000);
   report.checks.push('project-tree Geometry and Plan copies publish actual HDF files and .ras associations, while original HDF bytes remain unchanged');
 
   await navigate('map');
@@ -162,6 +172,15 @@ export async function checkMapUI({ fixture, output, evaluate, waitFor, command, 
   assert.ok(vectorPaths.some(item => (item.d.match(/M /g)??[]).length===2 && item.rule==='evenodd'), 'The persisted polygon hole did not render with two rings');
   await evaluate("Array.from(document.querySelectorAll('svg.map-canvas [data-feature-id]')).find(n=>n.querySelector('circle')).dispatchEvent(new MouseEvent('click',{bubbles:true}))");
   await waitFor("document.querySelector('.map-inspector-pane').innerText.includes('中文测点') && document.querySelector('.map-inspector-pane').innerText.includes('2.75')", 'real persisted attribute selection');
+  assert.ok(await evaluate("document.querySelector('[data-testid=ras-layer-properties-pane]')?.innerText.includes('2.75')"), 'Contextual properties lost the actual source attribute');
+  await evaluate("Array.from(document.querySelectorAll('svg.map-canvas [data-feature-id]')).find(n=>n.querySelector('circle')).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:500,clientY:300}))");
+  await waitFor("document.activeElement?.closest('.map-feature-context-menu') && document.activeElement.textContent.includes('缩放到要素')", 'context action initial keyboard focus');
+  await evaluate("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true}))");
+  assert.equal(await evaluate("document.activeElement.textContent"), '关闭', 'Context actions did not wrap keyboard focus');
+  assert.equal(await evaluate("document.querySelector('.map-feature-context-menu button[disabled]')?.textContent"), '隐藏图层', 'Persisted source visibility must remain owned by the project tree');
+  await evaluate("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+  await waitFor("!document.querySelector('.map-feature-context-menu') && document.querySelector('[data-testid=ras-layer-properties-pane]').innerText.includes('中文测点')", 'context action dismissal retains current selection');
+  report.checks.push('source-backed selection properties and contextual keyboard actions retain source attributes and project-owned visibility');
   const inspectImage = async (kind) => evaluate(`(async()=>{const node=document.querySelector('svg.map-canvas image[data-source-kind=${kind}]');if(!node)return null;const image=new Image();image.src=node.getAttribute('href');await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const context=canvas.getContext('2d');context.drawImage(image,0,0);const pixels=context.getImageData(0,0,image.width,image.height).data;let opaque=0;for(let i=3;i<pixels.length;i+=4)if(pixels[i]>0)opaque++;return{width:image.width,height:image.height,opaque,sourcePath:node.dataset.sourcePath,profileIndex:node.dataset.profileIndex,screenWidth:node.getBBox().width,screenHeight:node.getBBox().height};})()`);
   const raster = await inspectImage('raster');
   assert.ok(raster.width>0 && raster.height>0 && raster.opaque>0 && raster.screenWidth>0 && raster.screenHeight>0);

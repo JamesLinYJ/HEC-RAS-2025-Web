@@ -5,7 +5,7 @@ import { BoundaryConditionEditor, BOUNDARY_EDITOR_PAGE_IDS } from './BoundaryCon
 import { ClassificationEditor } from './ClassificationEditor';
 import { EditorCatalogBrowser } from './EditorCatalogBrowser';
 import { NValueEditor } from './NValueEditor';
-import type { EditorPageProps, EditorSchema, EditorPageProps as PageProps, ModelDraft, ModelSnapshot, SeriesTransformOperation, SpatialGridData, SpatialGridInspection, SpatialGridSelection, TerrainTransformCommand } from './model';
+import type { ClassificationMapData, ClassificationTransformCommand, EditorPageProps, EditorSchema, EditorPageProps as PageProps, ManningTransformOperation, ModelDraft, ModelSnapshot, NValuePreviewData, SeriesTransformOperation, SpatialGridData, SpatialGridInspection, SpatialGridSelection, TerrainTransformCommand } from './model';
 import { pageTitle, schemaForAsset, snapshotRows } from './model';
 import { changedModelCells, createModelDraft, isModelDraftDirty, updateModelSample, validateChangedSamples } from './modelDraft';
 import { validateChangedTableCells, validateModelDraft } from './SchemaFieldRenderer';
@@ -32,6 +32,8 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const snapshotRef = useRef<ModelSnapshot | null>(snapshot);
   snapshotRef.current = snapshot;
   const [draft, setDraft] = useState<ModelDraft | null>(null);
+  const draftRef = useRef<ModelDraft | null>(draft);
+  draftRef.current = draft;
   const [loadState, setLoadState] = useState<LoadState>({ status: 'idle' });
   const [catalog, setCatalog] = useState<CatalogState>({ schemas: [], tables: [] });
   const [catalogError, setCatalogError] = useState('');
@@ -53,9 +55,13 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const desiredSource = useMemo(() => sourceFor(props.context), [props.context]);
   const dirty = useMemo(() => {
     const currentDraft = draft ?? emptyDraft();
-    if (!snapshot || !currentDraft.terrainSelectionBaselineFields) return isModelDraftDirty(snapshot, currentDraft);
+    const selectionBaselines = {
+      ...(currentDraft.terrainSelectionBaselineFields ?? {}),
+      ...(currentDraft.classificationSelectionBaselineFields ?? {}),
+    };
+    if (!snapshot || Object.keys(selectionBaselines).length === 0) return isModelDraftDirty(snapshot, currentDraft);
     const fields = { ...currentDraft.fields };
-    for (const [fieldID, baselineValue] of Object.entries(currentDraft.terrainSelectionBaselineFields)) {
+    for (const [fieldID, baselineValue] of Object.entries(selectionBaselines)) {
       const currentValue = Object.prototype.hasOwnProperty.call(fields, fieldID) ? fields[fieldID] : null;
       if (currentValue !== baselineValue) continue;
       if (Object.prototype.hasOwnProperty.call(snapshot.fields, fieldID)) fields[fieldID] = snapshot.fields[fieldID];
@@ -183,7 +189,17 @@ export default function EditorWorkbench(props: FeaturePageProps) {
 
   const onFieldChange = (fieldID: string, value: string): void => {
     if (!snapshot?.canEdit || activeSave.current) return;
-    setDraft((current) => current ? { ...current, fields: { ...current.fields, [fieldID]: value } } : current);
+    setDraft((current) => {
+      if (!current) return current;
+      const next = { ...current, fields: { ...current.fields, [fieldID]: value } };
+      if (fieldID === 'ClassificationLayersEditor/ClassificationLayer_SelectedClassificationInput') {
+        next.classificationSelectionBaselineFields = {
+          ...(current.classificationSelectionBaselineFields ?? {}),
+          [fieldID]: value,
+        };
+      }
+      return next;
+    });
     setSaveMessage('');
   };
   const onImagesChange = (fieldID: string, images: ModelDraft['images'][string]): void => {
@@ -967,6 +983,318 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     }
   };
 
+  const onClassificationTransform: PageProps['onClassificationTransform'] = async (command: ClassificationTransformCommand) => {
+    setSaveErrorDetails('');
+    if (activeSave.current || busy) return false;
+    const classification = draft?.classificationView ?? snapshot?.classification;
+    if (!snapshot || !draft || !asset || !source.context.projectPath || !snapshot.canEdit || !classification) return false;
+    if (!backend.supports('model.classificationTransform') || !backend.supports('model.save')) {
+      setSaveMessage(text(language, '当前工作环境暂不支持分类输入调整和保存。', 'The active model service does not support classification input editing and save.'));
+      return false;
+    }
+    if (validations.length) {
+      setSaveErrors(validations);
+      setSaveMessage(text(language, '当前草稿有无效值；修正后才能调整分类输入。', 'Correct invalid draft values before changing classification inputs.'));
+      return false;
+    }
+
+    const beforeInputIDs = classification.inputs.map((input) => input.id);
+    if (new Set(beforeInputIDs).size !== beforeInputIDs.length || beforeInputIDs.some((id) => !id)) {
+      setSaveMessage(text(language, '分类输入身份不唯一，无法执行结构调整。', 'Classification input identities are not unique, so the structure cannot be changed.'));
+      return false;
+    }
+    const classificationTables = new Map(classification.inputs.flatMap((input) => input.tableId ? [[input.tableId, input] as const] : []));
+    const beforeRows = new Map<string, ModelDraft['rows'][string]>();
+    for (const [tableID, input] of classificationTables) beforeRows.set(tableID, draft.rows[tableID] ?? input.rows);
+    const requestState = { owner: source.owner, controller: new AbortController() };
+    const requestGeneration = generation.current;
+    activeSave.current = requestState;
+    const isCurrentRequest = () => activeSave.current === requestState
+      && activeOwner.current === requestState.owner
+      && generation.current === requestGeneration
+      && !requestState.controller.signal.aborted;
+    setBusy(true);
+    setSaveMessage('');
+    setSaveErrors([]);
+    const readOnlyFields = new Set([...(snapshot.readOnlyFields ?? []), ...(draft.boundaryReadOnlyFields ?? []), ...(draft.terrainReadOnlyFields ?? [])]);
+    const selectionBaselines = draft.classificationSelectionBaselineFields ?? {};
+    const fields = Object.fromEntries(Object.entries(draft.fields).filter(([id, value]) => {
+      if (Object.prototype.hasOwnProperty.call(selectionBaselines, id) && value === selectionBaselines[id]) return false;
+      return value !== snapshot.fields[id] && !readOnlyFields.has(id);
+    }));
+    // The selected input is navigation state, but transforms still need it to
+    // keep the same input active in the revision-bound draft.
+    const selectionField = 'ClassificationLayersEditor/ClassificationLayer_SelectedClassificationInput';
+    fields[selectionField] = draft.fields[selectionField] ?? classification.selectedId ?? '';
+    const rows = Object.fromEntries(Object.entries(draft.rows).filter(([tableID]) => classificationTables.has(tableID)));
+    const changedCells = changedModelCells(draft, snapshotRows(snapshot));
+    const model = {
+      ...modelRequest(source.context, asset),
+      revision: snapshot.revision,
+      fields,
+      images: draft.images,
+      sourceState: draft.sourceState !== (snapshot.sourceState ?? null)
+        ? draft.sourceState
+        : snapshot.sourceState ?? sourceStateFor(asset) ?? null,
+      rows,
+      samples: draft.samples,
+      changedCells: Object.fromEntries(Object.entries(changedCells).filter(([tableID]) => classificationTables.has(tableID))),
+    };
+    try {
+      const result = await backend.request<ModelSnapshot>('model.classificationTransform', { model, ...command }, { signal: requestState.controller.signal });
+      if (!isCurrentRequest()) return false;
+      assertModelSnapshot(result);
+      if (result.revision !== snapshot.revision) throw new Error('The classification transform returned a different source revision.');
+      if (!result.classification || typeof result.sourceState !== 'string' || result.sourceState.length === 0) {
+        throw new Error('The backend did not return a revision-bound classification draft projection.');
+      }
+      const afterInputIDs = result.classification.inputs.map((input) => input.id);
+      if (new Set(afterInputIDs).size !== afterInputIDs.length || afterInputIDs.some((id) => !id))
+        throw new Error('The backend returned duplicate classification input identities.');
+      if (command.operation === 'remove') {
+        if (!command.itemId || afterInputIDs.length !== beforeInputIDs.length - 1
+          || beforeInputIDs.filter((id) => id !== command.itemId).some((id, index) => afterInputIDs[index] !== id))
+          throw new Error('The backend did not preserve remaining classification input identities while removing an input.');
+      } else if (command.operation === 'reorder') {
+        if (command.from === undefined || command.to === undefined || command.from < 0 || command.to < 0
+          || command.from >= beforeInputIDs.length || command.to >= beforeInputIDs.length)
+          throw new Error('The classification input order request was invalid.');
+        const expected = beforeInputIDs.slice();
+        const [moved] = expected.splice(command.from, 1);
+        expected.splice(command.to, 0, moved);
+        if (afterInputIDs.some((id, index) => id !== expected[index]))
+          throw new Error('The backend did not return the requested classification input order.');
+      } else if (command.operation === 'geometry') {
+        const retained = afterInputIDs.filter((id) => beforeInputIDs.includes(id));
+        if (retained.length !== beforeInputIDs.length || retained.some((id, index) => id !== beforeInputIDs[index]))
+          throw new Error('The backend changed existing classification input identities during polygon editing.');
+        if (command.geometry?.operation === 'create' && afterInputIDs.length > beforeInputIDs.length + 1)
+          throw new Error('The backend created more than one polygon input for a geometry edit.');
+      }
+      if (result.classification.selectedId && !afterInputIDs.includes(result.classification.selectedId))
+        throw new Error('The backend returned a stale classification input selection.');
+      for (const input of result.classification.inputs) {
+        const rowsForInput = input.tableId ? (result.classification.inputs.find((item) => item.id === input.id)?.rows ?? []) : [];
+        if (input.tableId && (rowsForInput.some((row) => !row.id) || new Set(rowsForInput.map((row) => row.id)).size !== rowsForInput.length))
+          throw new Error(`The backend returned duplicate or empty classification mapping row identities for ${input.tableId}.`);
+        const previous = beforeRows.get(input.tableId ?? '');
+        if (previous && command.operation !== 'remove' && previous.length !== rowsForInput.length)
+          throw new Error('The classification transform changed raster mapping row counts outside the requested operation.');
+      }
+      for (const input of result.classification.inputs) {
+        const polygonIDs = input.polygons.map((polygon) => polygon.id);
+        if (polygonIDs.some((id) => !id) || new Set(polygonIDs).size !== polygonIDs.length)
+          throw new Error(`The backend returned duplicate or empty polygon identities for ${input.id}.`);
+      }
+
+      const transformedDraft = createModelDraft(result);
+      const mergedFields = { ...draft.fields, ...transformedDraft.fields };
+      const liveClassificationScopes = new Set(result.classification.inputs.map((input) => `${input.scope}/`));
+      for (const fieldID of Object.keys(mergedFields)) {
+        if (fieldID.startsWith('ClassificationInputs/') && ![...liveClassificationScopes].some((scope) => fieldID.startsWith(scope))) delete mergedFields[fieldID];
+      }
+      const liveClassificationTables = new Set(result.classification.inputs.flatMap((input) => input.tableId ? [input.tableId] : []));
+      const mergedRows = { ...draft.rows };
+      for (const tableID of classificationTables.keys()) if (!liveClassificationTables.has(tableID)) delete mergedRows[tableID];
+      for (const tableID of liveClassificationTables) {
+        if (Object.prototype.hasOwnProperty.call(transformedDraft.rows, tableID)) mergedRows[tableID] = transformedDraft.rows[tableID];
+      }
+      const previousBaseline = draft.classificationSelectionBaselineFields ?? {};
+      const currentSelection = Object.prototype.hasOwnProperty.call(draft.fields, selectionField) ? draft.fields[selectionField] : null;
+      const expectedSelection = Object.prototype.hasOwnProperty.call(previousBaseline, selectionField)
+        ? previousBaseline[selectionField]
+        : Object.prototype.hasOwnProperty.call(snapshot.fields, selectionField) ? snapshot.fields[selectionField] : null;
+      const classificationSelectionBaselineFields = { ...previousBaseline };
+      if (currentSelection === expectedSelection) {
+        classificationSelectionBaselineFields[selectionField] = Object.prototype.hasOwnProperty.call(result.fields, selectionField)
+          ? result.fields[selectionField] : null;
+      }
+      setDraft((current) => {
+        if (!current || activeOwner.current !== requestState.owner || generation.current !== requestGeneration) return current;
+        const next = {
+          ...current,
+          sourceState: transformedDraft.sourceState,
+          fields: mergedFields,
+          images: current.images,
+          rows: mergedRows,
+          samples: current.samples,
+          sampleText: current.sampleText,
+          classificationView: result.classification,
+          classificationSelectionBaselineFields,
+        };
+        return { ...next, changedCells: changedModelCells(next, snapshotRows(snapshot)) };
+      });
+      setSaveMessage(text(language, '分类更改已进入草稿；点击“保存”后才会写入模型文件。', 'Classification changes are in the draft. Save to write them to the model file.'));
+      return true;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setSaveMessage(text(language, '分类输入操作失败。', 'The classification input operation failed.'));
+        setSaveErrorDetails(message(error));
+      }
+      return false;
+    } finally {
+      if (activeSave.current === requestState) {
+        activeSave.current = null;
+        setBusy(false);
+      }
+    }
+  };
+
+  const onClassificationMap: PageProps['onClassificationMap'] = async (signal) => {
+    const currentSnapshot = snapshotRef.current;
+    const currentDraft = draftRef.current;
+    const currentClassification = currentDraft?.classificationView ?? currentSnapshot?.classification;
+    if (!currentSnapshot || !currentDraft || !asset || !source.context.projectPath || !currentClassification
+      || !backend.supports('model.classificationMap')) throw new Error('分类地图预览当前不可用。');
+    const owner = source.owner;
+    const revision = currentSnapshot.revision;
+    const requestGeneration = generation.current;
+    const selectedField = 'ClassificationLayersEditor/ClassificationLayer_SelectedClassificationInput';
+    const selectedInputID = currentDraft.fields[selectedField] ?? currentClassification.selectedId ?? currentClassification.inputs[0]?.id ?? '';
+    const fields = Object.fromEntries(Object.entries(currentDraft.fields).filter(([id]) =>
+      id === selectedField || id.startsWith('ClassificationInputs/')));
+    fields[selectedField] = selectedInputID;
+    const tableIDs = new Set(currentClassification.inputs.flatMap((input) => input.tableId ? [input.tableId] : []));
+    const model = {
+      ...modelRequest(source.context, asset),
+      revision,
+      fields,
+      images: {},
+      sourceState: currentDraft.sourceState !== (currentSnapshot.sourceState ?? null)
+        ? currentDraft.sourceState
+        : currentSnapshot.sourceState ?? sourceStateFor(asset) ?? null,
+      rows: Object.fromEntries(Object.entries(currentDraft.rows).filter(([tableID]) => tableIDs.has(tableID))),
+      samples: {},
+      changedCells: Object.fromEntries(Object.entries(changedModelCells(currentDraft, snapshotRows(currentSnapshot))).filter(([tableID]) => tableIDs.has(tableID))),
+    };
+    const signalOrAborted = signal ?? new AbortController().signal;
+    const draftStamp = JSON.stringify({ sourceState: currentDraft.sourceState, fields: model.fields, rows: model.rows });
+    const result = await backend.request<ClassificationMapData>('model.classificationMap', { model }, { signal: signalOrAborted });
+    if (signalOrAborted.aborted || activeOwner.current !== owner || generation.current !== requestGeneration
+      || snapshotRef.current?.revision !== revision) throw new DOMException('分类地图预览属于已切换的模型源。', 'AbortError');
+    const latestDraft = draftRef.current;
+    const latestClassification = latestDraft?.classificationView ?? snapshotRef.current?.classification;
+    const latestTableIDs = new Set(latestClassification?.inputs.flatMap((input) => input.tableId ? [input.tableId] : []) ?? []);
+    const latestFields = Object.fromEntries(Object.entries(latestDraft?.fields ?? {}).filter(([id]) => id === selectedField || id.startsWith('ClassificationInputs/')));
+    const latestModelStamp = JSON.stringify({
+      sourceState: latestDraft?.sourceState,
+      fields: { ...latestFields, [selectedField]: latestDraft?.fields[selectedField] ?? latestClassification?.selectedId ?? latestClassification?.inputs[0]?.id ?? '' },
+      rows: Object.fromEntries(Object.entries(latestDraft?.rows ?? {}).filter(([tableID]) => latestTableIDs.has(tableID))),
+    });
+    if (latestModelStamp !== draftStamp) throw new DOMException('分类输入在地图预览期间发生了变化。', 'AbortError');
+    if (!result || !Array.isArray(result.legend) || (result.raster && (!Number.isInteger(result.raster.width) || !Number.isInteger(result.raster.height) || typeof result.raster.rgba !== 'string')))
+      throw new Error('分类地图预览数据不完整。');
+    return result;
+  };
+
+  const onManningTransform: PageProps['onManningTransform'] = async (operation: ManningTransformOperation) => {
+    setSaveErrorDetails('');
+    if (activeSave.current || busy) return false;
+    const manning = draft?.manningView ?? snapshot?.manning;
+    if (!snapshot || !draft || !asset || !source.context.projectPath || !snapshot.canEdit || !manning) return false;
+    if (!backend.supports('model.manningTransform') || !backend.supports('model.save')) {
+      setSaveMessage(text(language, '当前工作环境暂不支持糙率变换和保存。', 'The active model service does not support Manning transforms and save.'));
+      return false;
+    }
+    if (validations.length) {
+      setSaveErrors(validations);
+      setSaveMessage(text(language, '当前草稿有无效值；修正后才能应用糙率操作。', 'Correct invalid draft values before applying Manning operations.'));
+      return false;
+    }
+    const requestState = { owner: source.owner, controller: new AbortController() };
+    const requestGeneration = generation.current;
+    activeSave.current = requestState;
+    const isCurrentRequest = () => activeSave.current === requestState
+      && activeOwner.current === requestState.owner
+      && generation.current === requestGeneration
+      && !requestState.controller.signal.aborted;
+    setBusy(true);
+    setSaveMessage('');
+    setSaveErrors([]);
+    const readOnlyFields = new Set([...(snapshot.readOnlyFields ?? []), ...(draft.boundaryReadOnlyFields ?? []), ...(draft.terrainReadOnlyFields ?? [])]);
+    const fields = Object.fromEntries(Object.entries(draft.fields).filter(([id, value]) => value !== snapshot.fields[id] && !readOnlyFields.has(id)));
+    const tableID = 'ClassificationLayerManningNEditor/InterpretationTable';
+    const rows = Object.prototype.hasOwnProperty.call(draft.rows, tableID) ? { [tableID]: draft.rows[tableID] } : {};
+    const model = {
+      ...modelRequest(source.context, asset),
+      revision: snapshot.revision,
+      fields,
+      images: draft.images,
+      sourceState: draft.sourceState !== (snapshot.sourceState ?? null)
+        ? draft.sourceState
+        : snapshot.sourceState ?? sourceStateFor(asset) ?? null,
+      rows,
+      samples: draft.samples,
+      changedCells: Object.fromEntries(Object.entries(changedModelCells(draft, snapshotRows(snapshot))).filter(([id]) => id === tableID)),
+    };
+    try {
+      const result = await backend.request<ModelSnapshot>('model.manningTransform', { model, operation }, { signal: requestState.controller.signal });
+      if (!isCurrentRequest()) return false;
+      assertModelSnapshot(result);
+      if (result.revision !== snapshot.revision) throw new Error('The Manning transform returned a different source revision.');
+      if (!result.manning || typeof result.sourceState !== 'string' || result.sourceState.length === 0)
+        throw new Error('The backend did not return a revision-bound Manning draft projection.');
+      const manning = result.manning;
+      const rowIDs = manning.rows.map((row) => row.id);
+      if (rowIDs.some((id) => !id) || new Set(rowIDs).size !== rowIDs.length)
+        throw new Error('The backend returned duplicate or empty Manning row identities.');
+      const transformedDraft = createModelDraft(result);
+      setDraft((current) => {
+        if (!current || activeOwner.current !== requestState.owner || generation.current !== requestGeneration) return current;
+        const next = {
+          ...current,
+          sourceState: transformedDraft.sourceState,
+          fields: { ...current.fields, ...transformedDraft.fields },
+          images: current.images,
+          rows: { ...current.rows, [tableID]: transformedDraft.rows[tableID] ?? current.rows[tableID] ?? manning.rows },
+          samples: current.samples,
+          sampleText: current.sampleText,
+          manningView: manning,
+        };
+        return { ...next, changedCells: changedModelCells(next, snapshotRows(snapshot)) };
+      });
+      setSaveMessage(text(language, '糙率更改已进入草稿；点击“保存”后才会写入模型文件。', 'Manning changes are in the draft. Save to write them to the model file.'));
+      return true;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setSaveMessage(text(language, '糙率操作失败。', 'The Manning operation failed.'));
+        setSaveErrorDetails(message(error));
+      }
+      return false;
+    } finally {
+      if (activeSave.current === requestState) {
+        activeSave.current = null;
+        setBusy(false);
+      }
+    }
+  };
+
+  const onNValuePreview: PageProps['onNValuePreview'] = async (signal) => {
+    const currentSnapshot = snapshotRef.current;
+    const currentDraft = draftRef.current;
+    if (!currentSnapshot || !currentDraft || !asset || !source.context.projectPath || !source.context.projectRevision
+      || !currentSnapshot.manning || !backend.supports('nvalue.preview')) throw new Error('糙率预览当前不可用。');
+    if (isModelDraftDirty(currentSnapshot, currentDraft)) throw new Error('请先保存或丢弃糙率草稿，再生成对应源修订的预览。');
+    const owner = source.owner;
+    const revision = currentSnapshot.revision;
+    const projectRevision = source.context.projectRevision;
+    const requestGeneration = generation.current;
+    const result = await backend.request<NValuePreviewData>('nvalue.preview', {
+      projectPath: source.context.projectPath,
+      assetPath: asset.path,
+      projectRevision,
+      revision,
+    }, { signal });
+    if (signal?.aborted || activeOwner.current !== owner || generation.current !== requestGeneration
+      || snapshotRef.current?.revision !== revision || source.context.projectRevision !== projectRevision
+      || isModelDraftDirty(snapshotRef.current, draftRef.current ?? emptyDraft()))
+      throw new DOMException('糙率预览属于已切换或已修改的模型修订。', 'AbortError');
+    if (!result || result.revision !== revision || result.projectRevision !== projectRevision
+      || !Array.isArray(result.legendStops) || (result.raster && typeof result.raster.rgba !== 'string'))
+      throw new Error('糙率预览与当前模型修订不匹配。');
+    return result;
+  };
+
   const requestTransition = (next: Transition): void => {
     if (pending || busy) return;
     if (next.kind === 'page' && next.pageID === activePageID || next.kind === 'view' && next.view === view) return;
@@ -1118,6 +1446,12 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     ...(source.context.projectPath && backend.supports('model.gridFrame') ? { onGridFrame } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.gridImport') && backend.supports('model.save') ? { onGridImport } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.terrainTransform') && backend.supports('model.save') ? { onTerrainTransform } : {}),
+    ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.classificationTransform') && backend.supports('model.save') ? { onClassificationTransform } : {}),
+    ...(!!source.context.projectPath && backend.supports('model.classificationMap') ? { onClassificationMap } : {}),
+    ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.manningTransform') && backend.supports('model.save') ? { onManningTransform } : {}),
+    canPreviewNValue: !!source.context.projectPath && !!source.context.projectRevision && !!snapshot.manning
+      && !dirty && !busy && backend.supports('nvalue.preview'),
+    ...(!!source.context.projectPath && !!source.context.projectRevision && backend.supports('nvalue.preview') ? { onNValuePreview } : {}),
   } : null;
   const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy;
 

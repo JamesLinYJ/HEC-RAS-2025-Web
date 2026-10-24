@@ -134,6 +134,18 @@
 .geometry-arc-tag-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .geometry-arc-tag-create { display: flex; align-items: flex-end; gap: 9px; flex-wrap: wrap; padding: 12px 15px; border-top: 1px solid var(--geo-line); }
 .geometry-arc-tag-create input, .geometry-arc-tag-create select { min-width: 130px; }
+.geometry-tag-list, .geometry-tag-preview { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 10px 14px; }
+.geometry-tag-chip, .geometry-tag-preview-item { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 5px 8px; color: var(--geo-text); background: rgba(39, 92, 110, .34); border: 1px solid rgba(155, 189, 205, .2); border-radius: 999px; font: inherit; font-size: 11px; }
+.geometry-tag-chip strong, .geometry-tag-preview-item strong { overflow-wrap: anywhere; color: var(--geo-accent); }
+.geometry-tag-chip > span, .geometry-tag-preview-item > span { overflow-wrap: anywhere; }
+.geometry-tag-chip button { width: 20px; height: 20px; padding: 0; color: var(--geo-muted); background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
+.geometry-tag-chip button:hover:not(:disabled) { color: #ff9393; background: rgba(255, 90, 90, .12); }
+.geometry-tag-chip button:disabled, .geometry-tag-preview-item:disabled { opacity: .55; cursor: not-allowed; }
+.geometry-tag-preview-item { cursor: pointer; }
+.geometry-tag-value-control { border-top: 1px solid var(--geo-line); }
+.geometry-filter-row { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 9px; padding: 11px 14px; border-top: 1px solid var(--geo-line); }
+.geometry-filter-row select, .geometry-filter-row input { min-width: 145px; min-height: 33px; padding: 6px 9px; color: var(--geo-text); background: rgba(4, 20, 29, .72); border: 1px solid rgba(155, 189, 205, .16); border-radius: 7px; font: inherit; }
+.geometry-filter-row .geometry-form-field { flex: 1 1 150px; }
 .geometry-arc-points-dialog { width: min(100%, 900px); max-height: min(90vh, 780px); display: flex; flex-direction: column; }
 .geometry-arc-points-dialog .geometry-table-wrap { max-height: 55vh; }
 .geometry-arc-points-dialog .geometry-table { min-width: 580px; }

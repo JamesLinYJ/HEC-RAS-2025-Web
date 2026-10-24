@@ -13,7 +13,7 @@ export function PrecipitationControl(props: EditorPageProps) {
       ratioUnit: ['比例', 'Ratio'],
     }} />
     {!spatial?.valueUnits.choices.length && <div className="editor-meteorology-unit-options" aria-label={props.language === 'zh' ? '降水单位选项' : 'Precipitation unit options'}>
-      <span>{props.language === 'zh' ? '原控件单位选项' : 'Source control unit options'}</span>
+      <span>{props.language === 'zh' ? '降水单位选项' : 'Precipitation unit options'}</span>
       {MetDataUnits.map((unit) => <span key={unit}>{unit}</span>)}
     </div>}
   </>;

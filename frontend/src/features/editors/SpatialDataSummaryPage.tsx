@@ -4,6 +4,7 @@ import { SpatialBoundaryConditionsPage } from './SpatialBoundaryConditionsPage';
 import { SpatialBoundaryConditionRasterImporter } from './SpatialBoundaryConditionRasterImporter';
 import { SpatialDataHeader, type SpatialBoundaryLayerID } from './SpatialDataHeader';
 import { SpatialDataSummary } from './SpatialDataSummary';
+import { GriddedDataControl } from './GriddedDataControl';
 
 export function SpatialDataSummaryPage(props: EditorPageProps) {
   const [layerId, setLayerId] = useState<SpatialBoundaryLayerID>('precipitation');
@@ -20,6 +21,7 @@ export function SpatialDataSummaryPage(props: EditorPageProps) {
   useEffect(() => {
     frameController.current?.abort();
     frameGeneration.current++;
+    setFrames({});
     setFrameLoading(false);
     setFrameError('');
   }, [layerId, props.snapshot.revision]);
@@ -47,18 +49,18 @@ export function SpatialDataSummaryPage(props: EditorPageProps) {
 
   return <section className="editor-schema-page editor-meteorology-page" aria-label={label('空间边界数据', 'Spatial boundary data')}>
     <div className="editor-schema-heading"><div>
-      <p className="editor-eyebrow">{label('Boundary Conditions · 原空间数据控件组合', 'Boundary Conditions · source spatial-data controls')}</p>
+      <p className="editor-eyebrow">{label('气象边界条件', 'Meteorological boundary conditions')}</p>
       <h2>{label('空间边界数据', 'Spatial boundary data')}</h2>
-      <p className="editor-field-muted">{label('页面读取模型快照的空间输入与格网；测站/输入结构变更由 C# 草稿变换承载，栅格导入则按模型保存回执刷新基线。', 'This page reads spatial inputs and grids from the model snapshot. Station/input structure uses C# draft transforms; raster import refreshes the baseline from the model save receipt.')}</p>
+      <p className="editor-field-muted">{label('查看已保存的格网与测站输入。测站或输入结构调整会先进入草稿；格网导入会立即保存。', 'Review saved grids and station inputs. Station or input structure changes enter the draft first; grid imports save immediately.')}</p>
     </div>
       <div className="editor-workbench-actions">
         <button type="button" className="editor-button" onClick={() => props.onPageChange('PrecipitationControl')}>{label('返回降水页面', 'Back to precipitation')}</button>
         <button type="button" className="editor-button" onClick={() => props.onPageChange('BoundaryConditionEditor')}>{label('返回水力边界', 'Back to hydraulic boundaries')}</button>
       </div>
     </div>
-    <SpatialDataHeader {...props} layerId={layerId} onLayerChange={setLayerId} onImport={() => setShowImporter(true)} />
-    <SpatialDataSummary language={props.language} grid={grid} loading={frameLoading} onFrame={(timeId, component) => { void readFrame(timeId, component); }} />
-    {!props.onGridFrame && <p className="editor-field-muted">{label('当前 C# 服务未公布格网帧读取操作。', 'Grid-frame reading is disabled because the C# service has not advertised the operation.')}</p>}
+    <SpatialDataHeader {...props} layerId={layerId} onLayerChange={setLayerId} />
+    <GriddedDataControl {...props} layerId={layerId} grid={savedGrid} onImport={() => setShowImporter(true)} />
+    <SpatialDataSummary language={props.language} layerId={layerId} revision={props.snapshot.revision} grid={grid} loading={frameLoading} canRead={!!props.onGridFrame} onFrame={(timeId, component) => { void readFrame(timeId, component); }} />
     {frameError && <p className="editor-field-error" role="alert">{frameError}</p>}
     <SpatialBoundaryConditionsPage {...props} layerId={layerId} />
     {showImporter && <SpatialBoundaryConditionRasterImporter {...props} layerId={layerId} onClose={() => setShowImporter(false)} />}

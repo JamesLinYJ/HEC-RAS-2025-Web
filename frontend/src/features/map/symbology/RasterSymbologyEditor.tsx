@@ -42,8 +42,15 @@ export interface RasterSymbologyEditorProps {
   /** The actual result viewport; omitted when the parent cannot provide one. */
   viewport?: RasterMapViewExtent;
   onVisualizationCommitted: (previousRevision: string, nextRevision: string) => void;
+  onAppliedLegendChange?: (legend: AppliedRasterLegend | null) => void;
   onDirtyStateChange?: (owner: string, dirty: boolean) => void;
   backendRevision?: number;
+}
+
+export interface AppliedRasterLegend {
+  source: RasterMapSourceIdentity;
+  draft: RasterSymbologyDraft;
+  values: number[] | null;
 }
 
 type Phase = 'loading' | 'ready' | 'failed';
@@ -59,7 +66,7 @@ interface RequestEnvelope<T> { value: T; request: ActiveRequest; source: RasterM
 interface EditorError { error: unknown }
 
 export function RasterSymbologyEditor({ backend, context, language, source, viewport, onVisualizationCommitted,
-  onDirtyStateChange, backendRevision }: RasterSymbologyEditorProps) {
+  onAppliedLegendChange, onDirtyStateChange, backendRevision }: RasterSymbologyEditorProps) {
   const zh = language === 'zh';
   const sourceParse = useMemo(() => {
     try {
@@ -91,12 +98,26 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
   const identityRef = useRef<RasterMapSourceIdentity | null>(null);
   const ownerKeyRef = useRef('');
   const contextKeyRef = useRef('');
+  const appliedLegendRef = useRef<AppliedRasterLegend | null>(null);
+  const appliedLegendCallbackRef = useRef(onAppliedLegendChange);
+  appliedLegendCallbackRef.current = onAppliedLegendChange;
   const activeRequestRef = useRef<ActiveRequest | null>(null);
   const requestGenerationRef = useRef(0);
   const mountedRef = useRef(false);
   const propsRef = useRef({ ownerKey, contextKey, visualizationRevision: identity?.visualizationRevision ?? '' });
   const pendingLocalCommitRef = useRef<{ ownerKey: string; parentRevisionAtCommit: string; previousRevision: string; nextRevision: string } | null>(null);
   propsRef.current = { ownerKey, contextKey, visualizationRevision: identity?.visualizationRevision ?? '' };
+
+  const publishAppliedLegend = useCallback((legend: AppliedRasterLegend | null) => {
+    appliedLegendRef.current = legend ? cloneAppliedRasterLegend(legend) : null;
+    appliedLegendCallbackRef.current?.(legend ? cloneAppliedRasterLegend(legend) : null);
+  }, []);
+  const preserveAppliedLegendForCurrentSource = useCallback(() => {
+    const legend = appliedLegendRef.current;
+    const currentSource = identityRef.current;
+    if (!legend || !currentSource) return;
+    publishAppliedLegend({ ...legend, source: cloneRasterMapSourceIdentity(currentSource) });
+  }, [publishAppliedLegend]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -105,8 +126,9 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
       requestGenerationRef.current++;
       activeRequestRef.current?.controller.abort();
       activeRequestRef.current = null;
+      publishAppliedLegend(null);
     };
-  }, []);
+  }, [publishAppliedLegend]);
 
   const requestRevisionStillOwned = useCallback((request: ActiveRequest): boolean => {
     const currentPropsRevision = propsRef.current.visualizationRevision;
@@ -216,6 +238,7 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
       && sameRevision(currentSource.visualizationRevision, nextIdentity.visualizationRevision)
       && currentSource?.sourceRevision === nextIdentity?.sourceRevision) return;
 
+    publishAppliedLegend(null);
     requestGenerationRef.current++;
     activeRequestRef.current?.controller.abort();
     activeRequestRef.current = null;
@@ -260,6 +283,7 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
         }
         setSnapshot(result.value.snapshot);
         setBaseline(result.value.snapshot);
+        publishAppliedLegend(makeAppliedRasterLegend(nextIdentity, result.value.snapshot));
         setPhase('ready');
       } catch (error) {
         setEditorError({ error });
@@ -267,7 +291,7 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
       }
     });
   }, [sourceRevisionKey, contextCanInspect, context.projectPath, context.projectXml, context.projectSessionID,
-    context.projectRevision, context.selectedAsset, sourceParse, context, performRequest, isResponseCurrent, zh, backendRevision]);
+    context.projectRevision, context.selectedAsset, sourceParse, context, performRequest, isResponseCurrent, zh, backendRevision, publishAppliedLegend]);
 
   const dirty = Boolean(snapshot && baseline && snapshotStateKey(snapshot) !== snapshotStateKey(baseline));
   useEffect(() => {
@@ -441,6 +465,32 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
       setSuccess(zh ? `符号已写入 .vis（${result.visualizationRevision}）` : `Symbology saved to .vis (${result.visualizationRevision})`);
       try { onVisualizationCommitted(result.previousVisualizationRevision, result.visualizationRevision); }
       catch (error) { setEditorError({ error }); }
+      const appliedSource = identityRef.current;
+      if (appliedSource) {
+        const refreshed = await performRequest(rasterSymbologyMethods.inspect,
+          makeRasterSymbologyRequest(appliedSource, context), parseRasterSymbologyInspect,
+          zh ? '确认已应用图例' : 'Confirming applied legend');
+        if (!refreshed || !isResponseCurrent(refreshed)) {
+          if (identityRef.current?.visualizationRevision === appliedSource.visualizationRevision
+            && ownerKeyRef.current === ownerKey && contextKeyRef.current === contextKey) {
+            publishAppliedLegend(null);
+          }
+          return;
+        }
+        try {
+          assertRasterSymbologyOwner(refreshed.value.previousVisualizationRevision, refreshed.value.sourceRevision,
+            appliedSource, 'inspect');
+          if (!sameRevision(refreshed.value.visualizationRevision, appliedSource.visualizationRevision)
+            || refreshed.value.raster.id !== appliedSource.id
+            || refreshed.value.raster.sourceMapID !== appliedSource.sourceMapID) {
+            throw new Error('Host 的已应用图例与当前栅格来源或可视化修订不匹配。');
+          }
+          publishAppliedLegend(makeAppliedRasterLegend(appliedSource, refreshed.value.snapshot));
+        } catch (error) {
+          publishAppliedLegend(null);
+          reportActionError(error);
+        }
+      }
     } catch (error) { reportActionError(error); }
   };
 
@@ -462,6 +512,7 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
       identityRef.current = advanceRasterSymbologyIdentity(currentSource, result, 'savePalette');
       pendingLocalCommitRef.current = { ownerKey, parentRevisionAtCommit: propsRef.current.visualizationRevision,
         previousRevision: result.previousVisualizationRevision, nextRevision: result.visualizationRevision };
+      preserveAppliedLegendForCurrentSource();
       setSnapshot(current => current ? ({ ...current, palettes: result.palettes,
         draft: { ...current.draft, paletteID: saved.id, name: saved.name } }) : current);
       setPaletteName('');
@@ -484,6 +535,7 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
       identityRef.current = advanceRasterSymbologyIdentity(currentSource, result, 'deletePalette');
       pendingLocalCommitRef.current = { ownerKey, parentRevisionAtCommit: propsRef.current.visualizationRevision,
         previousRevision: result.previousVisualizationRevision, nextRevision: result.visualizationRevision };
+      preserveAppliedLegendForCurrentSource();
       setSnapshot(current => current ? ({ ...current, palettes: result.palettes,
         draft: current.draft.paletteID === palette.id ? { ...current.draft, paletteID: null } : current.draft }) : current);
       setDeletePaletteID(null);
@@ -583,6 +635,34 @@ function cloneSnapshot(snapshot: RasterSymbologySnapshot): RasterSymbologySnapsh
     surfaceFillValues: snapshot.surfaceFillValues ? [...snapshot.surfaceFillValues] : null,
     plotOptions: snapshot.plotOptions.map(option => ({ ...option, enumValues: option.enumValues.map(choice => ({ ...choice })) })),
   };
+}
+
+function makeAppliedRasterLegend(source: RasterMapSourceIdentity,
+  snapshot: RasterSymbologySnapshot): AppliedRasterLegend | null {
+  const draft = cloneRasterSymbologyDraft(snapshot.draft);
+  const values = snapshot.surfaceFillValues;
+  if (!values || values.length < 2 || values.length !== draft.stops.length
+    || !isValidRasterSymbologyDraft(draft)
+    || values.some((value, index) => !Number.isFinite(value)
+      || value !== draft.stops[index]?.value
+      || index > 0 && value <= values[index - 1])) return null;
+  return {
+    source: cloneRasterMapSourceIdentity(source),
+    draft,
+    values: [...values],
+  };
+}
+
+function cloneAppliedRasterLegend(legend: AppliedRasterLegend): AppliedRasterLegend {
+  return {
+    source: cloneRasterMapSourceIdentity(legend.source),
+    draft: cloneRasterSymbologyDraft(legend.draft),
+    values: legend.values ? [...legend.values] : null,
+  };
+}
+
+function cloneRasterMapSourceIdentity(source: RasterMapSourceIdentity): RasterMapSourceIdentity {
+  return { ...source, nodePath: [...source.nodePath] };
 }
 
 function assertRasterRasterPayloadOwner(raster: { id: string; sourceMapID: string | null }, source: RasterMapSourceIdentity): void {

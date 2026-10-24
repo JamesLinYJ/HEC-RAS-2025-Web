@@ -7,6 +7,8 @@ import { MapDocumentTabs } from './MapDocumentTabs';
 import { MapLayerTree } from './MapLayerTree';
 import { MapSettingsPanel } from './MapSettingsPanel';
 import { RasterSymbologyEditor } from './symbology/RasterSymbologyEditor';
+import type { AppliedRasterLegend } from './symbology/RasterSymbologyEditor';
+import { RasMapElementsOverlay } from './RasMapElementsOverlay';
 import { VectorSymbologyEditor } from './vector-symbology/VectorSymbologyEditor';
 import { DEFAULT_MAP_DISPLAY_SETTINGS } from './MapSettings';
 import type { MapDisplaySettings } from './MapSettings';
@@ -37,8 +39,9 @@ import { ZoomToPointDialog } from './ZoomToPointDialog';
 import { navigationViewport } from './mapNavigation';
 import type { GeoFeature, GeoGeometry, GeoJsonLayer, MapDocumentTab, MapImageLayer, XY } from './mapTypes';
 import type { MapFeaturePageProps } from './mapTypes';
-import { localizeProjectTreeSourceClass } from '../project/ProjectTreeModeSectionTitles';
-import { mapCRS, mapDocumentKind, mapError, mapGeometryType } from './mapText';
+import { RasLayerPropertiesPane } from './RasLayerPropertiesPane';
+import { RasContextualActionsBar } from './RasContextualActionsBar';
+import { mapCRS, mapDocumentKind, mapError } from './mapText';
 import './map.css';
 
 type SelectedFeature = { owner: string; layerID: string; featureID: string } | null;
@@ -170,6 +173,8 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
   const [size, setSize] = useState({ width: 880, height: 620 });
   const [activeTool, setActiveTool] = useState<MapToolID>('select');
   const [settings, setSettings] = useState<MapDisplaySettings>(DEFAULT_MAP_DISPLAY_SETTINGS);
+  const [appliedLegend, setAppliedLegend] = useState<{ scope: string; legend: AppliedRasterLegend } | null>(null);
+  const legendScopeRef = useRef('');
   const [selectedFeature, setSelectedFeature] = useState<SelectedFeature>(null);
   const [selectedBackendNode, setSelectedBackendNode] = useState<{ owner: string; node: GeoFeature | null; nodeID: string; name: string; sourceClass: string; diagnostic?: string } | null>(null);
   const [cursorScreen, setCursorScreen] = useState<XY | null>(null);
@@ -818,6 +823,21 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
     symbologySourceRef.current.nodeID === selectedBackend.nodeID &&
     symbologySourceRef.current.acceptedVisualizationRevision === activeDocument.visualizationRevision
     ? symbologySourceRef.current.source : undefined;
+  const legendScope = JSON.stringify([projectContextKey, activeDocument?.id, selectedBackend?.nodeID]);
+  legendScopeRef.current = legendScope;
+  // A legend follows confirmed pixels, never a draft palette or an old map revision.
+  const currentLegend = appliedLegend?.scope === legendScope && selectedRaster && activeDocument &&
+    appliedLegend.legend.source.id === selectedRaster.hoverCapture.rasterSource.id &&
+    appliedLegend.legend.source.projectPath === context.projectPath &&
+    appliedLegend.legend.source.mapIndex === activeDocument.mapIndex &&
+    appliedLegend.legend.source.mapName === activeDocument.name &&
+    appliedLegend.legend.source.mapType === activeDocument.mapType &&
+    appliedLegend.legend.source.visualizationRevision.toUpperCase() === activeDocument.visualizationRevision?.toUpperCase() &&
+    appliedLegend.legend.source.sourceRevision.toUpperCase() === selectedRaster.sourceRevision.toUpperCase() &&
+    mapImages.some(image => image.treeNodeID === selectedBackend?.nodeID &&
+      image.sourcePath === appliedLegend.legend.source.sourcePath &&
+      image.sourceRevision?.toUpperCase() === appliedLegend.legend.source.sourceRevision.toUpperCase())
+    ? appliedLegend.legend : null;
   const selectedVectorCapture = selectedBackend && activeDocument
     ? persistedVectors.captures.find(capture => capture.nodeID === selectedBackend.nodeID &&
       capture.source.family.family === 'geojson' &&
@@ -1045,17 +1065,16 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
               language={language}
               hoverTooltip={mapHover.tooltip}
             />
-            {contextMenu && (
-              <div className="map-feature-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-                <strong>{contextMenu.feature.name}</strong>
-                <button type="button" role="menuitem" onClick={zoomToContextFeature}>{text(language, '缩放到要素', 'Zoom to feature')}</button>
-                <button type="button" role="menuitem" onClick={() => void copyContextFeature()}>{contextMenu.layer.coordinateSpace === 'project'
-                  ? text(language, '复制工程坐标要素 JSON', 'Copy project-coordinate feature JSON')
-                  : text(language, '复制 GeoJSON', 'Copy GeoJSON')}</button>
-                <button type="button" role="menuitem" disabled={!activeLayers.some((layer) => layer.id === contextMenu.layer.id)} title={contextMenu.layer.coordinateSpace === 'project' ? text(language, '请在工程图层树中切换显隐。', 'Change visibility in the project layer tree.') : undefined} onClick={() => { updateActiveLayers((current) => current.map((layer) => layer.id === contextMenu.layer.id ? { ...layer, visible: false } : layer)); setContextMenu(null); }}>{text(language, '隐藏图层', 'Hide layer')}</button>
-                <button type="button" role="menuitem" onClick={() => setContextMenu(null)}>{text(language, '关闭', 'Close')}</button>
-              </div>
-            )}
+            <RasMapElementsOverlay key={legendScope} legend={currentLegend} language={language}
+              visible={settings.IsMapOverlayVisible} />
+            {contextMenu && <RasContextualActionsBar key={`${contextMenu.layer.id}:${contextMenu.feature.id}`}
+              name={contextMenu.feature.name} position={contextMenu} language={language}
+              projectCoordinates={contextMenu.layer.coordinateSpace === 'project'}
+              canHide={activeLayers.some(layer => layer.id === contextMenu.layer.id)}
+              onZoom={zoomToContextFeature} onCopy={() => void copyContextFeature()}
+              onHide={() => { updateActiveLayers(current => current.map(layer => layer.id === contextMenu.layer.id ? { ...layer, visible: false } : layer)); setContextMenu(null); }}
+              onClose={() => setContextMenu(null)} />}
+
           </div>
           <div className="map-canvas-status">
             <RasMapPositionIndicator point={cursorCoordinate} crs={sourceCRS} language={language} />
@@ -1068,47 +1087,18 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
         </section>
 
         <aside className="map-inspector-pane" aria-label={copy.inspector}>
-          <section className="map-inspector-section">
-            <div className="map-pane-heading">
-              <div><span className="map-pane-kicker">02 / {copy.inspector}</span><h2>{copy.inspector}</h2></div>
-              {selectedFeatureDetails && <span className="map-selection-pill">{text(language, '已选择', 'Selected')}</span>}
-            </div>
-            {selectedFeatureDetails ? (
-              <>
-                <div className="map-property-feature">
-                  <span className="map-property-type">{mapGeometryType(language, selectedFeatureDetails.feature.geometry.type)}</span>
-                  <strong>{selectedFeatureDetails.feature.name}</strong>
-                  <span>{selectedFeatureDetails.layer.name}</span>
-                </div>
-                <div className="map-feature-properties">
-                  <div className="map-property-row"><span>{text(language, '坐标系', 'CRS')}</span><code>{mapCRS(language, selectedFeatureDetails.layer.crs)}</code></div>
-                  {Object.entries(selectedFeatureDetails.feature.properties).map(([key, value]) => (
-                    <div className="map-property-row" key={key}><span>{key}</span><code>{typeof value === 'string' ? value : JSON.stringify(value)}</code></div>
-                  ))}
-                  {Object.keys(selectedFeatureDetails.feature.properties).length === 0 && <p className="map-inspector-empty">{copy.noProperties}</p>}
-                  <button type="button" className="map-zoom-feature" onClick={() => fitFeature(selectedFeatureDetails.layer, selectedFeatureDetails.feature)}>{text(language, '缩放到要素', 'Zoom to feature')} ↗</button>
-                </div>
-              </>
-            ) : selectedBackend ? (
-              <div className="map-backend-inspector">
-                <span className="map-property-type">{localizeProjectTreeSourceClass(language, selectedBackend.sourceClass)}</span>
-                <strong>{selectedBackend.name}</strong>
-                <p>{copy.backendNoRender}</p>
-                {loadedLayerExtent(selectedBackend.nodeID) && <button type="button" className="map-zoom-feature"
-                  onClick={() => zoomToLoadedLayer(selectedBackend.nodeID)}>{text(language, '缩放到图层', 'Zoom to layer')} ↗</button>}
-                {selectedBackend.diagnostic && <details><summary>{text(language, '查看诊断详情', 'View diagnostic details')}</summary><pre>{mapError(language, selectedBackend.diagnostic)}</pre></details>}
-              </div>
-            ) : (
-              <div className="map-inspector-empty-state">
-                <span className="map-inspector-crosshair" aria-hidden="true">＋</span>
-                <p>{copy.inspectorEmpty}</p>
-              </div>
-            )}
-          </section>
+          <RasLayerPropertiesPane language={language} featureSelection={selectedFeatureDetails}
+            backendSelection={selectedBackend} canZoomBackend={Boolean(selectedBackend && loadedLayerExtent(selectedBackend.nodeID))}
+            onZoomFeature={fitFeature} onZoomBackend={zoomToLoadedLayer} />
           {symbologySource && selectedBackend && activeDocument && <RasterSymbologyEditor
             key={`${owner}:${selectedBackend.nodeID}`}
             backend={backend} context={context} language={language}
             source={symbologySource} viewport={resultViewport}
+            onAppliedLegendChange={legend => {
+              if (legendScopeRef.current !== legendScope) return;
+              setAppliedLegend(current => legend ? { scope: legendScope, legend }
+                : current?.scope === legendScope ? null : current);
+            }}
             onDirtyStateChange={onDirtyStateChange}
             onVisualizationCommitted={(previousRevision, nextRevision) => {
               if (projectContextKeyRef.current !== projectContextKey) return;

@@ -171,6 +171,44 @@ export interface SpatialGridPreview {
   maximum?: number | null;
 }
 
+export interface ClassificationMapData {
+  raster: SpatialGridPreview | null;
+  legend: Array<{ id: number; name: string; color: string }>;
+  selectedRaster?: SpatialGridPreview | null;
+  selectedInputId?: string | null;
+  projection?: string | null;
+}
+
+export interface NValuePreviewData {
+  revision: string;
+  projectRevision: string;
+  mode: string;
+  raster: SpatialGridPreview | null;
+  legendStops: Array<{ value: number; red: number; green: number; blue: number; alpha: number }>;
+  histogram: { minimum: number; maximum: number; binWidth: number; binArea: number[] } | null;
+}
+
+export interface ClassificationGeometryMutation {
+  operation: 'create' | 'replace' | 'delete' | 'undo' | 'redo' | 'paste';
+  inputId?: string | null;
+  polygonIds?: string[] | null;
+  vertices?: Array<{ x: number; y: number; z?: string | null; m?: string | null }> | null;
+  hasZ?: boolean;
+  hasM?: boolean;
+  classification?: string | null;
+  features?: Array<{ vertices: Array<{ x: number; y: number; z?: string | null; m?: string | null }>; hasZ: boolean; hasM: boolean; classification: string }>| null;
+}
+
+export interface ClassificationTransformCommand {
+  operation: 'remove' | 'reorder' | 'geometry';
+  itemId?: string;
+  from?: number;
+  to?: number;
+  geometry?: ClassificationGeometryMutation;
+}
+
+export type ManningTransformOperation = 'refresh' | 'setNLCD';
+
 export interface SpatialGridData {
   layerId: string;
   times: string[];
@@ -233,10 +271,16 @@ export interface ModelDraft {
   boundaryReadOnlyFields?: string[];
   /** Current uncommitted terrain projection returned by model.terrainTransform. */
   terrainView?: ModelSnapshot['terrain'];
+  /** Current uncommitted classification projection returned by model.classificationTransform. */
+  classificationView?: ModelSnapshot['classification'];
+  /** Current uncommitted Manning projection returned by model.manningTransform. */
+  manningView?: ModelSnapshot['manning'];
   /** Dynamic fields returned with the terrain draft projection. */
   terrainReadOnlyFields?: string[];
   /** Selection-scoped terrain values used to distinguish navigation from edits. */
   terrainSelectionBaselineFields?: Record<string, string | null>;
+  /** Classification input navigation fields do not dirty the source model by themselves. */
+  classificationSelectionBaselineFields?: Record<string, string | null>;
   fields: Record<string, string>;
   images: Record<string, ModelImage[]>;
   rows: Record<string, ModelRow[]>;
@@ -284,6 +328,11 @@ export interface EditorPageProps {
   onGridFrame?: (layerID: string, timeID?: string, component?: string, signal?: AbortSignal) => Promise<SpatialGridData>;
   onGridImport?: (selection: SpatialGridSelection) => Promise<boolean>;
   onTerrainTransform?: (command: TerrainTransformCommand) => Promise<boolean>;
+  onClassificationTransform?: (command: ClassificationTransformCommand) => Promise<boolean>;
+  onClassificationMap?: (signal?: AbortSignal) => Promise<ClassificationMapData>;
+  onManningTransform?: (operation: ManningTransformOperation) => Promise<boolean>;
+  canPreviewNValue?: boolean;
+  onNValuePreview?: (signal?: AbortSignal) => Promise<NValuePreviewData>;
 }
 
 /** Include read-only metadata attached to a transformed boundary draft projection. */

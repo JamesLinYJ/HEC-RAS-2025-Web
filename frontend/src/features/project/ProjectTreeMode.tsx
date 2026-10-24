@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
-import type { Language } from '../../shared/workbench';
+import type { BackendGateway, Language } from '../../shared/workbench';
 import type { CatalogTreeNode, CatalogTreeSnapshot } from './CatalogTreeSnapshot';
 import { ProjectTreeModeReactView } from './ProjectTreeModeReactView';
 import type { ProjectTreeContextMenu } from './ProjectTreeModeReactView';
@@ -21,6 +21,7 @@ import type { ProjectTreeAction, ProjectTreeCategory, ProjectTreeModeName } from
 
 export interface ProjectTreeModeProps {
   language: Language;
+  backend: BackendGateway;
   mode: ProjectTreeModeName;
   projectSnapshot: CatalogTreeSnapshot | null;
   catalogSnapshot: CatalogTreeSnapshot | null;
@@ -39,6 +40,7 @@ export interface ProjectTreeModeProps {
 /** React counterpart to the source ProjectTreeMode view; VM transitions stay in ProjectTreeModeVM.ts. */
 export function ProjectTreeMode({
   language,
+  backend,
   mode,
   projectSnapshot,
   catalogSnapshot,
@@ -111,6 +113,7 @@ export function ProjectTreeMode({
   return (
     <ProjectTreeModeReactView
       language={language}
+      backend={backend}
       mode={mode}
       snapshot={snapshot}
       loading={loading}

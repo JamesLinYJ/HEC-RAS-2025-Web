@@ -6,6 +6,7 @@ import { RegionsTable } from './RegionsTable';
 import { TopologyFeatureErrorControl } from './TopologyFeatureErrorControl';
 import { TopologyRecipeBuilder } from './TopologyRecipeBuilder';
 import { TopologyRegionQuickEditPicker } from './TopologyRegionQuickEditPicker';
+import { TagFilterControl } from './TagFilterControl';
 import type { GeometryRow } from './geometryTypes';
 
 export type ConceptualMeshTopologyRegionsEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
@@ -23,7 +24,13 @@ export function ConceptualMeshTopologyRegionsEditor(props: ConceptualMeshTopolog
     props.onTopologyResize?.('region', row, operation, axis);
 
   return <div className="geometry-grid">
-    <RegionsTable {...props} onSelectionChange={selectRows} />
+    <RegionsTable {...props} selectedRowIDs={selectedIDs} onSelectionChange={selectRows} />
+    <TagFilterControl language={props.language} featureKind="region" rows={rows} snapshot={props.topologySnapshot}
+      canFilter={!!props.canFilterTopology} busy={props.busy} onFilter={props.onTopologyFilter}
+      onSelectMatches={(fids) => {
+        const matches = new Set(fids);
+        selectRows(rows.filter((row) => row.fid != null && matches.has(row.fid)));
+      }} />
     <ConceptualMeshControlPointEditor {...props} hideTable selectedRowsOverride={selectedRows} />
     <ControlPointEditor language={props.language} rows={selectedRows} snapshot={props.topologySnapshot} canEdit={props.canEdit} busy={props.busy}
       onTagValueChange={props.onTopologyTagChange ? (selected, name, value) => props.onTopologyTagChange!('region', selected, name, value) : undefined}

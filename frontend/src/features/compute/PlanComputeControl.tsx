@@ -2,20 +2,13 @@ import { useEffect, useState } from 'react';
 import type { Language } from '../../shared/workbench';
 import type { ComputeProgressSample } from './computeTypes';
 import type { ComputeRunState } from './ComputeButton';
+import { ProgressBarControl } from '../../controls/ProgressBarControl';
+import { TimeDifference } from '../../controls/TimeDifference';
 
 const labels = {
-  zh: { progress: '求解进度', latest: '后端最近消息', none: '求解器尚未发送进度消息。', elapsed: '已用时间', remaining: '预计剩余时间', estimate: '按最近一次后端进度线性估算', updates: '实际进度更新', percent: '后端报告进度' },
-  en: { progress: 'Solver progress', latest: 'Latest backend message', none: 'The solver has not sent a progress message.', elapsed: 'Elapsed', remaining: 'Estimated remaining', estimate: 'Linear estimate from the latest backend progress', updates: 'Actual progress updates', percent: 'Backend-reported progress' },
+  zh: { latest: '原始进度事件（诊断）', none: '当前没有可识别的进度样本。', elapsed: '已用时间', remaining: '预计剩余时间', estimate: '估算值：根据已用时间与最近一次后端报告进度按线性比例推算，并非求解器承诺的完成时间。', updates: '实际进度更新' },
+  en: { latest: 'Raw progress event (diagnostics)', none: 'There are no recognized progress samples yet.', elapsed: 'Elapsed', remaining: 'Estimated remaining', estimate: 'Estimate: linearly projected from elapsed time and the latest backend-reported progress; the solver has not promised a completion time.', updates: 'Actual progress updates' },
 } satisfies Record<Language, Record<string, string>>;
-
-function formatDuration(milliseconds: number, language: Language): string {
-  const total = Math.max(0, Math.floor(milliseconds / 1000));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  if (language === 'zh') return `${hours ? `${hours}小时` : ''}${minutes ? `${minutes}分` : ''}${seconds}秒`;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
 
 export interface PlanComputeControlProps {
   language: Language;
@@ -39,34 +32,23 @@ export function PlanComputeControl({ language, state, samples, latestRawProgress
   }, [startedAt, endedAt]);
 
   const currentTime = endedAt ?? (busy ? now : startedAt ?? now);
-  const elapsed = startedAt ? Math.max(0, currentTime - startedAt) : undefined;
-  const remaining = elapsed !== undefined && latest && latest.progress > 0 && latest.progress < 100
-    ? Math.max(0, elapsed * (100 / latest.progress - 1))
+  const remaining = busy && startedAt !== undefined && latest && latest.progress > 0 && latest.progress < 100
+    ? Math.max(0, (currentTime - startedAt) * (100 / latest.progress - 1))
     : undefined;
 
   return (
-    <section className="progress-section" aria-label={t.progress}>
-      <div className="section-row"><h3>{t.progress}</h3><span>{latest ? `${latest.progress}%` : '—'}</span></div>
-      <div
-        className="progress-track"
-        role="progressbar"
-        data-compute-progress
-        aria-label={t.percent}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={latest?.progress}
-        data-compute-progress-value={latest?.progress}
-      >
-        <div className="progress-fill" style={{ width: `${latest?.progress ?? 0}%` }} />
-      </div>
+    <section className="compute-run-feedback" aria-label={language === 'zh' ? '求解反馈' : 'Solver feedback'}>
+      <ProgressBarControl language={language} state={state} progress={latest?.progress} />
       <div className="compute-progress-metrics">
-        <span>{t.elapsed}: <strong>{elapsed === undefined ? '—' : formatDuration(elapsed, language)}</strong></span>
+        <TimeDifference language={language} label={t.elapsed} startTime={startedAt} endTime={startedAt === undefined ? undefined : currentTime} />
         <span>{t.updates}: <strong>{samples.length}</strong></span>
-        {remaining !== undefined && <span title={t.estimate}>{t.remaining}: <strong>{formatDuration(remaining, language)}</strong><small> ≈</small></span>}
+        {remaining !== undefined && <TimeDifference language={language} label={t.remaining} durationMilliseconds={remaining} approximate title={t.estimate} />}
       </div>
-      {latestRawProgress
-        ? <><div className="small-label">{t.latest}</div><pre className="code-block progress-code">{latestRawProgress}</pre></>
-        : <div className="progress-empty">{t.none}</div>}
+      {samples.length === 0 && <div className="progress-empty">{t.none}</div>}
+      {latestRawProgress !== undefined && <details className="compute-progress-diagnostics">
+        <summary>{t.latest}</summary>
+        <pre className="code-block progress-code">{latestRawProgress}</pre>
+      </details>}
     </section>
   );
 }

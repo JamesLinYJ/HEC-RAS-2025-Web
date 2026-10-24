@@ -4,6 +4,9 @@ import { ResultNodeDetails, type ResultInspectorSnapshot } from './controls/Resu
 import { MapResultsChart } from './controls/MapResultsChart';
 import { ResultPicker } from './controls/ResultPicker';
 import { TimeSeriesPayloadTable } from './controls/TimeSeriesPayloadTable';
+import { CrossSectionEditorWindow } from './controls/CrossSectionEditorWindow';
+import { DynamicProfilePlot } from './controls/DynamicProfilePlot';
+import { ScrubbedDataDisplay } from './controls/ScrubbedDataDisplay';
 import type { ChartSettings } from './charting/chartTypes';
 import type {
   ResultPlanAssociationsSnapshot,
@@ -14,6 +17,7 @@ import type {
 import { readResultsDraft, writeResultsDraft, type ResultCellDrafts, type ResultsDraftSnapshot } from './ResultsDraftStore';
 import { downloadCsv, type ResultDataset, type ResultSeries } from './data';
 import './results.css';
+import './resultInsights.css';
 
 interface ResultProfileCatalog {
   resultPath: string;
@@ -579,6 +583,9 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
     && isSha256(context.projectRevision) && sameSha(planSettings.projectRevision, context.projectRevision)
     && planSettings.planName === snapshot.plan?.name;
   const selectedAssetRevisionMatches = !!snapshot && (!resultAsset?.revision || (isSha256(resultAsset.revision) && sameSha(resultAsset.revision, snapshot.revision)));
+  const resultSnapshotMatchesSelected = !!resultAsset && !!snapshot
+    && comparablePath(resultAsset.path) === comparablePath(snapshot.resultPath)
+    && selectedAssetRevisionMatches;
   const hasOtherUnsavedDrafts = dirtyOwners
     ? [...dirtyOwners].some((draftOwner) => draftOwner !== planDescriptionOwner)
     : hasUnsavedDrafts !== false;
@@ -919,6 +926,14 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
       onSavePlanDescription={savePlanDescription}
     />}
 
+    {source === 'result' && resultSnapshotMatchesSelected && snapshot && <CrossSectionEditorWindow
+      backend={backend}
+      backendRevision={backendRevision}
+      context={context}
+      snapshot={snapshot}
+      language={language}
+    />}
+
     {source === 'result' && resultAsset && <section className="results-selector-panel">
       <div className="results-selector-heading"><div><span className="results-section-index">01</span><h2>{text('结果数据选择', 'Result data selection')}</h2></div><span>{catalog?.resultName ?? snapshot?.name ?? resultAsset.name}</span></div>
       <div className="results-selector-grid">
@@ -943,6 +958,14 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
       {!backend.supports('result.profile') && <p className="results-capability-note">{text('当前 C# 尚未暴露 result.profile。结果目录和时间步可读，但无法伪造 HDF 数值序列。', 'This C# build does not expose result.profile. The catalog and timestamps may be available, but HDF values are not fabricated.')}</p>}
       {seriesError && <p className="results-inline-error" role="alert">{seriesError}</p>}
     </section>}
+
+    {source === 'result' && resultSnapshotMatchesSelected && snapshot && <DynamicProfilePlot
+      backend={backend}
+      backendRevision={backendRevision}
+      context={context}
+      snapshot={snapshot}
+      language={language}
+    />}
 
     <section className="results-analysis-panel">
       <div className="results-analysis-heading">
@@ -975,6 +998,8 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
       {source === 'user' && !dataset && <div className="results-result-empty"><div className="results-empty-symbol"><span>⇧</span></div><strong>{text('导入你的 CSV / JSON 时间序列', 'Import your CSV / JSON time series')}</strong><p>{text('目前没有预置示例数据。导入后可查看、编辑草稿并导出 CSV。', 'There is no preset sample data. Import a file to view it, edit a local draft, and export CSV.')}</p></div>}
 
       <MapResultsChart dataset={dataset} series={visibleSeries} selectedIndex={activeIndex} onSelectIndex={setSelectedIndex} range={range} onRangeChange={setRange} settings={settings} onSettingsChange={setSettings} language={language} />
+
+      <ScrubbedDataDisplay time={dataset?.times[activeIndex] ?? null} index={activeIndex} series={visibleSeries} language={language} />
 
       {tableVisible && <div className="results-table-section">
         <div className="results-table-heading"><div><h3>{text('数据表', 'Data table')}</h3><span>{dataset ? dataset.times.length.toLocaleString(numberLocale) + ' ' + text('行', 'rows') : text('等待载入', 'Waiting for data')}</span></div><span className="results-table-readonly">{source === 'user' && dataset ? text('本地草稿可编辑', 'Local draft is editable') : text('结果源为只读', 'Result source is read-only')}</span></div>

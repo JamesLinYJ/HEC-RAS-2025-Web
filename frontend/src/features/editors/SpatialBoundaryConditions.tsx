@@ -34,7 +34,7 @@ export function SpatialBoundaryConditions(props: EditorPageProps & { layerId: Sp
 
   return <section className="editor-table-card" aria-label={label('空间边界输入', 'Spatial boundary inputs')}>
     <header className="editor-meteorology-layer-header"><div>
-      <p className="editor-eyebrow">{label('真实空间边界快照', 'Live spatial boundary snapshot')}</p>
+      <p className="editor-eyebrow">{label('空间边界快照', 'Spatial boundary snapshot')}</p>
       <h3>{label('测站与输入', 'Stations and inputs')}</h3>
     </div>
       <div className="editor-workbench-actions">
@@ -42,7 +42,7 @@ export function SpatialBoundaryConditions(props: EditorPageProps & { layerId: Sp
         <button type="button" className="editor-button" disabled={!canEdit || !stationId || !props.canTransformSpatial || !props.onSpatialTransform} onClick={addGauge}>{label('为所选测站添加输入', 'Add input for selected station')}</button>
       </div>
     </header>
-    <p className="editor-field-muted">{label('测站和输入变更先进入后端校验的草稿投影；需要在工作台保存后才写入模型。源 ID、scope 和时序表身份由 C# 回执提供。', 'Station and input changes first enter a backend-validated draft projection. Save from the workbench to write them to the model. Source IDs, scopes, and time-series identities come from the C# receipt.')}</p>
+    <p className="editor-field-muted">{label('测站和输入变更先进入草稿，保存后才写入模型。', 'Station and input changes enter the draft first and are written to the model when saved.')}</p>
 
     {stations.length === 0 ? <p className="editor-field-muted">{label('此空间边界没有测站。', 'This spatial boundary has no stations.')}</p>
       : <div className="editor-table-scroll"><table className="editor-data-table">
@@ -111,7 +111,7 @@ export function SpatialBoundaryConditions(props: EditorPageProps & { layerId: Sp
     {inputs.length > 0 && <details className="editor-source-details"><summary>{label('空间时序数据', 'Spatial time-series data')}</summary>
       <SpatialInputs {...props} spatial={spatial as SpatialPointData | undefined} series={series} />
     </details>}
-    {!props.onSpatialTransform && <p className="editor-field-muted">{label('当前 C# 服务未发布空间测站/输入变换操作；结构修改已停用。', 'Spatial station/input transforms are disabled because the C# service has not advertised the operation.')}</p>}
+    {!props.onSpatialTransform && <p className="editor-field-muted">{label('当前数据源不支持添加或移除测站与输入。', 'The current data source does not support adding or removing stations and inputs.')}</p>}
     {props.onSpatialTransform && !props.canTransformSpatial && <p className="editor-field-muted">{label('请先修正当前草稿的无效值，再修改空间输入结构。', 'Correct invalid draft values before changing spatial input structure.')}</p>}
   </section>;
 }

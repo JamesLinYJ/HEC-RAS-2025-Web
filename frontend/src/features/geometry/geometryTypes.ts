@@ -109,6 +109,33 @@ export interface GeometryTopologyRecipeSnapshot {
   selectedPatchTypes?: string[] | null;
 }
 
+export type GeometryTopologyFilterOperator = 'Equals' | 'NotEquals' | 'Contains' | 'DoesNotContain'
+  | 'GreaterThan' | 'AtLeast' | 'LessThan' | 'AtMost' | 'IsBlank' | 'IsNotBlank';
+
+export interface GeometryTopologyFilterClause {
+  type: 'Tag' | 'Property';
+  tagDefinitionID?: string | null;
+  propertyColumnID?: string | null;
+  operator: GeometryTopologyFilterOperator;
+  value?: string | null;
+}
+
+export interface GeometryTopologyPropertyDescriptor {
+  name: string;
+  columnName: string;
+  sourceType: string;
+  isEnum?: boolean;
+}
+
+export interface GeometryTopologyFilterSnapshot {
+  revision: string;
+  draftIdentity: string;
+  featureKind: 'arc' | 'region';
+  matchedFeatureIDs: number[];
+  propertyDescriptors: GeometryTopologyPropertyDescriptor[];
+  tagDefinitions: Array<{ id: string; type: string }>;
+}
+
 export interface GeometryMeshFlowArea {
   id: string;
   rowIndex: number;

@@ -7,6 +7,7 @@ import { ConceptualMeshArcEditor } from './ConceptualMeshArcEditor';
 import { DetailedArcHeader } from './DetailedArcHeader';
 import { TopologyArcQuickEditPicker } from './TopologyArcQuickEditPicker';
 import { TopologyFeatureErrorControl } from './TopologyFeatureErrorControl';
+import { TagFilterControl } from './TagFilterControl';
 import type { GeometryRow } from './geometryTypes';
 
 export type ConceptualMeshTopologyArcsEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
@@ -24,7 +25,13 @@ export function ConceptualMeshTopologyArcsEditor(props: ConceptualMeshTopologyAr
   const resize = (row: GeometryRow, operation: 'halfSize' | 'doubleSize'): void => props.onTopologyResize?.('arc', row, operation);
 
   return <div className="geometry-grid">
-    <ArcsTable {...props} onSelectionChange={selectRows} />
+    <ArcsTable {...props} selectedRowIDs={selectedIDs} onSelectionChange={selectRows} />
+    <TagFilterControl language={props.language} featureKind="arc" rows={rows} snapshot={props.topologySnapshot}
+      canFilter={!!props.canFilterTopology} busy={props.busy} onFilter={props.onTopologyFilter}
+      onSelectMatches={(fids) => {
+        const matches = new Set(fids);
+        selectRows(rows.filter((row) => row.fid != null && matches.has(row.fid)));
+      }} />
     <DetailedArcHeader language={props.language} rows={selectedRows} snapshot={props.topologySnapshot} />
     <ConceptualMeshArcEditor {...props} hideTable selectedRowsOverride={selectedRows} />
     <ArcEditor language={props.language} rows={selectedRows} snapshot={props.topologySnapshot} canEdit={props.canEdit} busy={props.busy}

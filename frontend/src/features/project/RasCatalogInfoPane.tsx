@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
-import type { Language } from '../../shared/workbench';
+import type { BackendGateway, Language } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
 import type { CatalogTreeNode } from './CatalogTreeSnapshot';
 import { BackupCatalogSummary } from './BackupCatalogSummary';
 import { BoundaryConditionCatalogSummary } from './BoundaryConditionCatalogSummary';
 import { ClassificationCatalogSummary } from './ClassificationCatalogSummary';
-import { ExternalFileConnectionCatalogSummary } from './ExternalFileConnectionCatalogSummary';
+import { ExternalConnectionDetails } from './ExternalConnectionDetails';
 import { GeometryCatalogSummary } from './GeometryCatalogSummary';
 import { NValueCatalogSummary } from './NValueCatalogSummary';
 import { PlanCatalogSummary } from './PlanCatalogSummary';
@@ -18,11 +18,12 @@ import { localizeProjectTreeStatus } from './ProjectTreeModeSectionTitles';
 
 export interface RasCatalogInfoPaneProps {
   language: Language;
+  backend: BackendGateway;
   node: CatalogTreeNode | null;
 }
 
 /** Selected-node detail dispatch and runtime diagnostics from RasCatalogInfoPane. */
-export function RasCatalogInfoPane({ language, node }: RasCatalogInfoPaneProps) {
+export function RasCatalogInfoPane({ language, backend, node }: RasCatalogInfoPaneProps) {
   if (!node) return <div className="project-tree-detail-empty"><span>◇</span><p>{text(language, '选择工程对象查看目录信息。', 'Select a project item to inspect its catalog information.')}</p></div>;
 
   const summaryProps = { language, node, icon: catalogNodeIcon(node), typeLabel: catalogNodeTypeLabel(language, node) };
@@ -37,7 +38,8 @@ export function RasCatalogInfoPane({ language, node }: RasCatalogInfoPaneProps) 
     case 'ObservableResult': summary = <ResultCatalogSummary {...summaryProps} />; break;
     case 'ObservableNValueLayer': summary = <NValueCatalogSummary {...summaryProps} />; break;
     case 'ObservableClassificationLayer': summary = <ClassificationCatalogSummary {...summaryProps} />; break;
-    case 'ExternalFileConnectionCatalogNode': summary = <ExternalFileConnectionCatalogSummary {...summaryProps} />; break;
+    case 'ExternalFileConnectionCatalogNode':
+    case 'ExternalConnectionCatalogNode': summary = <ExternalConnectionDetails {...summaryProps} backend={backend} />; break;
     default: summary = <RasCatalogSummary {...summaryProps} />;
   }
 

@@ -13,13 +13,10 @@ export type SpatialBoundaryLayerID = typeof SPATIAL_BOUNDARY_LAYERS[number][0];
 export function SpatialDataHeader(props: EditorPageProps & {
   layerId: SpatialBoundaryLayerID;
   onLayerChange: (layerId: SpatialBoundaryLayerID) => void;
-  onImport: () => void;
 }) {
   const title = SPATIAL_BOUNDARY_LAYERS.find(([id]) => id === props.layerId);
   const spatial = props.draft.boundaryView?.spatial ?? props.snapshot.boundary?.spatial;
   const layer = spatial?.[props.layerId];
-  const gridSupported = props.layerId !== 'evapotranspiration';
-  const canImport = gridSupported && props.snapshot.canEdit && !!props.onGridInspect && !!props.onGridImport;
   return <header className="editor-meteorology-layer-header">
     <div>
       <p className="editor-eyebrow">{props.language === 'zh' ? '空间边界数据' : 'Spatial boundary data'}</p>
@@ -37,12 +34,6 @@ export function SpatialDataHeader(props: EditorPageProps & {
           {SPATIAL_BOUNDARY_LAYERS.map(([id, zh, en]) => <option key={id} value={id}>{props.language === 'zh' ? zh : en}</option>)}
         </select>
       </label>
-      <button type="button" className="editor-button editor-button-primary" disabled={!canImport} onClick={props.onImport}>
-        {props.language === 'zh' ? '导入栅格数据…' : 'Import raster data…'}
-      </button>
-      {!canImport && <small>{!gridSupported
-        ? (props.language === 'zh' ? '当前 C# 格网服务不支持蒸散发栅格。' : 'The current C# grid service does not support evapotranspiration rasters.')
-        : props.language === 'zh' ? '当前 C# 服务未公布栅格检查和导入操作。' : 'The C# service has not advertised raster inspection and import.'}</small>}
     </div>
   </header>;
 }

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Language } from '../../shared/workbench';
 import type { ComputeProgressSample } from './computeTypes';
+import { LiveMessageList } from '../../controls/LiveMessageList';
 
 const labels = {
   zh: { title: '实时求解监控', range: '时间范围', all: '全部', seconds30: '最近 30 秒', minutes5: '最近 5 分钟', minutes15: '最近 15 分钟', empty: '后端尚未发送可绘制的进度数据。', progress: '进度 (%)', updates: '仅绘制求解器实际发送的进度点。', samples: '数据点' },
@@ -70,6 +71,7 @@ export function RealTimeMonitor({ language, samples }: RealTimeMonitorProps) {
           <div className="compute-monitor-footer"><span>{t.updates}</span><strong>{visibleSamples.length}</strong></div>
         </>
       )}
+      <LiveMessageList language={language} samples={visibleSamples} />
     </section>
   );
 }

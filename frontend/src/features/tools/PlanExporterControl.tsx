@@ -9,18 +9,20 @@ import {
   planExportRequestKey,
   type PlanExportForm,
   type PlanExportInspection,
+  type PlanExportRequest,
   type PlanExportReceipt,
 } from './exportWorkflow';
+import { PlanPickerDialog } from './PlanPickerDialog';
 import './exports.css';
 
-type Props = Pick<FeaturePageProps, 'language' | 'context' | 'backend'>;
+type Props = Pick<FeaturePageProps, 'language' | 'context' | 'backend'> & { onBusyStateChange?: (busy: boolean) => void };
 type StoredInspection = { value: PlanExportInspection; requestKey: string; contextKey: string };
 type ExportProgress = { fraction?: number; label: string };
 
 const inspectMethod = 'planExport.inspect';
 const executeMethod = 'planExport.executeDuplex';
 
-export function PlanExporterControl({ language, context, backend }: Props) {
+export function PlanExporterControl({ language, context, backend, onBusyStateChange }: Props) {
   const contextKey = planExportContextKey(context);
   const contextKeyRef = useRef(contextKey);
   contextKeyRef.current = contextKey;
@@ -38,12 +40,17 @@ export function PlanExporterControl({ language, context, backend }: Props) {
   const [plans, setPlans] = useState<PlanExportInspection['plans']>([]);
   const [inspection, setInspection] = useState<StoredInspection | null>(null);
   const [receipt, setReceipt] = useState<PlanExportReceipt | null>(null);
-  const [phase, setPhase] = useState<'inspect' | 'execute' | null>(null);
+  const [phase, setPhase] = useState<'inspect' | 'execute' | 'uncertain' | null>(null);
   const [error, setError] = useState<unknown>();
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<unknown>();
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [cancelRequested, setCancelRequested] = useState(false);
+  const [planPickerOpen, setPlanPickerOpen] = useState(false);
+
+  useEffect(() => {
+    onBusyStateChange?.(phase === 'inspect' || phase === 'execute');
+  }, [onBusyStateChange, phase]);
 
   useEffect(() => {
     generation.current += 1;
@@ -54,6 +61,7 @@ export function PlanExporterControl({ language, context, backend }: Props) {
     setPlans([]);
     setInspection(null);
     setReceipt(null);
+    setPlanPickerOpen(false);
     setPhase(null);
     setError(undefined);
     setValidationMessage(null);
@@ -99,7 +107,7 @@ export function PlanExporterControl({ language, context, backend }: Props) {
     return { fraction, label: label || text(language, 'C# 服务正在处理导出任务。', 'The C# service is processing the export.') };
   };
 
-  const inspect = async (): Promise<void> => {
+  const inspect = async (openPickerAfter = false): Promise<void> => {
     setError(undefined);
     setDiagnostics(undefined);
     setValidationMessage(null);
@@ -122,8 +130,11 @@ export function PlanExporterControl({ language, context, backend }: Props) {
     }
 
     let form: PlanExportForm;
-    try { form = currentForm(); }
-    catch (caught) { setError(caught); return; }
+    try {
+      form = openPickerAfter
+        ? { planPath: '', outputPath: '', zip, clipRasters, resampleCellsize: null, externalConnections, replaceFile: false }
+        : currentForm();
+    } catch (caught) { setError(caught); return; }
 
     activeController.current?.abort('A newer plan export request started.');
     const controller = new AbortController();
@@ -138,12 +149,14 @@ export function PlanExporterControl({ language, context, backend }: Props) {
       let request = createPlanExportRequest(context, form);
       let result = parsePlanExportInspection(await backend.request<unknown>(inspectMethod, request, { signal: controller.signal }));
       if (!isCurrent()) return;
+      if (result.canExecute && !isSha256(result.revision)) throw new Error('Host 计划导出检查未返回有效 SHA-256 修订。');
 
       setPlans(result.plans);
       if (request.planPath && !result.plans.some(plan => plan.id === request.planPath)) {
         setPlanPath('');
         setOutputPath('');
         setValidationMessage(text(language, '当前选择未出现在 Host 返回的计划目录中，请从列表重新选择。', 'The selected path is not in the Host plan catalog. Choose a plan from the returned list.'));
+        if (openPickerAfter && result.plans.length > 0) setPlanPickerOpen(true);
         return;
       }
 
@@ -155,11 +168,16 @@ export function PlanExporterControl({ language, context, backend }: Props) {
         request = createPlanExportRequest(context, form);
         result = parsePlanExportInspection(await backend.request<unknown>(inspectMethod, request, { signal: controller.signal }));
         if (!isCurrent()) return;
+        if (result.canExecute && !isSha256(result.revision)) throw new Error('Host 计划导出检查未返回有效 SHA-256 修订。');
         setPlans(result.plans);
       }
 
       setValidationMessage(result.validationMessage);
       setInspection({ value: result, requestKey: planExportRequestKey(request), contextKey: requestContextKey });
+      if (openPickerAfter) {
+        if (result.plans.length > 0) setPlanPickerOpen(true);
+        else setValidationMessage(text(language, 'Host 当前工程没有返回可选计算计划。', 'The Host returned no selectable plans for this project.'));
+      }
     } catch (caught) {
       if (!isCurrent()) return;
       setError(caught);
@@ -189,7 +207,7 @@ export function PlanExporterControl({ language, context, backend }: Props) {
     const request = createPlanExportRequest(context, form, inspection?.value.revision ?? null);
     const requestKey = planExportRequestKey(request);
     if (!inspection?.value.canExecute || !inspection.value.revision || inspection.value.selectedPlanPath !== request.planPath
-      || inspection.requestKey !== requestKey || inspection.contextKey !== contextKey) {
+      || !isSha256(inspection.value.revision) || inspection.requestKey !== requestKey || inspection.contextKey !== contextKey) {
       setError(new Error(text(language, '当前选项尚未通过检查，请重新检查后再导出。', 'Inspect the current options again before exporting.')));
       setInspection(null);
       return;
@@ -202,22 +220,31 @@ export function PlanExporterControl({ language, context, backend }: Props) {
     const requestContextKey = contextKey;
     const isCurrent = (): boolean => requestGeneration === generation.current
       && requestContextKey === contextKeyRef.current;
+    let requestDispatched = false;
+    let outcomeUncertain = false;
+    let operationID: string | null = null;
     setPhase('execute');
     try {
       const raw = await backend.request<unknown>(executeMethod, { export: request, uploadAfterExport: false }, {
         signal: controller.signal,
         onProgress: value => { if (isCurrent()) setProgress(makeProgress(value)); },
+        onTransportState: state => { operationID = state.operationId; },
       });
-      if (!isCurrent()) return;
+      requestDispatched = true;
+      if (!isCurrent()) {
+        if (requestGeneration === generation.current) {
+          outcomeUncertain = true;
+          setPhase('uncertain');
+          setValidationMessage(text(language, '导出完成响应与当前工程上下文不再一致，服务器目标状态未确认；请先核对输出路径。', 'The export response no longer matches the active project context, so the server destination is unconfirmed. Check the output path first.'));
+        }
+        return;
+      }
       const result = parsePlanExportDuplexResult(raw);
       if (result.state === 'cancelled') {
         setCancelRequested(false);
         setValidationMessage(text(language, 'C# Host 已确认导出取消。', 'The C# Host confirmed that the export was cancelled.'));
       } else if (result.receipt) {
-        if (result.receipt.projectSessionID !== context.projectSessionID
-          || result.receipt.projectPath !== context.projectPath
-          || result.receipt.planPath !== request.planPath
-          || result.receipt.sourceRevision !== inspection.value.revision) {
+        if (!matchesPlanExportReceipt(result.receipt, request, inspection.value.revision)) {
           throw new Error(text(language, '服务端回执与当前工程或检查修订不匹配，未采纳此回执。', 'The Host receipt does not match the active project or inspected revision.'));
         }
         setReceipt(result.receipt);
@@ -225,17 +252,31 @@ export function PlanExporterControl({ language, context, backend }: Props) {
         setValidationMessage(null);
       }
     } catch (caught) {
-      if (!isCurrent()) return;
-      if (isAbortError(caught)) {
+      if (requestGeneration !== generation.current) return;
+      if (!isCurrent()) {
+        requestDispatched = true;
+        outcomeUncertain = true;
+        setError(new Error(text(language, '导出请求属于已变化的工程上下文，无法确认服务器输出状态。', 'The export request belongs to a changed project context, so the server output state is unconfirmed.')));
+        setDiagnostics(errorDiagnostics(caught));
+        setPhase('uncertain');
+        setValidationMessage(text(language, '请先核对服务器输出路径，再考虑重试。', 'Check the server output path before retrying.'));
+        return;
+      }
+      if (isAbortError(caught) && operationID !== null) {
         setCancelRequested(false);
         setValidationMessage(text(language, 'C# Host 已确认导出取消。', 'The C# Host confirmed that the export was cancelled.'));
       } else {
         setError(caught);
         setDiagnostics(errorDiagnostics(caught));
+        if (requestDispatched || isAbortError(caught) || !hasConfirmedTerminalFailure(caught)) {
+          outcomeUncertain = true;
+          setPhase('uncertain');
+          setValidationMessage(text(language, '导出终态或回执尚未确认；请先核对服务器输出路径，不要立即重复写入。', 'The export terminal state or receipt is unconfirmed. Check the server output path before repeating the write.'));
+        }
       }
     } finally {
       if (requestGeneration === generation.current) {
-        setPhase(null);
+        if (!outcomeUncertain) setPhase(null);
         if (activeController.current === controller) activeController.current = null;
       }
     }
@@ -267,13 +308,20 @@ export function PlanExporterControl({ language, context, backend }: Props) {
       {!context.projectPath || !context.projectXml ? <p className="tools-export-callout">{text(language, '请先打开已保存的工程，再检查可导出的计算计划。', 'Open a saved project to inspect its available plans.')}</p> : null}
 
       <div className="tools-export-grid">
-        <label className="tools-field">
+        <div className="tools-field tools-plan-selection-field">
           <span>{text(language, '计算计划', 'Plan')}</span>
-          <select value={planPath} onChange={event => updateForm(() => { setPlanPath(event.target.value); setOutputPath(''); })} disabled={phase !== null}>
-            <option value="">{text(language, '检查工程并选择计划', 'Inspect the project and choose a plan')}</option>
-            {plans.map(plan => <option value={plan.id} key={plan.id}>{plan.title} — {plan.id}</option>)}
-          </select>
-        </label>
+          <div className="tools-plan-selection-value">
+            <strong>{plans.find(plan => plan.id === planPath)?.title ?? (planPath ? planPath : text(language, '尚未选择计划', 'No plan selected'))}</strong>
+            {planPath && <code>{planPath}</code>}
+          </div>
+          <button type="button" className="tools-button tools-button-secondary" onClick={() => {
+            if (plans.length > 0) setPlanPickerOpen(true);
+            else void inspect(true);
+          }} disabled={phase !== null || !context.projectPath || !context.projectXml || !context.projectSessionID || !backend.supports(inspectMethod)}>
+            {plans.length > 0 ? text(language, '从 Host 计划目录选择…', 'Choose from Host plan catalog…') : text(language, '读取 Host 计划目录…', 'Load Host plan catalog…')}
+          </button>
+          <small>{text(language, '选项来自当前工程的 C# Host 计划目录。选中后需重新检查修订与导出参数。', 'Options come from the active project’s C# Host plan catalog. Inspect the selected plan and export settings before execution.')}</small>
+        </div>
         <label className="tools-field">
           <span>{text(language, '输出格式', 'Output format')}</span>
           <select value={zip ? 'zip' : 'folder'} onChange={event => updateForm(() => { setZip(event.target.value === 'zip'); setOutputPath(''); })} disabled={phase !== null}>
@@ -312,7 +360,7 @@ export function PlanExporterControl({ language, context, backend }: Props) {
           {phase === 'inspect' ? text(language, '正在检查…', 'Inspecting…') : text(language, '检查导出设置', 'Inspect export settings')}
         </button>
         <button type="button" className="tools-button tools-button-primary" onClick={() => void execute()} disabled={!canExecute}>
-          {phase === 'execute' ? text(language, '正在导出…', 'Exporting…') : text(language, '执行导出', 'Export')}
+          {phase === 'execute' ? text(language, '正在导出…', 'Exporting…') : phase === 'uncertain' ? text(language, '终态未确认', 'Outcome unconfirmed') : text(language, '执行导出', 'Export')}
         </button>
         {phase === 'execute' && <button type="button" className="tools-button tools-button-secondary" onClick={cancel} disabled={cancelRequested}>{cancelRequested ? text(language, '正在请求取消', 'Requesting cancellation') : text(language, '取消', 'Cancel')}</button>}
       </div>
@@ -333,6 +381,7 @@ export function PlanExporterControl({ language, context, backend }: Props) {
         {progress.fraction !== undefined && <progress max={1} value={progress.fraction} />}
       </div>}
       {validationMessage && (!inspection || validationMessage !== inspection.value.validationMessage) && <p className="tools-export-callout" role="status">{validationMessage}</p>}
+      {phase === 'uncertain' && <p className="tools-export-callout" role="status">{text(language, '导出终态未确认。请先核对上述服务器输出路径；此对话框在确认前不会再次执行导出。', 'The export terminal state is unconfirmed. Check the server output path above; this dialog will not retry before the outcome is resolved.')}</p>}
       {cancelRequested && phase === null && !validationMessage && <p className="tools-export-callout" role="status">{text(language, '取消结果尚未确认；请以服务端操作状态为准。', 'The cancellation outcome is unconfirmed; check the server operation status.')}</p>}
 
       {receipt && <div className="tools-export-receipt" role="status">
@@ -357,6 +406,9 @@ export function PlanExporterControl({ language, context, backend }: Props) {
         <p>{message(error, language)}</p>
         {diagnostics !== undefined && <details><summary>{text(language, '原始诊断', 'Raw diagnostics')}</summary><pre>{formatDiagnostic(diagnostics)}</pre></details>}
       </div>}
+      <PlanPickerDialog open={planPickerOpen} plans={plans} selectedPath={planPath} projectPath={context.projectPath}
+        projectSessionID={context.projectSessionID} projectRevision={context.projectRevision} language={language}
+        onChoose={path => updateForm(() => { setPlanPath(path); setOutputPath(''); })} onClose={() => setPlanPickerOpen(false)} />
     </section>
   );
 }
@@ -372,4 +424,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isAbortError(value: unknown): boolean {
   return isRecord(value) && value.name === 'AbortError';
+}
+
+function hasConfirmedTerminalFailure(value: unknown): boolean {
+  return isRecord(value) && value.terminalConfirmed === true;
+}
+
+function isSha256(value: string): boolean {
+  return /^[\da-f]{64}$/i.test(value);
+}
+
+function normalizePlanPath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function matchesPlanExportReceipt(receipt: PlanExportReceipt, request: PlanExportRequest, inspectionRevision: string): boolean {
+  return Boolean(request.outputPath && request.planPath && isSha256(inspectionRevision)
+    && normalizePlanPath(receipt.projectPath) === normalizePlanPath(request.projectPath)
+    && normalizePlanPath(receipt.planPath) === normalizePlanPath(request.planPath)
+    && normalizePlanPath(receipt.outputPath) === normalizePlanPath(request.outputPath)
+    && receipt.projectSessionID === request.projectSessionID
+    && receipt.zip === request.zip
+    && receipt.sourceRevision.toUpperCase() === inspectionRevision.toUpperCase()
+    && receipt.fileCount > 0 && Number.isSafeInteger(receipt.fileCount)
+    && isSha256(receipt.receiptID)
+    && (request.zip
+      ? Boolean(receipt.outputSHA256 && isSha256(receipt.outputSHA256) && receipt.outputBytes > 0)
+      : receipt.outputSHA256 === null && receipt.outputBytes === 0));
 }
