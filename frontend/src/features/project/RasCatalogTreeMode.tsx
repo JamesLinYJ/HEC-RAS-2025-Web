@@ -1,6 +1,7 @@
 import type { Language } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
 import { ClearFiltersBanner } from '../../controls/ClearFiltersBanner';
+import { FilterSearchBar } from '../../controls/FilterSearchBar';
 import type { ProjectTreeCategory, ProjectTreeModeName } from './ProjectTreeModeVM';
 
 export interface RasCatalogTreeModeProps {
@@ -32,7 +33,8 @@ export function RasCatalogTreeMode({
           <button type="button" role="tab" aria-selected={mode === 'project'} className={mode === 'project' ? 'is-active' : ''} onClick={() => onModeChange('project')}>{text(language, '工程树', 'Project tree')}</button>
           <button type="button" role="tab" aria-selected={mode === 'catalog'} className={mode === 'catalog' ? 'is-active' : ''} onClick={() => onModeChange('catalog')}>{text(language, '目录', 'Catalog')}</button>
         </div>
-        <div className="project-tree-search"><span>⌕</span><input aria-label={text(language, '筛选工程对象', 'Filter project items')} value={query} onChange={(event) => onQueryChange(event.currentTarget.value)} placeholder={text(language, '筛选…', 'Filter…')} /><button type="button" aria-label={text(language, '清除筛选', 'Clear filter')} onClick={() => onQueryChange('')} disabled={!query}>×</button></div>
+        <FilterSearchBar className="project-tree-search" language={language} value={query} onChange={onQueryChange}
+          label={text(language, '筛选工程对象', 'Filter project items')} placeholder={text(language, '筛选…', 'Filter…')} />
         <button type="button" className="project-tree-tool-button" onClick={() => onExpandAll(true)}>{text(language, '全部展开', 'Expand all')}</button>
         <button type="button" className="project-tree-tool-button" onClick={() => onExpandAll(false)}>{text(language, '全部折叠', 'Collapse all')}</button>
       </header>

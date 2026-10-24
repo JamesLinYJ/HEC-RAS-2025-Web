@@ -1,0 +1,244 @@
+.project-dss-version-note,
+.project-dss-selection-note,
+.project-dss-graph-footnote,
+.project-dss-location-information > small,
+.project-dss-table-limit {
+  margin: 5px 0;
+  color: #6f8993;
+  font-size: 7px;
+  line-height: 1.5;
+}
+
+.project-dss-filters {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.4fr) minmax(115px, .8fr) auto;
+  align-items: end;
+  gap: 7px;
+  min-width: 0;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid rgba(135, 171, 187, .12);
+  border-radius: 4px;
+  color: #8ba0a8;
+}
+
+.project-dss-filters legend {
+  padding: 0 4px;
+  color: #839ba4;
+  font-size: 8px;
+}
+
+.project-dss-search-filter,
+.project-dss-record-type-filter,
+.project-dss-part-filter-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: #758d97;
+  font-size: 7px;
+}
+
+.project-dss-search-filter input,
+.project-dss-record-type-filter select,
+.project-dss-part-filter-item select {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 1px solid rgba(134, 169, 184, .16);
+  border-radius: 4px;
+  color: #c5d5da;
+  background: #0c2733;
+  font-size: 8px;
+}
+
+.project-dss-part-filters {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.project-dss-filter-reset {
+  min-height: 28px;
+  padding: 0 8px !important;
+  font-size: 7px !important;
+}
+
+.project-dss-record-picker select {
+  min-height: 34px;
+}
+
+.project-dss-visual-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin: 8px 0 4px;
+  color: #95aaaF;
+}
+
+.project-dss-visual-heading strong {
+  color: #a1c9b8;
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.project-dss-visual-heading span {
+  color: #718994;
+  font-size: 7px;
+}
+
+.project-dss-time-series-graph,
+.project-dss-paired-graph,
+.project-dss-time-series-table,
+.project-dss-paired-table,
+.project-dss-location-information {
+  margin-top: 9px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(135, 171, 187, .09);
+}
+
+.project-dss-time-series-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 170px;
+  overflow: visible;
+  border: 1px solid rgba(135, 171, 187, .08);
+  border-radius: 4px;
+  background: rgba(5, 18, 26, .34);
+}
+
+.project-dss-graph-grid {
+  stroke: rgba(128, 162, 176, .15);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+}
+
+.project-dss-graph-grid-vertical {
+  opacity: .65;
+}
+
+.project-dss-graph-axis {
+  stroke: rgba(148, 181, 194, .36);
+  stroke-width: 1;
+}
+
+.project-dss-graph-label {
+  fill: #8299a4;
+  font: 9px ui-monospace, 'SFMono-Regular', Consolas, monospace;
+}
+
+.project-dss-graph-line {
+  fill: none;
+  stroke: #62c5a4;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.project-dss-graph-footnote {
+  margin: 4px 0 0;
+}
+
+.project-dss-table-limit {
+  display: block;
+}
+
+.project-dss-source-qualities pre {
+  max-height: 110px;
+  overflow: auto;
+  color: #8ca1aa;
+  font: 7px/1.45 ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.project-dss-source-qualities small,
+.project-dss-location-information > small {
+  display: block;
+}
+
+.project-dss-table-scroll td.is-nodata {
+  color: #d1a878;
+}
+
+.project-dss-location-information > summary {
+  color: #94b5a8;
+  cursor: pointer;
+  font-size: 8px;
+}
+
+.project-dss-location-information dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
+.project-dss-location-information dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 5px;
+  min-width: 0;
+}
+
+.project-dss-location-information dt {
+  color: #708a94;
+}
+
+.project-dss-location-information dd {
+  min-width: 0;
+  margin: 0;
+  color: #a8bbc0;
+  overflow-wrap: anywhere;
+}
+
+.project-dss-supplemental {
+  display: grid;
+  gap: 3px;
+  color: #a8bbc0;
+  overflow-wrap: anywhere;
+}
+
+.project-dss-supplemental span {
+  color: #708a94;
+}
+
+.project-dss-curve-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 5px;
+  color: #91a6af;
+  font-size: 7px;
+}
+
+.project-dss-curve-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.project-dss-curve-legend i {
+  width: 13px;
+  height: 2px;
+  border-radius: 2px;
+}
+
+@media (max-width: 520px) {
+  .project-dss-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+  .project-dss-search-filter {
+    grid-column: 1 / -1;
+  }
+  .project-dss-part-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .project-dss-location-information dl {
+    grid-template-columns: 1fr;
+  }
+}

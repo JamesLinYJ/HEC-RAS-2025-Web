@@ -324,6 +324,15 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
     });
   };
 
+  const onPlotOptionChange = (propertyName: string, value: string) => {
+    updateSnapshot(current => ({
+      ...current,
+      plotOptions: current.plotOptions.map(option => option.propertyName === propertyName
+        ? { ...option, value }
+        : option),
+    }));
+  };
+
   const onStopChange = (id: string, patch: { color?: string; value?: number }) => {
     updateSnapshot(current => {
       const stops = current.draft.stops.map(stop => stop.id === id ? { ...stop, ...patch } : stop);
@@ -452,6 +461,7 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
     const response = await performRequest(rasterSymbologyMethods.apply, {
       ...makeRasterSymbologyRequest(currentSource, context),
       draft: cloneRasterSymbologyDraft(snapshot.draft),
+      plotOptions: Object.fromEntries(snapshot.plotOptions.map(option => [option.propertyName, option.value])),
     }, parseRasterSymbologyApply, zh ? '应用栅格符号' : 'Applying raster symbology');
     if (!response || !isResponseCurrent(response)) return;
     const result = response.value;
@@ -577,7 +587,7 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
         <InterpolatedSurfaceFillEditor language={language} name={snapshot.draft.name} stops={snapshot.draft.stops}
           grayscale={snapshot.draft.grayscale} />
         <RasterSymbologySettingsGroup language={language} draft={snapshot.draft} plotOptions={snapshot.plotOptions}
-          disabled={busy} onDraftChange={onDraftChange} onReset={onReset} />
+          disabled={busy} onDraftChange={onDraftChange} onPlotOptionChange={onPlotOptionChange} onReset={onReset} />
         <ColorInfosEditor language={language} draft={snapshot.draft} viewport={viewportValue}
           disabled={busy || !snapshot.draft.isEditing} onValueSourceChange={value => onDraftChange({ valueSource: value })}
           onStopChange={onStopChange} onAddBelow={onAddBelow} onDelete={onDeleteStop}
@@ -606,6 +616,7 @@ export function RasterSymbologyEditor({ backend, context, language, source, view
             ? (zh ? '颜色断点有效' : 'Color stops are valid')
             : (zh ? '修正颜色或严格递增的分级值后才能提交' : 'Correct colors and strictly increasing values before applying')}</span>
           <button type="button" className="raster-symbology-apply" onClick={onApply}
+            data-testid="raster-symbology-apply"
             disabled={busy || !dirty || !draftValid}>
             {zh ? '应用到 .vis' : 'Apply to .vis'}
           </button>
@@ -623,7 +634,14 @@ function snapshotStateKey(snapshot: RasterSymbologySnapshot): string {
       stops: snapshot.draft.stops,
       valueSource: snapshot.draft.valueSource,
       grayscale: snapshot.draft.grayscale,
+      alpha: snapshot.draft.alpha,
+      isSurfaceFillEnabled: snapshot.draft.isSurfaceFillEnabled,
+      smoothingRadius: snapshot.draft.smoothingRadius,
+      resampleCellSizeRatio: snapshot.draft.resampleCellSizeRatio,
+      hillshade: snapshot.draft.hillshade,
+      contours: snapshot.draft.contours,
     },
+    plotOptions: snapshot.plotOptions.map(option => [option.propertyName, option.value]),
   });
 }
 

@@ -36,9 +36,15 @@ public sealed record GdbRasterSymbologyIdentity(
 public sealed record RasterMapViewExtent(double MinX, double MinY, double MaxX, double MaxY,
     int PixelWidth = 1024, int PixelHeight = 1024);
 public sealed record RasterSymbologyColorStop(Guid Id, string Color, double Value);
+public sealed record RasterHillshadePropertiesContract(bool IsEnabled, float ZFactor, float Azimuth, float Zenith);
+public sealed record RasterContourPropertiesContract(bool IsEnabled, bool AutoInterval, float Interval,
+    int IndexEvery, string Color, int Opacity, bool ShowLabels, float Density);
 public sealed record RasterSymbologyDraftContract(string? PaletteID, string Name,
     RasterSymbologyColorStop[] Stops, string ValueSource, bool Grayscale, bool IsEditing,
-    bool UpdateHistogramWithView, bool CanComputeHistogram);
+    bool UpdateHistogramWithView, bool CanComputeHistogram,
+    byte? Alpha = null, bool? IsSurfaceFillEnabled = null, float? SmoothingRadius = null,
+    float? ResampleCellSizeRatio = null, RasterHillshadePropertiesContract? Hillshade = null,
+    RasterContourPropertiesContract? Contours = null);
 public sealed record RasterSymbologyPalette(string Id, string Name, string[] Colors,
     double[]? Values = null, bool IsCustom = false);
 public sealed record RasterSymbologySnapshotContract(RasterSymbologyDraftContract Draft,
@@ -110,8 +116,10 @@ public static partial class RasterSymbologyService
         {
             var symbology = ReadSymbology(context.SourceNode.Element("RasterSymbology"), context.Raster,
                 context.SourceRoot, out string valueSource);
-            var snapshot = MakeSnapshot(context, symbology, valueSource);
-            var raster = Render(context, symbology, null);
+            Dictionary<string, string> plotOptions = ResolveSavedRasterPlotOptions(context, symbology);
+            ApplyRasterPlotOptionsToSymbology(context.Raster, symbology, plotOptions);
+            var snapshot = MakeSnapshot(context, symbology, valueSource, plotOptions);
+            var raster = Render(context, symbology, null, plotOptions);
             RasterImportContextSource? rasterInfoStats = null;
             if (includeRasterInfoStats && context.GdbSource is null)
             {
@@ -214,9 +222,14 @@ public static partial class RasterSymbologyService
         {
             var symbology = ApplyDraftToCurrent(context.SourceNode.Element("RasterSymbology"), request.Draft,
                 context.Raster, context.SourceRoot);
-            RasterMapLayerPayload raster = Render(context, symbology, null, request.PlotOptions);
+            Dictionary<string, string> plotOptions = request.PlotOptions is null
+                ? ResolveSavedRasterPlotOptions(context, symbology)
+                : new Dictionary<string, string>(request.PlotOptions, StringComparer.Ordinal);
+            ApplyRasterPlotOptionsToSymbology(context.Raster, symbology, plotOptions);
+            RasterMapLayerPayload raster = Render(context, symbology, null, plotOptions);
             VerifySourceRevision(context);
-            WriteRasterSymbology(context.SourceNode, request.Draft);
+            WriteRasterSymbology(context.SourceNode, request.Draft, symbology);
+            WriteRasterPlotOptions(context.SourceNode, context.Raster, symbology, plotOptions);
             string newRevision = Commit(context);
             return new(context.PreviousVisualizationRevision, newRevision, context.SourceRevision, raster);
         });
@@ -274,7 +287,7 @@ public static partial class RasterSymbologyService
     }
 
     private static RasterSymbologySnapshotContract MakeSnapshot(OperationContext context,
-        RasterSymbology symbology, string valueSource)
+        RasterSymbology symbology, string valueSource, Dictionary<string, string>? plotOptions = null)
     {
         var surfaceFill = symbology.SurfaceFill;
         if (surfaceFill is null || surfaceFill.Colors.Count == 0 || surfaceFill.ColorValues.Length != surfaceFill.Colors.Count)
@@ -285,9 +298,16 @@ public static partial class RasterSymbologyService
             Guid.NewGuid(), EncodeColor(color), surfaceFill.ColorValues[index])).ToArray();
         var draft = new RasterSymbologyDraftContract(paletteID, surfaceFill.Name ?? "", stops,
             NormalizeValueSource(valueSource), paletteID == "Grayscale", false, false,
-            context.Raster.ValidExtent.IsFiniteAndValid());
+            context.Raster.ValidExtent.IsFiniteAndValid(), symbology.Alpha, symbology.IsSurfaceFillEnabled,
+            symbology.SmoothingRadius, symbology.ResampleCellSizeRatio,
+            new(symbology.HillshadeProperties.IsEnabled, symbology.HillshadeProperties.ZFactor,
+                symbology.HillshadeProperties.Azimuth, symbology.HillshadeProperties.Zenith),
+            new(symbology.ContourProperties.IsEnabled, symbology.ContourProperties.AutoInterval,
+                symbology.ContourProperties.ContourInterval, symbology.ContourProperties.IndexEvery,
+                EncodeColor(symbology.ContourProperties.Color), symbology.ContourProperties.Opacity,
+                symbology.ContourProperties.ShowLabels, symbology.ContourProperties.Density));
         return new(draft, palettes, surfaceFill.ColorValues,
-            DescribeRasterPlotOptions(context.Raster, symbology));
+            DescribeRasterPlotOptions(context.Raster, symbology, plotOptions));
     }
 
     private static RasterSymbology ReadSymbology(XElement? node, IResample<float> raster,
@@ -336,17 +356,29 @@ public static partial class RasterSymbologyService
             result.Alpha = alpha;
         if (Enum.TryParse(node.Attribute("InterpolationMode")?.Value, true, out InterpolationMode interpolation))
             result.InterpolationMode = interpolation;
-        if (float.TryParse(node.Attribute("SmoothingRadius")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float smoothing))
+        if (float.TryParse(node.Attribute("SmoothingRadius")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float smoothing) && float.IsFinite(smoothing) && smoothing >= 0)
             result.SmoothingRadius = smoothing;
-        if (float.TryParse(node.Attribute("ResampleCellSizeRatio")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float ratio))
+        if (float.TryParse(node.Attribute("ResampleCellSizeRatio")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float ratio) && float.IsFinite(ratio) && ratio >= 0)
             result.ResampleCellSizeRatio = ratio;
         var hillshade = node.Element("Hillshade");
         if (hillshade is not null)
         {
             if (bool.TryParse(hillshade.Attribute("IsEnabled")?.Value, out bool enabled)) result.HillshadeProperties.IsEnabled = enabled;
-            if (float.TryParse(hillshade.Attribute("ZFactor")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) result.HillshadeProperties.ZFactor = z;
-            if (float.TryParse(hillshade.Attribute("Azimuth")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float azimuth)) result.HillshadeProperties.Azimuth = azimuth;
-            if (float.TryParse(hillshade.Attribute("Zenith")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float zenith)) result.HillshadeProperties.Zenith = zenith;
+            if (float.TryParse(hillshade.Attribute("ZFactor")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float z) && float.IsFinite(z) && z >= 0) result.HillshadeProperties.ZFactor = z;
+            if (float.TryParse(hillshade.Attribute("Azimuth")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float azimuth) && float.IsFinite(azimuth)) result.HillshadeProperties.Azimuth = azimuth;
+            if (float.TryParse(hillshade.Attribute("Zenith")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float zenith) && float.IsFinite(zenith)) result.HillshadeProperties.Zenith = zenith;
+        }
+        var contours = node.Element("Contours");
+        if (contours is not null)
+        {
+            if (bool.TryParse(contours.Attribute("IsEnabled")?.Value, out bool enabled)) result.ContourProperties.IsEnabled = enabled;
+            if (bool.TryParse(contours.Attribute("Auto")?.Value, out bool autoInterval)) result.ContourProperties.AutoInterval = autoInterval;
+            if (float.TryParse(contours.Attribute("Interval")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float interval) && float.IsFinite(interval) && interval > 0) result.ContourProperties.ContourInterval = interval;
+            if (int.TryParse(contours.Attribute("IndexEvery")?.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int indexEvery)) result.ContourProperties.IndexEvery = indexEvery;
+            if (int.TryParse(contours.Attribute("Color")?.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int color)) result.ContourProperties.Color = Color.FromArgb(color);
+            if (int.TryParse(contours.Attribute("Opacity")?.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int opacity)) result.ContourProperties.Opacity = opacity;
+            if (bool.TryParse(contours.Attribute("ShowLabels")?.Value, out bool showLabels)) result.ContourProperties.ShowLabels = showLabels;
+            if (float.TryParse(contours.Attribute("Density")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float density) && float.IsFinite(density)) result.ContourProperties.Density = density;
         }
         return result;
     }
@@ -368,25 +400,238 @@ public static partial class RasterSymbologyService
             name = "Grayscale";
         }
         result.SurfaceFill = new InterpolatedSurfaceFill(colors, values, name: name);
+        if (draft.Alpha is byte alpha) result.Alpha = alpha;
+        if (draft.IsSurfaceFillEnabled is bool isSurfaceFillEnabled) result.IsSurfaceFillEnabled = isSurfaceFillEnabled;
+        if (draft.SmoothingRadius is float smoothingRadius) result.SmoothingRadius = smoothingRadius;
+        if (draft.ResampleCellSizeRatio is float resampleCellSizeRatio) result.ResampleCellSizeRatio = resampleCellSizeRatio;
+        if (draft.Hillshade is { } hillshade)
+        {
+            result.HillshadeProperties.IsEnabled = hillshade.IsEnabled;
+            result.HillshadeProperties.ZFactor = hillshade.ZFactor;
+            result.HillshadeProperties.Azimuth = hillshade.Azimuth;
+            result.HillshadeProperties.Zenith = hillshade.Zenith;
+        }
+        if (draft.Contours is { } contours)
+        {
+            result.ContourProperties.IsEnabled = contours.IsEnabled;
+            result.ContourProperties.AutoInterval = contours.AutoInterval;
+            result.ContourProperties.ContourInterval = contours.Interval;
+            result.ContourProperties.IndexEvery = contours.IndexEvery;
+            result.ContourProperties.Color = ParseColor(contours.Color);
+            result.ContourProperties.Opacity = contours.Opacity;
+            result.ContourProperties.ShowLabels = contours.ShowLabels;
+            result.ContourProperties.Density = contours.Density;
+        }
         return result;
     }
 
-    private static void WriteRasterSymbology(XElement mapLayer, RasterSymbologyDraftContract draft)
+    private static void WriteRasterSymbology(XElement mapLayer, RasterSymbologyDraftContract draft,
+        RasterSymbology symbology)
     {
         var node = mapLayer.Element("RasterSymbology");
         if (node is null) { node = new XElement("RasterSymbology"); mapLayer.Add(node); }
-        node.SetAttributeValue("ValueSource", NormalizeValueSource(draft.ValueSource));
+        string valueSource = NormalizeValueSource(draft.ValueSource);
+        SetDefaulted(node, "IsSurfaceFillEnabled", symbology.IsSurfaceFillEnabled ? "true" : "false", "true");
+        SetDefaulted(node, "Alpha", symbology.Alpha.ToString(CultureInfo.InvariantCulture), byte.MaxValue.ToString(CultureInfo.InvariantCulture));
+        SetDefaulted(node, "InterpolationMode", symbology.InterpolationMode.ToString(), InterpolationMode.Linear.ToString());
+        SetDefaulted(node, "SmoothingRadius", FormatInvariant(symbology.SmoothingRadius), "15");
+        SetDefaulted(node, "ResampleCellSizeRatio", FormatInvariant(symbology.ResampleCellSizeRatio), "1");
+        SetDefaulted(node, "ValueSource", valueSource, "Manual");
         var fill = node.Element("SurfaceFill");
         if (fill is null) { fill = new XElement("SurfaceFill"); node.AddFirst(fill); }
-        fill.RemoveAttributes(); fill.RemoveNodes();
         fill.SetAttributeValue("Name", draft.Grayscale ? "Grayscale" : draft.Name);
+        fill.Elements("Color").Remove();
         foreach (var stop in draft.Stops)
         {
             var color = ParseColor(stop.Color);
             fill.Add(new XElement("Color", new XAttribute("R", color.R), new XAttribute("G", color.G),
                 new XAttribute("B", color.B), new XAttribute("Value", stop.Value.ToString("R", CultureInfo.InvariantCulture))));
         }
+
+        XElement? hillshade = node.Element("Hillshade");
+        PatchSymbologyChild(node, ref hillshade, "Hillshade", new Dictionary<string, string>
+        {
+            ["IsEnabled"] = symbology.HillshadeProperties.IsEnabled ? "true" : "false",
+            ["ZFactor"] = FormatInvariant(symbology.HillshadeProperties.ZFactor),
+            ["Azimuth"] = FormatInvariant(symbology.HillshadeProperties.Azimuth),
+            ["Zenith"] = FormatInvariant(symbology.HillshadeProperties.Zenith)
+        }, new Dictionary<string, string>
+        {
+            ["IsEnabled"] = "false", ["ZFactor"] = "3", ["Azimuth"] = "315", ["Zenith"] = "45"
+        });
+
+        XElement? contours = node.Element("Contours");
+        PatchSymbologyChild(node, ref contours, "Contours", new Dictionary<string, string>
+        {
+            ["IsEnabled"] = symbology.ContourProperties.IsEnabled ? "true" : "false",
+            ["Auto"] = symbology.ContourProperties.AutoInterval ? "true" : "false",
+            ["Interval"] = FormatInvariant(symbology.ContourProperties.ContourInterval),
+            ["IndexEvery"] = symbology.ContourProperties.IndexEvery.ToString(CultureInfo.InvariantCulture),
+            ["Color"] = symbology.ContourProperties.Color.ToArgb().ToString(CultureInfo.InvariantCulture),
+            ["Opacity"] = symbology.ContourProperties.Opacity.ToString(CultureInfo.InvariantCulture),
+            ["ShowLabels"] = symbology.ContourProperties.ShowLabels ? "true" : "false",
+            ["Density"] = FormatInvariant(symbology.ContourProperties.Density)
+        }, new Dictionary<string, string>
+        {
+            ["IsEnabled"] = "false", ["Auto"] = "true", ["Interval"] = "10", ["IndexEvery"] = "5",
+            ["Color"] = "-16777216", ["Opacity"] = "70", ["ShowLabels"] = "true", ["Density"] = "1"
+        });
     }
+
+    private static Dictionary<string, string> ResolveSavedRasterPlotOptions(OperationContext context,
+        RasterSymbology symbology)
+    {
+        Dictionary<string, string> saved = ReadRasterPlotOptions(context.SourceNode);
+        var probe = new RasterRenderLayer(context.Raster, symbology);
+        Dictionary<string, (PlotOption Option, PropertyInfo Property)> sourceOptions = probe.GetPlotOptions()
+            .ToDictionary(pair => pair.Value.Name, pair => (pair.Key, pair.Value), StringComparer.Ordinal);
+        var candidates = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach ((string name, string value) in saved)
+        {
+            if (!sourceOptions.TryGetValue(name, out var sourceOption) ||
+                !TryParseRasterPlotOption(sourceOption.Property.PropertyType, value, out _)) continue;
+            candidates.Add(name, value);
+        }
+
+        // Settings saved by a newer renderer or a previous condition must not
+        // make an otherwise readable .vis fail to load. Apply only the valid,
+        // currently enabled subset; the original XML remains untouched.
+        while (true)
+        {
+            var renderer = new RasterRenderLayer(context.Raster, symbology);
+            Dictionary<string, (PlotOption Option, PropertyInfo Property)> currentOptions = renderer.GetPlotOptions()
+                .ToDictionary(pair => pair.Value.Name, pair => (pair.Key, pair.Value), StringComparer.Ordinal);
+            ApplyRasterPlotOptionValues(renderer, currentOptions, candidates);
+            string[] disabled = candidates.Keys.Where(name =>
+                !IsRasterPlotOptionEnabled(renderer, currentOptions[name].Option)).ToArray();
+            if (disabled.Length == 0) return candidates;
+            foreach (string name in disabled) candidates.Remove(name);
+        }
+    }
+
+    private static Dictionary<string, string> ReadRasterPlotOptions(XElement mapLayer)
+    {
+        XElement? saved = mapLayer.Elements("RasterPlotOptions").FirstOrDefault(element =>
+            element.Attribute("Version")?.Value is null or "1");
+        if (saved is null) return new(StringComparer.Ordinal);
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (XElement option in saved.Elements("Option"))
+        {
+            string? name = option.Attribute("PropertyName")?.Value;
+            string? value = option.Attribute("Value")?.Value;
+            if (string.IsNullOrWhiteSpace(name) || value is null || result.ContainsKey(name)) continue;
+            result.Add(name, value);
+        }
+        return result;
+    }
+
+    private static void WriteRasterPlotOptions(XElement mapLayer, IResample<float> raster,
+        RasterSymbology symbology, Dictionary<string, string> values)
+    {
+        var baseline = new RasterRenderLayer(raster, symbology);
+        Dictionary<string, (PlotOption Option, PropertyInfo Property)> sourceOptions = baseline.GetPlotOptions()
+            .ToDictionary(pair => pair.Value.Name, pair => (pair.Key, pair.Value), StringComparer.Ordinal);
+        var normalizedValues = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach ((string name, string value) in values)
+        {
+            if (!sourceOptions.TryGetValue(name, out var sourceOption))
+            {
+                var aliases = sourceOptions.Values.Where(candidate =>
+                    string.Equals(candidate.Property.Name, name, StringComparison.Ordinal) ||
+                    string.Equals(candidate.Option.Name, name, StringComparison.Ordinal)).Take(2).ToArray();
+                if (aliases.Length == 0)
+                    throw new ArgumentException($"The RasterRenderLayer has no PlotOption named '{name}'.");
+                if (aliases.Length > 1)
+                    throw new ArgumentException($"PlotOption name '{name}' is ambiguous for this renderer.");
+                sourceOption = aliases[0];
+            }
+            if (!normalizedValues.TryAdd(sourceOption.Property.Name, value))
+                throw new ArgumentException($"PlotOption '{name}' duplicates another renderer property.");
+        }
+        var effective = new RasterRenderLayer(raster, symbology);
+        ApplyRasterPlotOptions(effective, sourceOptions, normalizedValues);
+
+        var persisted = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach ((string name, string value) in normalizedValues)
+        {
+            var sourceOption = sourceOptions[name];
+            // ResampleMode is the renderer's public alias for the legacy
+            // RasterSymbology.InterpolationMode .vis attribute.
+            if (sourceOption.Property.Name == nameof(RasterRenderLayer.ResampleMode)) continue;
+            object? current = sourceOption.Property.GetValue(effective);
+            object? defaultValue = sourceOption.Property.GetValue(baseline);
+            if (!string.Equals(FormatPlotOptionValue(current), FormatPlotOptionValue(defaultValue),
+                    StringComparison.Ordinal))
+                persisted.Add(name, value);
+        }
+
+        XElement? container = mapLayer.Elements("RasterPlotOptions").FirstOrDefault(element =>
+            element.Attribute("Version")?.Value is null or "1");
+        if (container is null && persisted.Count > 0)
+        {
+            container = new XElement("RasterPlotOptions", new XAttribute("Version", "1"));
+            mapLayer.Add(container);
+        }
+        if (container is null) return;
+        container.SetAttributeValue("Version", "1");
+
+        foreach (string knownName in sourceOptions.Keys)
+        {
+            XElement[] existing = container.Elements("Option")
+                .Where(option => string.Equals(option.Attribute("PropertyName")?.Value, knownName,
+                    StringComparison.Ordinal)).ToArray();
+            if (persisted.TryGetValue(knownName, out string? storedValue))
+            {
+                XElement target = existing.FirstOrDefault() ?? new XElement("Option");
+                target.SetAttributeValue("PropertyName", knownName);
+                target.SetAttributeValue("Value", storedValue);
+                if (target.Parent is null) container.Add(target);
+                foreach (XElement duplicate in existing.Skip(1)) duplicate.Remove();
+            }
+            else
+            {
+                foreach (XElement option in existing) option.Remove();
+            }
+        }
+
+        bool hasUnknownContent = container.Attributes().Any(attribute => attribute.Name != "Version") ||
+            container.Nodes().Any(node => node is not XElement element || element.Name != "Option" ||
+                !sourceOptions.ContainsKey(element.Attribute("PropertyName")?.Value ?? ""));
+        bool hasKnownOptions = container.Elements("Option").Any(option =>
+            sourceOptions.ContainsKey(option.Attribute("PropertyName")?.Value ?? ""));
+        if (!hasUnknownContent && !hasKnownOptions) container.Remove();
+    }
+
+    private static void PatchSymbologyChild(XElement parent, ref XElement? child, string elementName,
+        IReadOnlyDictionary<string, string> values, IReadOnlyDictionary<string, string> defaults)
+    {
+        bool differsFromDefaults = values.Any(pair => !string.Equals(pair.Value, defaults[pair.Key],
+            StringComparison.Ordinal));
+        if (child is null && !differsFromDefaults) return;
+        if (child is null)
+        {
+            child = new XElement(elementName);
+            parent.Add(child);
+        }
+        foreach ((string name, string value) in values)
+            SetDefaulted(child, name, value, defaults[name]);
+        if (!child.HasAttributes && !child.HasElements && !child.Nodes().Any()) child.Remove();
+    }
+
+    private static void SetDefaulted(XElement element, string name, string value, string defaultValue)
+    {
+        if (string.Equals(value, defaultValue, StringComparison.Ordinal)) element.Attribute(name)?.Remove();
+        else element.SetAttributeValue(name, value);
+    }
+
+    private static string FormatInvariant(float value) => value.ToString("R", CultureInfo.InvariantCulture);
+
+    private static string FormatPlotOptionValue(object? value) => value switch
+    {
+        bool boolean => boolean ? "true" : "false",
+        Enum enumeration => enumeration.ToString(),
+        _ => string.Empty
+    };
 
     private static RasterMapLayerPayload Render(OperationContext context, RasterSymbology symbology,
         RasterMapViewExtent? viewport, Dictionary<string, string>? plotOptions = null)
@@ -415,7 +660,7 @@ public static partial class RasterSymbologyService
         var definition = new RasterDefinition(bounds, height, width);
         var renderer = new RasterRenderLayer(context.Raster, symbology);
         Dictionary<string, (PlotOption Option, PropertyInfo Property)> options = renderer.GetPlotOptions()
-            .ToDictionary(pair => pair.Key.Name, pair => (pair.Key, pair.Value), StringComparer.Ordinal);
+            .ToDictionary(pair => pair.Value.Name, pair => (pair.Key, pair.Value), StringComparer.Ordinal);
         ApplyRasterPlotOptions(renderer, options, plotOptions ?? []);
         using PlotRequest plot = renderer.Render(definition);
         Span<int> colors = plot.ColorBufferARGB.Span;
@@ -435,11 +680,12 @@ public static partial class RasterSymbologyService
     }
 
     private static RasterPlotOptionDescriptor[] DescribeRasterPlotOptions(IResample<float> raster,
-        RasterSymbology symbology)
+        RasterSymbology symbology, Dictionary<string, string>? values = null)
     {
         var renderer = new RasterRenderLayer(raster, symbology);
         Dictionary<string, (PlotOption Option, PropertyInfo Property)> options = renderer.GetPlotOptions()
-            .ToDictionary(pair => pair.Key.Name, pair => (pair.Key, pair.Value), StringComparer.Ordinal);
+            .ToDictionary(pair => pair.Value.Name, pair => (pair.Key, pair.Value), StringComparer.Ordinal);
+        ApplyRasterPlotOptions(renderer, options, values ?? []);
         return options.Select(pair =>
         {
             PlotOption sourceOption = pair.Value.Option;
@@ -470,27 +716,72 @@ public static partial class RasterSymbologyService
         Dictionary<string, (PlotOption Option, PropertyInfo Property)> sourceOptions,
         Dictionary<string, string> values)
     {
+        var resolvedOptions = new List<(string Name, (PlotOption Option, PropertyInfo Property) SourceOption, string Value)>();
         foreach ((string name, string value) in values)
         {
             if (!sourceOptions.TryGetValue(name, out var sourceOption))
-                throw new ArgumentException($"The RasterRenderLayer has no PlotOption named '{name}'.");
-            Type type = sourceOption.Property.PropertyType;
-            object parsed;
-            if (type == typeof(bool) && bool.TryParse(value, out bool boolean)) parsed = boolean;
-            else if (type.IsEnum && Enum.TryParse(type, value, ignoreCase: false, out object? enumeration)
-                     && enumeration is not null && Enum.IsDefined(type, enumeration)) parsed = enumeration;
-            else throw new ArgumentException($"PlotOption '{name}' has an unsupported value.");
+            {
+                var aliases = sourceOptions.Values.Where(candidate =>
+                    string.Equals(candidate.Property.Name, name, StringComparison.Ordinal) ||
+                    string.Equals(candidate.Option.Name, name, StringComparison.Ordinal)).Take(2).ToArray();
+                if (aliases.Length == 0)
+                    throw new ArgumentException($"The RasterRenderLayer has no PlotOption named '{name}'.");
+                if (aliases.Length > 1)
+                    throw new ArgumentException($"PlotOption name '{name}' is ambiguous for this renderer.");
+                sourceOption = aliases[0];
+            }
+            if (!TryParseRasterPlotOption(sourceOption.Property.PropertyType, value, out object? parsed) || parsed is null)
+                throw new ArgumentException($"PlotOption '{name}' has an unsupported value.");
             sourceOption.Property.SetValue(renderer, parsed);
+            if (resolvedOptions.Any(existing => string.Equals(existing.SourceOption.Property.Name,
+                    sourceOption.Property.Name, StringComparison.Ordinal)))
+                throw new ArgumentException($"PlotOption '{name}' duplicates another renderer property.");
+            resolvedOptions.Add((name, sourceOption, value));
         }
-        foreach (string name in values.Keys)
+        foreach (var resolved in resolvedOptions)
         {
-            PlotOption option = sourceOptions[name].Option;
+            PlotOption option = resolved.SourceOption.Option;
             if (string.IsNullOrWhiteSpace(option.EnabledIf)) continue;
             PropertyInfo? gate = renderer.GetType().GetProperty(option.EnabledIf,
                 BindingFlags.Instance | BindingFlags.Public);
             if (gate?.PropertyType != typeof(bool) || gate.GetValue(renderer) is not true)
-                throw new ArgumentException($"PlotOption '{name}' is unavailable for the current renderer state.");
+                throw new ArgumentException($"PlotOption '{resolved.Name}' is unavailable for the current renderer state.");
         }
+    }
+
+    private static bool TryParseRasterPlotOption(Type type, string value, out object? parsed)
+    {
+        parsed = null;
+        if (type == typeof(bool) && bool.TryParse(value, out bool boolean))
+        {
+            parsed = boolean;
+            return true;
+        }
+        if (!type.IsEnum || !Enum.TryParse(type, value, ignoreCase: false, out object? enumeration) ||
+            enumeration is null || !Enum.IsDefined(type, enumeration)) return false;
+        parsed = enumeration;
+        return true;
+    }
+
+    private static void ApplyRasterPlotOptionValues(RasterRenderLayer renderer,
+        Dictionary<string, (PlotOption Option, PropertyInfo Property)> sourceOptions,
+        Dictionary<string, string> values)
+    {
+        foreach ((string name, string value) in values)
+        {
+            if (sourceOptions.TryGetValue(name, out var sourceOption) &&
+                TryParseRasterPlotOption(sourceOption.Property.PropertyType, value, out object? parsed) && parsed is not null)
+                sourceOption.Property.SetValue(renderer, parsed);
+        }
+    }
+
+    private static void ApplyRasterPlotOptionsToSymbology(IResample<float> raster,
+        RasterSymbology symbology, Dictionary<string, string> values)
+    {
+        var renderer = new RasterRenderLayer(raster, symbology);
+        Dictionary<string, (PlotOption Option, PropertyInfo Property)> options = renderer.GetPlotOptions()
+            .ToDictionary(pair => pair.Value.Name, pair => (pair.Key, pair.Value), StringComparer.Ordinal);
+        ApplyRasterPlotOptions(renderer, options, values);
     }
 
     private static bool IsRasterPlotOptionEnabled(RasterRenderLayer renderer, PlotOption option)
@@ -905,6 +1196,7 @@ public static partial class RasterSymbologyService
 
     private static void ValidateDraft(RasterSymbologyDraftContract draft)
     {
+        ArgumentNullException.ThrowIfNull(draft);
         if (draft.Stops is null || draft.Stops.Length is < 2 or > 1024)
             throw new ArgumentException("A raster color ramp must contain between 2 and 1024 stops.");
         if (!draft.Stops.All(stop => stop.Id != Guid.Empty && double.IsFinite(stop.Value)) ||
@@ -917,6 +1209,18 @@ public static partial class RasterSymbologyService
                 throw new ArgumentException("Each raster value must be greater than the previous value.");
         }
         _ = NormalizeValueSource(draft.ValueSource);
+        if (draft.SmoothingRadius is { } smoothing && (!float.IsFinite(smoothing) || smoothing < 0 || smoothing > 1_000_000) ||
+            draft.ResampleCellSizeRatio is { } ratio && (!float.IsFinite(ratio) || ratio < 0 || ratio > 1_000_000))
+            throw new ArgumentException("Raster smoothing and resampling settings must be finite nonnegative values.");
+        if (draft.Hillshade is { } hillshade && (!float.IsFinite(hillshade.ZFactor) || hillshade.ZFactor < 0 || hillshade.ZFactor > 1_000_000 ||
+            !float.IsFinite(hillshade.Azimuth) || Math.Abs(hillshade.Azimuth) > 1_000_000 ||
+            !float.IsFinite(hillshade.Zenith) || Math.Abs(hillshade.Zenith) > 1_000_000))
+            throw new ArgumentException("Raster hillshade settings are outside the supported finite range.");
+        if (draft.Contours is { } contours && (!float.IsFinite(contours.Interval) || contours.Interval <= 0 || contours.Interval > 1_000_000 ||
+            contours.IndexEvery < 0 || contours.IndexEvery > 1_000_000 || contours.Opacity is < 0 or > 100 ||
+            !float.IsFinite(contours.Density) || contours.Density is < 0.025f or > 4f))
+            throw new ArgumentException("Raster contour settings are outside the supported range.");
+        if (draft.Contours is { } contourColor) _ = ParseColor(contourColor.Color);
     }
 
     private static string ValidatePaletteName(string value)

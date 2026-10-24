@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Language } from '../../shared/workbench';
-import { gchoice, gfield, gkind, gt } from './geometryText';
+import { ActiveFeaturesControl } from './ActiveFeaturesControl';
+import { gchoice, gfield, gt } from './geometryText';
 import type { GeometryField, GeometryRow, GeometryTable } from './geometryTypes';
 
 interface GeometryFeatureTableProps {
@@ -92,59 +93,23 @@ export function GeometryFeatureTable({
   onSelect,
   selectedRowIDs,
 }: GeometryFeatureTableProps) {
-  const [filter, setFilter] = useState('');
-  const [internalSelectedIDs, setInternalSelectedIDs] = useState<string[]>([]);
-  const selectedIDs = selectedRowIDs ?? internalSelectedIDs;
   const sourceRows = table?.rows ?? [];
   const allRows = useMemo(() => [...sourceRows, ...localRows], [sourceRows, localRows]);
   const columns = table?.columns ?? [];
   const fieldsById = useMemo(() => new Map((table?.editableFields ?? []).map((field) => [field.id, field])), [table?.editableFields]);
-  const visibleRows = useMemo(() => {
-    const needle = filter.trim().toLocaleLowerCase();
-    if (!needle) return allRows;
-    return allRows.filter((row) => [row.id, String(row.fid ?? ''), ...Object.values(row.values ?? {})]
-      .some((value) => String(value).toLocaleLowerCase().includes(needle)));
-  }, [allRows, filter]);
-  const visibleIDSet = useMemo(() => new Set(visibleRows.map((row) => row.id)), [visibleRows]);
-  const selectionCount = selectedIDs.filter((id) => visibleIDSet.has(id)).length;
-  const selectedRows = allRows.filter((row) => selectedIDs.includes(row.id));
   const localIDSet = new Set(localRows.map((row) => row.id));
 
-  const updateSelection = (ids: string[]): void => {
-    if (selectedRowIDs === undefined) setInternalSelectedIDs(ids);
-    onSelect?.(ids);
-  };
-
-  const toggleRow = (id: string): void => {
-    const next = selectedIDs.includes(id) ? selectedIDs.filter((current) => current !== id) : [...selectedIDs, id];
-    updateSelection(next);
-  };
-
-  const toggleVisible = (): void => {
-    const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIDs.includes(row.id));
-    const next = allVisibleSelected
-      ? selectedIDs.filter((id) => !visibleIDSet.has(id))
-      : [...new Set([...selectedIDs, ...visibleRows.map((row) => row.id)])];
-    updateSelection(next);
-  };
-
-  const commitDelete = (): void => {
-    if (!selectedRows.length || busy) return;
-    onDelete?.(selectedRows);
-    const selected = selectedIDs.filter((id) => !selectedRows.some((row) => row.id === id));
-    updateSelection(selected);
-  };
-
   return (
-    <section className="geometry-panel" aria-label={`${gkind(language, kind)} ${gt(language, 'table')}`}>
-      <header className="geometry-panel-heading">
-        <div><h2>{gkind(language, kind)} · {gt(language, 'table')}</h2><p>{allRows.length} {gt(language, 'rows')}{selectionCount ? ` · ${selectionCount} ${gt(language, 'selected')}` : ''}</p></div>
-        <div className="geometry-toolbar-group">
-          <input className="geometry-filter" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={gt(language, 'filter')} aria-label={gt(language, 'filter')} />
-          {allowLocalAdd && <button className="geometry-secondary" disabled={busy} onClick={onLocalAdd}>{gt(language, 'addLocal')}</button>}
-          {onDelete && <button className="geometry-secondary" disabled={busy || selectedRows.length === 0} onClick={commitDelete}>{gt(language, 'delete')}</button>}
-        </div>
-      </header>
+    <ActiveFeaturesControl language={language} kind={kind} rows={allRows} selectedRowIDs={selectedRowIDs} onSelectionChange={onSelect}
+      actions={(selectedRows, selection) => <>
+        {allowLocalAdd && <button className="geometry-secondary" disabled={busy} onClick={onLocalAdd}>{gt(language, 'addLocal')}</button>}
+        {onDelete && <button className="geometry-secondary" disabled={busy || selectedRows.length === 0} onClick={() => {
+          onDelete(selectedRows);
+          const removed = new Set(selectedRows.map((row) => row.id));
+          selection.updateSelection(selection.selectedIDs.filter((id) => !removed.has(id)));
+        }}>{gt(language, 'delete')}</button>}
+      </>}>
+      {({ visibleRows, selectedIDs, toggleRow, toggleVisible }) => <>
       {localRows.length > 0 && <div className="geometry-local-banner">{gt(language, 'localOnly')}</div>}
       {visibleRows.length === 0 ? (
         <div className="geometry-empty">
@@ -194,6 +159,7 @@ export function GeometryFeatureTable({
         <span>{sourceRows.length} {gt(language, 'sourceBacked')}</span>
         <span>{localRows.length ? `${localRows.length} ${gt(language, 'localDraft')}` : gt(language, 'validationNote')}</span>
       </footer>
-    </section>
+      </>}
+    </ActiveFeaturesControl>
   );
 }

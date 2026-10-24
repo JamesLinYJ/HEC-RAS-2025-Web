@@ -114,6 +114,19 @@
   font: inherit;
 }
 
+.raster-symbology-property-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 9px;
+  margin: 8px 0;
+}
+
+.raster-symbology-property-grid .raster-symbology-check { align-self: end; }
+.raster-symbology-contour-color input { width: 42px; height: 30px; padding: 2px; }
+.raster-symbology-subgroup { margin-top: 9px; border-top: 1px solid var(--border-subtle, #d7dce2); padding-top: 8px; }
+.raster-symbology-subgroup > summary { cursor: pointer; color: var(--text-secondary, #5f6772); }
+.raster-symbology-option-disabled { display: block; color: var(--text-secondary, #5f6772); font-size: 11px; }
+
 .raster-symbology-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
 .raster-symbology-palette-control { display: block; min-width: 0; background-color: var(--surface-secondary, #f7f8fa); background-repeat: no-repeat; }
 .raster-symbology-picker-preview { width: 94px; height: 28px; overflow: hidden; border-radius: 5px; }
@@ -130,6 +143,8 @@
 .raster-symbology-plot-options summary { cursor: pointer; color: var(--text-secondary, #5f6772); }
 .raster-symbology-plot-option-list { display: grid; gap: 7px; margin-top: 9px; }
 .raster-symbology-plot-option { justify-content: flex-start; color: var(--text-secondary, #5f6772); }
+.raster-symbology-plot-option .raster-symbology-check { margin: 2px 0; }
+.raster-symbology-plot-option .raster-symbology-field { width: 100%; }
 .raster-symbology-plot-option output { margin-left: auto; color: var(--text-primary, #202124); font-family: ui-monospace, monospace; }
 
 .raster-symbology-colors { display: grid; gap: 8px; }

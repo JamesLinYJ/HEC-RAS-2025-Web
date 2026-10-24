@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { UnitComboBox } from '../../controls/UnitComboBox';
 import type { DisplayUnitData, EditorFieldSchema } from './model';
 import { validateFieldValue } from './SchemaFieldRenderer';
 import { editorText } from './editorLocalization';
@@ -25,8 +26,9 @@ export function UnitAwareNumberField({ id, title, value, baseline, field, unitDa
   }, [id, unitData?.sourceId]);
 
   const selected = choices.find((choice) => choice.id === unitID);
+  const selectedUnitIsFinite = Boolean(selected && Number.isFinite(selected.scale) && selected.scale > 0 && Number.isFinite(selected.offset));
   const numericSource = value.trim() === '' ? Number.NaN : Number(value);
-  const displayValue = Number.isFinite(numericSource) && selected
+  const displayValue = Number.isFinite(numericSource) && selected && selectedUnitIsFinite
     ? formatDisplayValue(numericSource * selected.scale + selected.offset)
     : value;
   const shown = rawEdit?.id === id ? rawEdit.value : displayValue;
@@ -41,7 +43,7 @@ export function UnitAwareNumberField({ id, title, value, baseline, field, unitDa
       onChange(raw);
       return;
     }
-    if (!selected) {
+    if (!selected || !selectedUnitIsFinite) {
       onChange(raw);
       return;
     }
@@ -53,9 +55,18 @@ export function UnitAwareNumberField({ id, title, value, baseline, field, unitDa
     <label htmlFor={id}>{title}{choices.length <= 1 && unitLabel && <span className="editor-meteorology-unit">{unitLabel}</span>}</label>
     <div className="editor-unit-number-control">
       <input id={id} type="text" inputMode="decimal" value={shown} readOnly={disabled} aria-invalid={error ? 'true' : undefined} onChange={(event) => update(event.currentTarget.value)} onBlur={() => setRawEdit(null)} />
-      {choices.length > 1 && <select aria-label={language === 'zh' ? title + '显示单位' : title + ' display units'} value={selected ? unitID : unitData?.sourceId ?? ''} disabled={disabled} onChange={(event) => { setUnitID(event.currentTarget.value); setRawEdit(null); }}>
-        {choices.map((choice) => <option key={choice.id} value={choice.id}>{editorText(language, choice.name ?? choice.id)}</option>)}
-      </select>}
+      {choices.length > 1 && <UnitComboBox
+        units={choices}
+        selectedUnitId={selected ? unitID : unitData?.sourceId ?? ''}
+        onSelectedUnitChange={(unitId) => {
+          setUnitID(unitId);
+          const invalidRaw = rawEdit?.id === id && Boolean(validateFieldValue(field, rawEdit.value, language));
+          if (!invalidRaw) setRawEdit(null);
+        }}
+        ariaLabel={language === 'zh' ? title + '显示单位' : title + ' display units'}
+        getLabel={(choice) => editorText(language, choice.name ?? choice.id)}
+        disabled={disabled}
+      />}
       {choices.length <= 1 && (selected?.name || unitLabel) && <span className="editor-meteorology-unit">{editorText(language, selected?.name ?? unitLabel ?? '')}</span>}
     </div>
     {error && <small className="editor-field-error">{error}</small>}

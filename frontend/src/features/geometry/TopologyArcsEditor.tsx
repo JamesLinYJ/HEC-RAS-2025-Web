@@ -1,10 +1,10 @@
 import type { GeometryTopologyTablePageProps } from './GeometryTopologyTablePage';
-import { ConceptualMeshTopologyArcsEditor } from './ConceptualMeshTopologyArcsEditor';
+import { TopologyArcActiveFeatures } from './TopologyArcActiveFeatures';
 
 export type TopologyArcsEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
 
 export function TopologyArcsEditor(props: TopologyArcsEditorProps) {
-  return <ConceptualMeshTopologyArcsEditor {...props} />;
+  return <TopologyArcActiveFeatures {...props} />;
 }
 
 export default TopologyArcsEditor;

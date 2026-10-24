@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FeaturePageProps } from '../../../shared/workbench';
 import { message } from '../../../shared/workbench';
 import type { UnitCalculatorConvertResult, UnitCalculatorLoadResult } from './wilcockTypes';
+import { UnitCalculator, type UnitCalculatorDirection } from './UnitCalculator';
 
 type BusyAction = 'loading' | 'converting' | null;
-type Direction = 'FromTo' | 'ToFrom';
 
 interface ActiveRequest {
   owner: symbol;
@@ -16,6 +16,13 @@ function parseLoad(value: unknown): UnitCalculatorLoadResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('单位服务返回的数据不是对象。');
   const raw = value as Record<string, unknown>;
   if (!Array.isArray(raw.fromUnits) || !Array.isArray(raw.toUnits)) throw new Error('单位服务没有返回源单位和目标单位目录。');
+  const units = [...raw.fromUnits, ...raw.toUnits];
+  if (units.some((unit) => !unit || typeof unit !== 'object' ||
+    typeof (unit as Record<string, unknown>).id !== 'string' ||
+    typeof (unit as Record<string, unknown>).name !== 'string' ||
+    typeof (unit as Record<string, unknown>).unitTypeName !== 'string')) {
+    throw new Error('单位服务返回了不完整的单位标识。');
+  }
   return value as UnitCalculatorLoadResult;
 }
 
@@ -41,8 +48,9 @@ export function UnitCalculatorPage({ language, backend }: FeaturePageProps) {
   const [catalog, setCatalog] = useState<UnitCalculatorLoadResult>();
   const [selectedFromID, setSelectedFromID] = useState('');
   const [selectedToID, setSelectedToID] = useState('');
-  const [inputValue, setInputValue] = useState('');
-  const [direction, setDirection] = useState<Direction>('FromTo');
+  const [fromValue, setFromValue] = useState('');
+  const [toValue, setToValue] = useState('');
+  const [direction, setDirection] = useState<UnitCalculatorDirection>('FromTo');
   const [conversion, setConversion] = useState<UnitCalculatorConvertResult>();
   const [conversionKey, setConversionKey] = useState<string>();
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
@@ -83,7 +91,7 @@ export function UnitCalculatorPage({ language, backend }: FeaturePageProps) {
       setSelectedFromID(returned.fromUnitId ?? '');
       setSelectedToID(returned.toUnitId ?? '');
     } catch (requestError) {
-      if (isCurrent(request)) setError(message(requestError, language));
+      if (isCurrent(request)) setError(message(requestError, languageRef.current));
     } finally {
       if (isCurrent(request)) {
         setBusyAction(null);
@@ -103,24 +111,28 @@ export function UnitCalculatorPage({ language, backend }: FeaturePageProps) {
     };
   }, [loadUnits]);
 
-  const inputNumber = finiteInput(inputValue);
+  const activeValue = direction === 'FromTo' ? fromValue : toValue;
+  const inputNumber = finiteInput(activeValue);
   const hasSelection = Boolean(selectedFromID && selectedToID);
-  const requestKey = JSON.stringify([selectedFromID, selectedToID, inputValue, direction]);
+  const requestKey = JSON.stringify([selectedFromID, selectedToID, activeValue, direction]);
   const resultStale = Boolean(conversion && conversionKey !== requestKey);
 
   const changeFrom = (fromUnitId: string): void => {
     setSelectedFromID(fromUnitId);
     setSelectedToID('');
-    setConversion(undefined);
-    setConversionKey(undefined);
+    setDirection('FromTo');
     if (fromUnitId) void loadUnits(fromUnitId, null);
     else void loadUnits(null, null);
   };
 
+  const changeFamily = (unitTypeName: string): void => {
+    const source = catalog?.fromUnits.find((unit) => unit.unitTypeName === unitTypeName);
+    changeFrom(source?.id ?? '');
+  };
+
   const changeTo = (toUnitId: string): void => {
     setSelectedToID(toUnitId);
-    setConversion(undefined);
-    setConversionKey(undefined);
+    setDirection('FromTo');
     void loadUnits(selectedFromID || null, toUnitId || null);
   };
 
@@ -141,6 +153,8 @@ export function UnitCalculatorPage({ language, backend }: FeaturePageProps) {
     setBusyAction('converting');
     setError(undefined);
     setStatus(undefined);
+    setConversion(undefined);
+    setConversionKey(undefined);
     const convertingKey = requestKey;
     try {
       const raw = await backend.request<unknown>('unitCalculator.convert', {
@@ -153,9 +167,11 @@ export function UnitCalculatorPage({ language, backend }: FeaturePageProps) {
       const returned = parseConversion(raw);
       setConversion(returned);
       setConversionKey(convertingKey);
+      if (direction === 'FromTo') setToValue(String(returned.value));
+      else setFromValue(String(returned.value));
       setStatus('换算完成。');
     } catch (requestError) {
-      if (isCurrent(request)) setError(message(requestError, language));
+      if (isCurrent(request)) setError(message(requestError, languageRef.current));
     } finally {
       if (isCurrent(request)) {
         setBusyAction(null);
@@ -175,17 +191,11 @@ export function UnitCalculatorPage({ language, backend }: FeaturePageProps) {
     setStatus('已请求取消；迟到的单位服务回执不会覆盖当前状态。');
   };
 
-  const fromUnit = catalog?.fromUnits.find(unit => unit.id === selectedFromID);
-  const toUnit = catalog?.toUnits.find(unit => unit.id === selectedToID);
-  const directionLabel = direction === 'FromTo'
-    ? `${fromUnit?.name ?? selectedFromID} → ${toUnit?.name ?? selectedToID}`
-    : `${toUnit?.name ?? selectedToID} → ${fromUnit?.name ?? selectedFromID}`;
-
   return <main className="hydraulics-workspace unit-calculator-page">
     <header className="hydraulics-header">
       <div><span className="tools-kicker">{zh ? '单位换算' : 'UNIT CONVERSION'}</span>
         <h2>{zh ? '单位计算器' : 'Unit calculator'}</h2>
-        <p>选择源单位和目标单位，进行同类物理量换算。</p>
+        <p>{zh ? '选择单位族和成对单位，执行双向换算。' : 'Choose a unit family and unit pair for conversion in either direction.'}</p>
       </div>
       <div className="hydraulics-header-actions">
         <span className={backend.supports('unitCalculator.convert') ? 'hydraulics-runtime is-connected' : 'hydraulics-runtime'}>{backend.supports('unitCalculator.convert') ? '换算服务可用' : '换算服务不可用'}</span>
@@ -196,36 +206,26 @@ export function UnitCalculatorPage({ language, backend }: FeaturePageProps) {
     {busyAction && <p className="hydraulics-status" role="status">{busyAction === 'loading' ? '正在加载单位目录…' : '正在换算…'}</p>}
     {error && <p className="hydraulics-error" role="alert">{error}</p>}
     {status && <p className="hydraulics-status" role="status">{status}</p>}
-    <section className="hydraulics-unit-card" aria-label={zh ? '单位换算参数' : 'Unit conversion inputs'}>
-      <label className="hydraulics-field"><span>源单位</span>
-        <select value={selectedFromID} disabled={!catalog || busyAction !== null} onChange={event => changeFrom(event.currentTarget.value)}>
-          <option value="">选择源单位</option>
-          {(catalog?.fromUnits ?? []).map(unit => <option key={unit.id} value={unit.id}>{unit.name} · {unit.unitTypeName}</option>)}
-        </select>
-      </label>
-      <label className="hydraulics-field"><span>目标单位</span>
-        <select value={selectedToID} disabled={!selectedFromID || busyAction !== null} onChange={event => changeTo(event.currentTarget.value)}>
-          <option value="">选择目标单位</option>
-          {(catalog?.toUnits ?? []).map(unit => <option key={unit.id} value={unit.id}>{unit.name} · {unit.unitTypeName}</option>)}
-        </select>
-      </label>
-      <label className="hydraulics-field"><span>输入值 <code>Value</code></span>
-        <input inputMode="decimal" value={inputValue} disabled={busyAction !== null} onChange={event => setInputValue(event.currentTarget.value)} placeholder="例如 12.5" />
-      </label>
-      <fieldset className="hydraulics-direction"><legend>换算方向 <code>Direction</code></legend>
-        <label><input type="radio" name="unit-direction" disabled={busyAction !== null} checked={direction === 'FromTo'} onChange={() => setDirection('FromTo')} />源单位 → 目标单位</label>
-        <label><input type="radio" name="unit-direction" disabled={busyAction !== null} checked={direction === 'ToFrom'} onChange={() => setDirection('ToFrom')} />目标单位 → 源单位</label>
-      </fieldset>
-      <p className="hydraulics-muted">输入空值或非法文本不会转换为 0；小数请使用点号，不输入千位分隔符。</p>
-      <button type="button" className="hydraulics-button hydraulics-button-primary" disabled={!backend.supports('unitCalculator.convert') || !hasSelection || inputNumber === null || busyAction !== null} onClick={() => void convert()}>
-        {busyAction === 'converting' ? '转换中…' : '换算'}
-      </button>
-    </section>
-    {conversion && <section className="hydraulics-conversion-result" aria-live="polite">
-      <span>方向：{directionLabel}</span>
-      <strong>{conversion.value}</strong>
-      {resultStale && <small>输入或方向已变化，请重新换算。</small>}
-    </section>}
+    <UnitCalculator
+      language={language}
+      catalog={catalog}
+      selectedFromID={selectedFromID}
+      selectedToID={selectedToID}
+      fromValue={fromValue}
+      toValue={toValue}
+      direction={direction}
+      conversion={conversion}
+      conversionStale={resultStale}
+      canConvert={backend.supports('unitCalculator.convert') && hasSelection && inputNumber !== null && busyAction === null}
+      converting={busyAction !== null}
+      onFamilyChange={changeFamily}
+      onFromChange={changeFrom}
+      onToChange={changeTo}
+      onFromValueChange={(value) => { setFromValue(value); setDirection('FromTo'); }}
+      onToValueChange={(value) => { setToValue(value); setDirection('ToFrom'); }}
+      onDirectionChange={setDirection}
+      onConvert={() => void convert()}
+    />
     {catalog && <details className="hydraulics-raw-draft"><summary>单位目录详情</summary><pre>{JSON.stringify(catalog, null, 2)}</pre></details>}
     {conversion && <details className="hydraulics-raw-draft"><summary>换算结果详情</summary><pre>{JSON.stringify(conversion, null, 2)}</pre></details>}
   </main>;

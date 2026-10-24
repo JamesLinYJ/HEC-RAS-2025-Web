@@ -25,6 +25,8 @@ export function PayloadListItem({ payload, line, series, onRemove, ...props }: E
   const enabled = (props.draft.fields[enabledID] ?? props.snapshot.fields[enabledID] ?? String(payload.isEnabled)) === 'true';
   const description = props.draft.fields[descriptionID] ?? props.snapshot.fields[descriptionID] ?? payload.description;
   const variable = props.draft.fields[variableID] ?? props.snapshot.fields[variableID] ?? payload.variable;
+  const selectedPayloadID = (props.draft.boundaryView ?? props.snapshot.boundary)?.selectedPayloadId ?? null;
+  const isSelected = selectedPayloadID === payload.id;
   const setEnabled = (nextEnabled: boolean): void => {
     if (nextEnabled && payload.isHydraulic) {
       for (const candidate of line.payloads.filter((item) => item.isHydraulic)) {
@@ -35,9 +37,15 @@ export function PayloadListItem({ payload, line, series, onRemove, ...props }: E
   const seriesIsRegular = series?.schemaId === 'RegularTimeSeriesPayloadEditor'
     || series?.schemaId === 'RegularSpatiallyVariableTimeSeriesPayloadEditor' && hasRegularTimeDefinition(series, props);
 
-  return <article className="editor-payload-card">
+  return <article
+    className="editor-payload-card"
+    aria-current={isSelected ? 'true' : undefined}
+    data-payload-id={payload.id}
+    data-selected-payload={isSelected ? 'true' : 'false'}
+    style={isSelected ? { borderColor: '#5b98c3', background: '#f3f9fd', boxShadow: '0 0 0 2px #dceefa' } : undefined}
+  >
     <div className="editor-payload-heading">
-      <h3>{name}</h3>
+      <h3>{name}{isSelected && <span className="editor-readonly-tag">{props.language === 'zh' ? '当前所选' : 'Selected'}</span>}</h3>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <label className="editor-toggle"><input type="checkbox" disabled={!props.snapshot.canEdit || isEditorFieldReadOnly(props, enabledID)} checked={enabled} onChange={(event) => setEnabled(event.currentTarget.checked)} />{props.language === 'zh' ? '启用' : 'Enabled'}</label>
         <button type="button" className="editor-button" disabled={!props.snapshot.canEdit || !props.onBoundaryTransform} onClick={onRemove}>{props.language === 'zh' ? '移除' : 'Remove'}</button>

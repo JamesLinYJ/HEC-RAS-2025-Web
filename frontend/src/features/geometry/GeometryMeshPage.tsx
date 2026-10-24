@@ -3,7 +3,7 @@ import type { Language } from '../../shared/workbench';
 import { GeometryFeatureTable } from './GeometryFeatureTable';
 import { gdiagnostic, gfield, gmode, gt } from './geometryText';
 import { GeometryError } from './GeometryError';
-import { FlowAreaEditorContextualControl } from './FlowAreaEditorContextualControl';
+import { FlowAreaLayerActiveFeatures } from './FlowAreaLayerActiveFeatures';
 import { GeometryPrepareSummaryControl } from './GeometryPrepareSummaryControl';
 import { MeshDiagnostics } from './MeshDiagnostics';
 import { geometryDiagnosticMessage } from './geometryErrors';
@@ -120,7 +120,7 @@ export function GeometryMeshPage({
 
   return (
     <div className="geometry-grid">
-      <FlowAreaEditorContextualControl language={language} table={flowAreas} canEdit={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleAreaEdit} headerActions={<>
+      <FlowAreaLayerActiveFeatures language={language} table={flowAreas} canEdit={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleAreaEdit} headerActions={<>
         <button className="geometry-secondary" disabled={!canPrepare || busy || !canEdit} onClick={onPrepare}>{gt(language, 'prepare')}</button>
         <button className="geometry-primary" disabled={!canGenerate || busy || !canEdit || !snapshot} onClick={() => void generate()}>{busy ? gt(language, 'generating') : gt(language, 'generate')}</button>
       </>}>
@@ -128,7 +128,7 @@ export function GeometryMeshPage({
         {snapshot?.flowAreas.some((area) => area.hasMeshErrors) && <div className="geometry-validation-list"><div className="geometry-validation-item">{language === 'zh' ? '至少一个流动区域包含网格错误。' : 'At least one flow area contains mesh errors.'}</div></div>}
         {progress && <details className="geometry-panel-body"><summary>{gt(language, 'serverProgress')}</summary><pre className="geometry-report-item">{progress}</pre></details>}
         {taskError && <GeometryError language={language} error={taskError} style={{ margin: 13 }} />}
-      </FlowAreaEditorContextualControl>
+      </FlowAreaLayerActiveFeatures>
       <GeometryPrepareSummaryControl language={language} summary={snapshot?.prepareSummary} pending={!!snapshot?.preparePending} />
       <section className="geometry-panel">
         <header className="geometry-panel-heading"><div><h2>{gt(language, 'selectedRegions')}</h2><p>{snapshot?.selectedRegionIDs.length ?? 0} {gt(language, 'selected')}</p></div><span className="geometry-count-pill">{gt(language, 'sizingStatus')}</span></header>

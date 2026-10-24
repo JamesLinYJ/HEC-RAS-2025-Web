@@ -1,0 +1,4 @@
+.map-scale-bar { position: absolute; left: 14px; bottom: 14px; padding: 6px 9px 8px; border-radius: 6px; color: #203642; background: rgba(249, 252, 255, .88); box-shadow: 0 1px 5px rgba(10, 26, 38, .16); font-size: 10px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.map-scale-bar-labels { display: flex; justify-content: space-between; gap: 10px; padding-bottom: 4px; white-space: nowrap; }
+.map-scale-bar-line { position: relative; height: 6px; border: 1px solid currentColor; background: linear-gradient(to right, currentColor 0 50%, transparent 50% 100%); }
+.map-scale-bar-line i { position: absolute; top: -3px; bottom: -1px; left: 50%; border-left: 1px solid currentColor; }

@@ -132,21 +132,34 @@
       },
       {
         "id": "boundary-condition-line-and-payload-editor",
-        "mount": "Editors → EditorWorkbench → BoundaryConditionLineEditorPage → BasicHydraulicBoundaryConditions → BoundaryConditionLineEditor / BoundaryConditionLinePayloadsList / NewPayloadDialog",
+        "mount": "EditorWorkbench → BoundaryConditionEditor → BoundaryConditionLineEditorPage → DetailedBoundaryConditionHeader / BoundaryConditionTimeWindow / BoundaryConditionLineAndPayloadPickerPage → BCLinesLayerActiveFeatures / BoundaryConditionLineEditor → BCLineLayerLastSelectedFeatureLineEditor / BoundaryConditionLinePayloadsList / NewPayloadDialog / payload editors",
         "source": [
           "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/BoundaryConditionEditor.tsx",
           "frontend/src/features/editors/BoundaryConditionLineEditorPage.tsx",
-          "frontend/src/features/editors/BasicHydraulicBoundaryConditions.tsx",
+          "frontend/src/features/editors/DetailedBoundaryConditionHeader.tsx",
+          "frontend/src/features/editors/BoundaryConditionTimeWindow.tsx",
+          "frontend/src/features/editors/BoundaryConditionLineAndPayloadPickerPage.tsx",
+          "frontend/src/features/editors/BCLinesLayerActiveFeatures.tsx",
           "frontend/src/features/editors/BoundaryConditionLineEditor.tsx",
+          "frontend/src/features/editors/BCLineLayerLastSelectedFeatureLineEditor.tsx",
+          "frontend/src/features/editors/DetailedBCLineHeaderControl.tsx",
           "frontend/src/features/editors/BoundaryConditionLinePayloadsList.tsx",
+          "frontend/src/features/editors/PayloadListItem.tsx",
+          "frontend/src/features/editors/BoundaryConditionLineQuickEditPicker.tsx",
           "frontend/src/features/editors/NewPayloadDialog.tsx",
-          "frontend/src/features/editors/BoundaryConditionTimeWindow.tsx"
+          "frontend/src/features/editors/ConstantPayloadEditor.tsx",
+          "frontend/src/features/editors/ExternalPayloadEditor.tsx",
+          "frontend/src/features/editors/IrregularTimeSeriesPayloadEditor.tsx",
+          "frontend/src/features/editors/RegularSpatiallyVariableTimeSeriesPayloadEditor.tsx",
+          "frontend/src/features/editors/RegularTimeSeriesPayloadEditor.tsx",
+          "frontend/src/features/editors/SpatiallyVariableTimeSeriesPayloadEditor.tsx"
         ],
-        "stateOwner": "The selected model session, source path/revision and ModelDraft own line fields, aliases, rows, samples, payload values and transform sourceState. Selecting another line is view-local and does not mutate the save baseline.",
+        "stateOwner": "The selected model session, source path/revision and ModelDraft own line fields, aliases, rows, samples, payload values and transform sourceState. BoundaryConditionLineAndPayloadPickerPage derives selection from snapshot lines and keeps the current line in local view state using the stable snapshot line GUID; its detail projection does not mutate the parent draft or save baseline. PayloadListItem only highlights the snapshot/draft selectedPayloadId; it does not invent a selection callback. Selecting another line does not change the save baseline.",
         "readActions": [
           "model.load"
         ],
-        "writeBoundary": "Payload create/remove uses model.boundaryTransform and accepts only a revision-matched draft projection with changed sourceState and stable payload IDs. Field, date/time, table and sample edits stay in the same ModelDraft; only the parent model.save commits them to the model HDF."
+        "writeBoundary": "The selected line name and payload fields/tables remain parent ModelDraft edits. Payload create/remove uses model.boundaryTransform and accepts only a revision-matched draft projection with changed sourceState and stable payload IDs; field, date/time, table and sample edits stay in the same draft. Line selection is view-only. Only the parent model.save commits the model HDF."
       },
       {
         "id": "geometry-culvert-editor",
@@ -441,16 +454,25 @@
           "frontend/src/features/project/ProjectTreeMode.tsx",
           "backend/Host/ProjectConnectionService.cs",
           "backend/Host/BackendWorker.cs",
-          "backend/Host/CatalogTreeService.cs"
+          "backend/Host/CatalogTreeService.cs",
+          "frontend/src/features/project/dss/DssCatalogViewer.tsx",
+          "frontend/src/features/project/dss/DssFilterControl.tsx",
+          "frontend/src/features/project/dss/PartFilterItemControl.tsx",
+          "frontend/src/features/project/dss/TimeSeriesGraph.tsx",
+          "frontend/src/features/project/dss/TimeSeriesDataTableView.tsx",
+          "frontend/src/features/project/dss/PairedDataGraphView.tsx",
+          "frontend/src/features/project/dss/PairedDataDataTableView.tsx",
+          "frontend/src/features/project/dss/LocationInformationView.tsx",
+          "frontend/src/features/project/dss/types.ts"
         ],
-        "stateOwner": "The active project context owns the XML/session/revision identity; external-connection rows and details come from catalog.tree.load in Catalog mode, not the separate project.tree.load project tree. Add/update/remove forms capture the target connection identity and source fields; Result choices come from actual ObservableResult nodes. File paths resolve on the Host machine. Nodes without assetID retain a local tree selection when the active asset is cleared; snapshot reconciliation checks node ID/class/name/path/type, and each project session owns an isolated tree state.",
+        "stateOwner": "The active project context owns the XML/session/revision identity; external-connection rows and details come from catalog.tree.load in Catalog mode, not the separate project.tree.load project tree. Add/update/remove forms capture the target connection identity and source fields; Result choices come from actual ObservableResult nodes. File paths resolve on the Host machine. Nodes without assetID retain a local tree selection when the active asset is cleared; snapshot reconciliation checks node ID/class/name/path/type, and each project session owns an isolated tree state. The mounted DSS preview subtree comprises DssCatalogViewer/DssFilterControl/PartFilterItemControl, time-series graph and table, paired-data graph and table, and location metadata. The selected catalog record stays keyed by its complete DSS pathname while filtering; each read is bound to the captured file path and catalog SHA/revision.",
         "readActions": [
           "catalog.tree.load",
           "project.connection.inspect",
           "dss.catalog",
           "dss.read"
         ],
-        "writeBoundary": "Add/update/remove use project.connection.inspect then project.connection.commit. Both bind projectPath, projectXml, projectXmlSHA, projectRevision and projectSessionID; commit additionally supplies expectedConnectionSHA256, expectedSourceSHA256 and required expectedSourceReferencesSHA256, plus expectedNormalizedName for add. Inspect returns canCommit/validationMessage, canonicalPath, source and source-reference capture/count, normalizedName, and before/after identities. A Result is written as a native File external connection to its actual Result HDF. Before returning a receipt, Host reopens the project and confirms the connection through CatalogTreeService.LoadCatalog(Mode=Catalog), corresponding to catalog.tree.load; project.tree.load does not contain external connection nodes. The commit receipt carries the new project snapshot and previous revision, before/after identity, sourceCapture, previousSourceReferencesSHA256 and sourceReferencesSHA256; the client validates it before onContextCommit. A remove may capture a disconnected source with nullable path/SHA. DSS preview is read-only."
+        "writeBoundary": "Add/update/remove use project.connection.inspect then project.connection.commit. Both bind projectPath, projectXml, projectXmlSHA, projectRevision and projectSessionID; commit additionally supplies expectedConnectionSHA256, expectedSourceSHA256 and required expectedSourceReferencesSHA256, plus expectedNormalizedName for add. Inspect returns canCommit/validationMessage, canonicalPath, source and source-reference capture/count, normalizedName, and before/after identities. A Result is written as a native File external connection to its actual Result HDF. Before returning a receipt, Host reopens the project and confirms the connection through CatalogTreeService.LoadCatalog(Mode=Catalog), corresponding to catalog.tree.load; project.tree.load does not contain external connection nodes. The commit receipt carries the new project snapshot and previous revision, before/after identity, sourceCapture, previousSourceReferencesSHA256 and sourceReferencesSHA256; the client validates it before onContextCommit. A remove may capture a disconnected source with nullable path/SHA. DSS preview is read-only. The views render only returned arrays and metadata: NoData breaks graph lines without interpolation, the source time-series table retains returned timestamps/values/quality array (up to 100 visible rows), paired graph/table appears only when paired data exists, and location fields do not infer a CRS or create a map feature. This UI states that its current read path supports DSS 7; DSS 6 is not connected."
       },
       {
         "id": "classification-and-manning-editors",
@@ -585,14 +607,18 @@
           "frontend/src/features/map/symbology/RasterSymbologyEditor.tsx",
           "frontend/src/features/map/symbology/rasterSymbologyWorkflow.ts",
           "frontend/src/features/map/mapOverlay.css",
-          "backend/Host/RasterSymbologyService.cs"
+          "backend/Host/RasterSymbologyService.cs",
+          "frontend/src/features/map/symbology/RasterSymbologySettingsGroup.tsx",
+          "frontend/src/features/map/symbology/AdditionalOptionProperties.tsx"
         ],
-        "stateOwner": "The legend is scoped to the active map and exact validated raster source and is populated only from the latest successfully applied Host snapshot. Overlay visibility/folding follows map display settings. The properties pane uses either the selected local feature and its actual layer properties or the selected backend tree node identity/diagnostic.",
+        "stateOwner": "The legend is scoped to the active map and exact validated raster source and is populated only from the latest successfully applied Host snapshot. Overlay visibility/folding follows map display settings. The properties pane uses either the selected local feature and its actual layer properties or the selected backend tree node identity/diagnostic. RasterSymbologyEditor also holds the complete Plot Options descriptor map alongside its source-backed style draft; each descriptor keeps the Host PropertyName and is reapplied only for the same raster owner/revision.",
         "readActions": [
           "rasterSymbology.inspect",
-          "rasterSymbology.histogram"
+          "rasterSymbology.histogram",
+          "rasterMap.load",
+          "map.raster.layer.load"
         ],
-        "writeBoundary": "rasterSymbology.apply commits the editable palette/stops/value-source/grayscale draft to the captured .vis revision; palette save/delete are separate Host transactions and do not apply stop values. The Host raster plot-option descriptors remain read-only because the current map save/reload path has no operation that applies them. A legend is published only after a matching apply receipt and refreshed Host snapshot. The local feature pane can zoom to its feature and show CRS/properties; a backend node pane shows type/name/diagnostics and zooms only when a loaded extent exists. Source wiring is not runtime acceptance."
+        "writeBoundary": "rasterSymbology.apply receives the style draft and actual Plot Options PropertyName/value map, validates the source and .vis identity, renders, then writes the owning map layer and advances visualizationRevision. Standard source-backed RasterSymbology fields preserve legacy .vis serialization; renderer-only PlotRasterTileOutlines is stored in versioned RasterPlotOptions, while ResampleMode uses the existing InterpolationMode field. Non-default recognized options are persisted and default option nodes are omitted. The Host reloads these values into RasterRenderLayer before producing its returned raster; the parent accepts only the prior revision for the same map and source, then refreshes pixels. Palette save/delete remain separate transactions. A legend is published only after a matching apply receipt and refreshed Host snapshot. The local feature pane can zoom to its feature and show CRS/properties; a backend node pane shows type/name/diagnostics and zooms only when a loaded extent exists. This is source contract documentation, not a claim that the route was runtime-tested."
       },
       {
         "id": "plan-compute-feedback",
@@ -726,7 +752,7 @@
       },
       {
         "id": "geoprocessing-parameter-validation",
-        "mount": "ToolsPageView → GeoprocessingToolControl → ToolGroupButton / ToolRichFlyoutControl → ToolOptionsFlyout → ToolParameterForm / ToolParameterField",
+        "mount": "ToolsPageView → GeoprocessingToolControl → ToolGroupButton / ToolRichFlyoutControl → ToolOptionsFlyout / ToolParameterForm / ToolParameterField; persisted-map polyline input → GeoprocessingPolylineSourcePicker → GeoprocessingPolylineExecutionDetails",
         "source": [
           "frontend/src/features/tools/GeoprocessingToolControl.tsx",
           "frontend/src/features/tools/GeoprocessingToolBase.ts",
@@ -735,15 +761,133 @@
           "frontend/src/features/tools/tool-controls/ToolRichFlyoutControl.tsx",
           "frontend/src/features/tools/tool-controls/ToolParameterForm.tsx",
           "frontend/src/features/tools/tool-controls/ToolParameterField.tsx",
+          "frontend/src/features/tools/geoprocessing/GeoprocessingPolylineSourcePicker.tsx",
+          "frontend/src/features/tools/geoprocessing/GeoprocessingPolylineExecutionDetails.tsx",
+          "frontend/src/features/tools/geoprocessing/geoprocessingSourcePicker.css",
+          "backend/Host/MapVectorSourceService.cs",
           "backend/Host/GeoprocessingToolService.cs",
           "backend/Host/GeoprocessingSourceOperations.cs",
           "backend/Host/BackendWorker.cs"
         ],
-        "stateOwner": "The built-in tool definition, parameters, input mode, output choice/name and search live in the geoprocessing page. A validation owner captures project/model source context and active tool; changing either invalidates and cancels the old validation response. The UI accepts only a structurally valid validationIssues receipt for the same request generation/owner/tool.",
+        "stateOwner": "The tool definition, parameters, input mode, output target and search live in the geoprocessing page. For persisted-polyline tools, the picker reads the current saved-map catalog/tree and captures project path/revision/XML SHA, map identity/.vis revision, exact CatalogTreeNodeLocator, GeoJSON family/source-role revision and stable SourceOrdinal/PartOrdinal path identities. Changing the tool or source invalidates its prior validation/execution owner.",
         "readActions": [
+          "map.document.list",
+          "map.tree.load",
+          "map.vector.source.load",
           "geoprocessing.validate"
         ],
-        "writeBoundary": "This operation returns backend parameter issues and does not prove that a source was opened or a geoprocessing operation ran. A valid empty issue list is only a parameter-validation receipt. Parameter JSON export is local. The Run button remains disabled because this page lacks a verified map-layer locator, source revision and input geometry capture; no execution/output write is implied."
+        "writeBoundary": "map.vector.source.load reads the selected persisted GeoJSON/JSON PolylinesVector node after matching the current project/map owner and locator; captured source vertices retain server-side project X/Y plus Z/M and stable source/part identity. For the seven wired polyline tools, geoprocessing.execute receives the captured source path/revision and identities, project context, target WKT and Clipboard output choice; the UI validates returned captured identities/count/kind before showing text preview and copy/download controls or a JSON receipt download. File, Shapefile and Map Layer outputs remain disabled. The operation is wired in source but has not received real browser/tool execution acceptance; parameter validation alone is not execution evidence."
+      },
+      {
+        "id": "geometry-active-features",
+        "mount": "GeometryEditor → GeometryTopologyArcsPage / GeometryTopologyNodesPage / GeometryTopologyRegionsPage → TopologyArcsEditor / TopologyNodesEditor / TopologyRegionsEditor → TopologyArcActiveFeatures / TopologyNodeActiveFeatures / TopologyControlPointsActiveFeatures; GeometryMeshPage → FlowAreaLayerActiveFeatures; GeometryCulvertsPage → CulvertsEditor barrels page → CulvertBarrelLayerActiveFeatures; each GeometryFeatureTable → ActiveFeaturesControl",
+        "source": [
+          "frontend/src/features/geometry/GeometryEditor.tsx",
+          "frontend/src/features/geometry/GeometryTopologyArcsPage.tsx",
+          "frontend/src/features/geometry/GeometryTopologyNodesPage.tsx",
+          "frontend/src/features/geometry/GeometryTopologyRegionsPage.tsx",
+          "frontend/src/features/geometry/TopologyArcsEditor.tsx",
+          "frontend/src/features/geometry/TopologyNodesEditor.tsx",
+          "frontend/src/features/geometry/TopologyRegionsEditor.tsx",
+          "frontend/src/features/geometry/TopologyArcActiveFeatures.tsx",
+          "frontend/src/features/geometry/TopologyNodeActiveFeatures.tsx",
+          "frontend/src/features/geometry/TopologyControlPointsActiveFeatures.tsx",
+          "frontend/src/features/geometry/GeometryFeatureTable.tsx",
+          "frontend/src/features/geometry/ActiveFeaturesControl.tsx",
+          "frontend/src/features/geometry/GeometryMeshPage.tsx",
+          "frontend/src/features/geometry/FlowAreaLayerActiveFeatures.tsx",
+          "frontend/src/features/geometry/FlowAreaTableControl.tsx",
+          "frontend/src/features/geometry/GeometryCulvertsPage.tsx",
+          "frontend/src/features/geometry/CulvertsEditor.tsx",
+          "frontend/src/features/geometry/CulvertBarrelLayerActiveFeatures.tsx",
+          "frontend/src/features/geometry/useGeometryWorkbench.ts"
+        ],
+        "stateOwner": "The current Geometry workbench provides source rows and owns edits/undo. ActiveFeaturesControl supplies local case-insensitive filtering and bidirectional row selection keyed by stable GeometryRow.id; topology handlers map filtered FIDs back to current source rows. FlowArea region selection maps the selected snapshot rows to source FIDs, while culvert barrel selection belongs to the current culvert owner.",
+        "readActions": [
+          "topology.load",
+          "geometry.mesh.load",
+          "geometry.culverts.load"
+        ],
+        "writeBoundary": "Selection/filtering does not itself edit model data. Topology arc/region filtering uses topology.filter and only selects validated current FIDs; node coordinates remain read-only because there is no Host move command. Existing arc/region/mesh edits continue through topology.edit or geometry.mesh.edit, culvert edits through geometry.culverts.edit, and the parent model.save commits the Geometry HDF. This documents mounted source relationships, not a new Host command or UI acceptance."
+      },
+      {
+        "id": "catalog-tree-search-filter",
+        "mount": "ProjectExplorerControl → ProjectTreeMode → ProjectTreeModeReactView → RasCatalogTreeMode → FilterSearchBar",
+        "source": [
+          "frontend/src/features/project/ProjectExplorerControl.tsx",
+          "frontend/src/features/project/ProjectTreeMode.tsx",
+          "frontend/src/features/project/ProjectTreeModeVM.ts",
+          "frontend/src/features/project/ProjectTreeModeReactView.tsx",
+          "frontend/src/features/project/RasCatalogTreeMode.tsx",
+          "frontend/src/controls/FilterSearchBar.tsx",
+          "frontend/src/controls/ClearFiltersBanner.tsx",
+          "frontend/src/features/project/CatalogTreeSnapshot.ts"
+        ],
+        "stateOwner": "ProjectTreeMode stores query, category, collapse and selection state separately for Project and Catalog modes. FilterSearchBar is a controlled text input; RasCatalogTreeMode passes it to the active mode and exposes category and clear-filter actions.",
+        "readActions": [
+          "project.tree.load",
+          "catalog.tree.load"
+        ],
+        "writeBoundary": "The query filters the current in-memory tree snapshot case-insensitively by node name, source class and asset ID while retaining matching ancestors. Escape and the clear button clear only the active mode’s local query; filtering and category selection do not write .ras or .vis and do not issue a Host mutation."
+      },
+      {
+        "id": "map-overlay-scale-bar",
+        "mount": "MapFeaturePage → RasMapElementsOverlay → ScaleBar",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/RasMapElementsOverlay.tsx",
+          "frontend/src/features/map/ScaleBar.tsx",
+          "frontend/src/features/map/scaleBar.css"
+        ],
+        "stateOwner": "The scale bar is derived from the current map camera pixels-per-world-unit, overlay width, project XML and whether the active layers use confirmed project coordinates.",
+        "readActions": [
+          "current WorkbenchContext.projectXml and current map viewport"
+        ],
+        "writeBoundary": "It displays a 1/2/5 distance sized to at most 200 screen pixels and does not write project or map files. It uses m/km only when the project projection is Local with SI units, and ft/mi only for Local with USCustomary units; projected, unknown, unparseable or unconfirmed source coordinates are labeled in generic coordinate units rather than assigned physical units."
+      },
+      {
+        "id": "unit-calculator-and-unit-selection",
+        "mount": "ToolsPageView → Unit calculator tab → UnitCalculatorPage / UnitCalculator → shared UnitComboBox; EditorWorkbench → SchemaFieldRenderer → UnitAwareNumberField → UnitComboBox",
+        "source": [
+          "frontend/src/features/tools/index.tsx",
+          "frontend/src/features/tools/hydraulics/UnitCalculatorPage.tsx",
+          "frontend/src/features/tools/hydraulics/UnitCalculator.tsx",
+          "frontend/src/features/tools/hydraulics/wilcockTypes.ts",
+          "frontend/src/controls/UnitComboBox.tsx",
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/SchemaFieldRenderer.tsx",
+          "frontend/src/features/editors/UnitAwareNumberField.tsx",
+          "frontend/src/features/editors/model.ts",
+          "backend/Host/UnitCalculatorService.cs",
+          "backend/Host/DisplayUnits.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "UnitCalculatorPage owns the selected unit family/pair, entered values, direction, request generation and displayed conversion receipt. The shared UnitComboBox is a controlled selector. In a schema numeric field, UnitAwareNumberField keeps its display-unit selection locally while the field schema’s source unit/value remains owned by ModelDraft.",
+        "readActions": [
+          "model.load display-unit metadata",
+          "unitCalculator.load"
+        ],
+        "writeBoundary": "unitCalculator.load supplies source/target choices and unitCalculator.convert performs the selected conversion in C#; the calculator result and values remain local and do not write a model. Changing a schema field’s selected display unit alone does not change the field value; editing a displayed value converts it back to the source unit and updates the ordinary parent onFieldChange draft, with model.save remaining the model HDF persistence boundary."
+      },
+      {
+        "id": "saved-map-views",
+        "mount": "MapFeaturePage → map inspector → MapViewsPanel → ViewViewer / ViewEditor",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/views/MapViewsPanel.tsx",
+          "frontend/src/features/map/views/ViewViewer.tsx",
+          "frontend/src/features/map/views/ViewEditor.tsx",
+          "frontend/src/features/map/views/ViewManager.ts",
+          "frontend/src/features/map/views/View.ts",
+          "frontend/src/features/map/views/views.css",
+          "backend/Host/MapTreeService.Views.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The panel captures project path/XML/session/revision, active map identity and current .vis visualizationRevision; the current extent is derived from the same map camera/result viewport. List selection, create name, editor values and canvas-scoped shortcuts are local. Unsaved workbench/map drafts disable writes.",
+        "readActions": [
+          "map.views.inspect"
+        ],
+        "writeBoundary": "map.views.commit creates, renames, deletes, resets extent or updates a shortcut in the saved .vis Views collection using its captured view SHA and visualization revision. The parent accepts a receipt only for the same project and active map and previous visualizationRevision, then advances map revisions, invalidates old raster symbology/legend/tree selection captures and reloads map data. Navigating to a saved extent fits the same canvas viewport; it does not open another map/window. This is source-level wiring only; it does not claim runtime acceptance."
       }
     ],
     "stateInvariants": [
@@ -766,7 +910,16 @@
     "sourceBoundary": "Current uiMounts describe source-level React component mounts, operation names, state owners and persistence boundaries. They are a relationship map, not evidence of a successful build, browser/Electron interaction, live Host execution, or real-file acceptance. Legacy domainRelations and retained C#/SwiftUI descriptions remain migration-source references and do not establish current React coverage."
   },
   "referenceContractScope": {
-    "collections": ["domainRelations", "stateScopes", "invariants", "flows", "fieldIdentity", "platformBoundary", "tableContracts", "mapToolReferences"],
+    "collections": [
+      "domainRelations",
+      "stateScopes",
+      "invariants",
+      "flows",
+      "fieldIdentity",
+      "platformBoundary",
+      "tableContracts",
+      "mapToolReferences"
+    ],
     "basis": "Retained C# and SwiftUI source relationships and backend contracts",
     "interpretation": "Porting requirements only; SwiftUI types, macOS capabilities and process details below do not describe current React implementation or establish migrated coverage."
   },

@@ -11,10 +11,11 @@ export interface CulvertsTableProps {
   onChange: (row: GeometryRow, field: GeometryField, value: string, isLocal: boolean) => void;
   onDelete: (rows: GeometryRow[]) => void;
   onSelect: (ids: string[]) => void;
+  selectedRowIDs?: string[];
 }
 
 /** Source-backed culvert list; selection is returned as stable API row identities for CulvertEditor. */
-export function CulvertsTable({ language, table, localRows, editable, busy, onChange, onDelete, onSelect }: CulvertsTableProps) {
+export function CulvertsTable({ language, table, localRows, editable, busy, onChange, onDelete, onSelect, selectedRowIDs }: CulvertsTableProps) {
   const removable = editable || localRows.length > 0;
 
   return (
@@ -28,6 +29,7 @@ export function CulvertsTable({ language, table, localRows, editable, busy, onCh
       busy={busy}
       onChange={onChange}
       onDelete={removable ? onDelete : undefined}
+      selectedRowIDs={selectedRowIDs}
       onSelect={onSelect}
     />
   );

@@ -9,6 +9,8 @@ import { MapSettingsPanel } from './MapSettingsPanel';
 import { RasterSymbologyEditor } from './symbology/RasterSymbologyEditor';
 import type { AppliedRasterLegend } from './symbology/RasterSymbologyEditor';
 import { RasMapElementsOverlay } from './RasMapElementsOverlay';
+import { ScaleBar, projectScaleUnitSystem } from './ScaleBar';
+import { MapViewsPanel } from './views/MapViewsPanel';
 import { VectorSymbologyEditor } from './vector-symbology/VectorSymbologyEditor';
 import { DEFAULT_MAP_DISPLAY_SETTINGS } from './MapSettings';
 import type { MapDisplaySettings } from './MapSettings';
@@ -160,10 +162,12 @@ function mapToolHelp(tool: MapToolID, language: 'zh' | 'en'): string {
   return language === 'zh' ? zh[tool] : en[tool];
 }
 
-function MapPage({ language, context, backend, backendRevision, onDirtyStateChange }: MapFeaturePageProps) {
+function MapPage(props: MapFeaturePageProps) {
+  const { language, context, backend, backendRevision, onDirtyStateChange } = props;
   const [documents, setDocuments] = useState<MapDocumentTab[]>([]);
   const [activeDocumentID, setActiveDocumentID] = useState<string | null>(null);
   const [mapCatalogLoading, setMapCatalogLoading] = useState(false);
+  const [viewCommitBusy, setViewCommitBusy] = useState(false);
   const [mapCatalogError, setMapCatalogError] = useState<unknown>(null);
   const [visualizationRevision, setVisualizationRevision] = useState<string | null>(null);
   const [mapStateByOwner, setMapStateByOwner] = useState<Record<string, MapOwnerState>>({});
@@ -477,7 +481,7 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
   };
 
   const handleSourceImport = async (files: File[], options?: { directory?: boolean }) => {
-    if (sourceImportBusy || mapCatalogLoading || mapCatalogError || !context.projectPath || (!activeDocument && documents.length > 0)) return;
+    if (viewCommitBusy || sourceImportBusy || mapCatalogLoading || mapCatalogError || !context.projectPath || (!activeDocument && documents.length > 0)) return;
     const controller = new AbortController();
     const capturedKey = projectContextKey;
     sourceImportRef.current = controller;
@@ -855,6 +859,8 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
   const featureCount = visibleLayers.reduce((sum, layer) => sum + layer.features.length, 0);
   const zoomPercent = Number.isFinite(viewport.scale) ? Math.round(viewport.scale * 100) : 100;
   const sourceCRS = mapCRS(language, visibleLayers[visibleLayers.length - 1]?.crs ?? text(language, '无坐标系', 'No CRS'));
+  const projectCoordinates = Boolean(activeDocument) && visibleLayers.every(layer => layer.coordinateSpace === 'project');
+  const scaleUnitSystem = useMemo(() => projectScaleUnitSystem(context.projectXml, projectCoordinates), [context.projectXml, projectCoordinates]);
   const copy = {
     zh: {
       title: '地图工作区',
@@ -922,9 +928,9 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
           </button>
           <small>{copy.importHint}</small>
           <MapSourceImportControl language={language} busy={sourceImportBusy}
-            enabled={Boolean(context.projectPath && context.projectRevision && backend.uploadMapSources && !mapCatalogLoading && !mapCatalogError && (activeDocument || documents.length === 0))}
+            enabled={Boolean(context.projectPath && context.projectRevision && backend.uploadMapSources && !viewCommitBusy && !mapCatalogLoading && !mapCatalogError && (activeDocument || documents.length === 0))}
             onImport={handleSourceImport} />
-          <button type="button" className="map-import-button" data-testid="map-refresh-sources" disabled={!context.projectPath || mapCatalogLoading || sourceImportBusy}
+          <button type="button" className="map-import-button" data-testid="map-refresh-sources" disabled={!context.projectPath || mapCatalogLoading || sourceImportBusy || viewCommitBusy}
             onClick={() => setMapReloadKey((value) => value + 1)}>{text(language, '刷新图层', 'Refresh layers')}</button>
         </div>
       </header>
@@ -940,9 +946,10 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
         activeID={activeDocumentID}
         visualizationRevision={visualizationRevision}
         loading={mapCatalogLoading || sourceImportBusy}
+        interactionDisabled={viewCommitBusy}
         loadError={mapCatalogError}
         onSelect={(id) => {
-          if (sourceImportBusy) return;
+          if (sourceImportBusy || viewCommitBusy) return;
           requestGenerationRef.current += 1;
           setActiveDocumentID(id);
           setSelectedFeature(null);
@@ -1066,7 +1073,9 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
               hoverTooltip={mapHover.tooltip}
             />
             <RasMapElementsOverlay key={legendScope} legend={currentLegend} language={language}
-              visible={settings.IsMapOverlayVisible} />
+              visible={settings.IsMapOverlayVisible}>
+              <ScaleBar pixelsPerUnit={viewport.scale} availableWidth={size.width - 32} unitSystem={scaleUnitSystem} language={language} />
+            </RasMapElementsOverlay>
             {contextMenu && <RasContextualActionsBar key={`${contextMenu.layer.id}:${contextMenu.feature.id}`}
               name={contextMenu.feature.name} position={contextMenu} language={language}
               projectCoordinates={contextMenu.layer.coordinateSpace === 'project'}
@@ -1087,6 +1096,31 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
         </section>
 
         <aside className="map-inspector-pane" aria-label={copy.inspector}>
+          <MapViewsPanel {...props} activeDocument={activeDocument} visualizationRevision={visualizationRevision}
+            onCommitStateChange={setViewCommitBusy}
+            currentExtent={activeDocument ? resultViewport : null} shortcutScopeRef={viewportRef}
+            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading)}
+            onNavigateToExtent={extent => setViewport(fitExtent(extent, size, 0))}
+            onVisualizationCommit={(source, receipt) => {
+              if (projectContextKeyRef.current !== projectContextKey || source.projectPath !== context.projectPath ||
+                  source.projectRevision !== context.projectRevision || source.projectSessionID !== context.projectSessionID ||
+                  source.projectXml !== context.projectXml) return false;
+              const current = activeDocumentRef.current;
+              if (!activeDocument || !current || current.id !== activeDocument.id ||
+                  (current.visualizationRevision ?? '').toUpperCase() !== (receipt.previousVisualizationRevision ?? '').toUpperCase()) return false;
+              symbologySourceRef.current = null;
+              setAppliedLegend(null);
+              setSelectedBackendNode(null);
+              // A saved-view edit changes only metadata. Re-read source captures
+              // at the new revision while retaining the actual camera window.
+              fittedSourceKey.current = JSON.stringify([owner, receipt.visualizationRevision, resultFrames.activeNodeKey,
+                resultFrames.selectedSource?.resultPath, resultFrames.selectedSource?.revision]);
+              setVisualizationRevision(receipt.visualizationRevision);
+              setDocuments(previous => previous.map(document => ({ ...document,
+                visualizationRevision: receipt.visualizationRevision, visibilityTransition: null })));
+              setStatusMessage(text(language, '地图视图已保存。', 'Map view was saved.'));
+              return true;
+            }} />
           <RasLayerPropertiesPane language={language} featureSelection={selectedFeatureDetails}
             backendSelection={selectedBackend} canZoomBackend={Boolean(selectedBackend && loadedLayerExtent(selectedBackend.nodeID))}
             onZoomFeature={fitFeature} onZoomBackend={zoomToLoadedLayer} />

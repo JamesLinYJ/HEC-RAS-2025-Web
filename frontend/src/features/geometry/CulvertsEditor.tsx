@@ -4,11 +4,9 @@ import { gt } from './geometryText';
 import { GeometryError } from './GeometryError';
 import { geometryDiagnosticMessage } from './geometryErrors';
 import type { GeometryCulvertSnapshot, GeometryField, GeometryRow } from './geometryTypes';
-import { CulvertsTable } from './CulvertsTable';
-import { CulvertEditor } from './CulvertEditor';
+import { CulvertBarrelLayerActiveFeatures } from './CulvertBarrelLayerActiveFeatures';
 import { GeometryCulvertBarrelPropertiesPage } from './GeometryCulvertBarrelPropertiesPage';
 import { GeometryCulvertOpeningPropertiesPage } from './GeometryCulvertOpeningPropertiesPage';
-import { DetailedCulvertBarrelLayerHeader } from './DetailedCulvertBarrelLayerHeader';
 
 export interface CulvertsEditorProps {
   language: Language;
@@ -35,7 +33,6 @@ export function CulvertsEditor({
   onChange, onCommand, onBarrelSelection, onSelectionChange, onSelectionCommand, onDelete, onAddBarrel, onAddPropertySet,
 }: CulvertsEditorProps) {
   const [page, setPage] = useState<CulvertSubpage>('barrels');
-  const [selectedBarrelIDs, setSelectedBarrelIDs] = useState<string[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [coordinates, setCoordinates] = useState({ x1: '', y1: '', x2: '', y2: '' });
   const [addError, setAddError] = useState('');
@@ -48,15 +45,8 @@ export function CulvertsEditor({
 
   const changePage = (next: CulvertSubpage): void => {
     setPage(next);
-    setSelectedBarrelIDs([]);
     onBarrelSelection?.([]);
   };
-  const selectBarrels = (ids: string[]): void => {
-    setSelectedBarrelIDs(ids);
-    onBarrelSelection?.(ids);
-  };
-  const currentBarrels = [...(snapshot?.barrels.rows ?? []), ...localBarrels];
-  const selectedBarrels = currentBarrels.filter((row) => selectedBarrelIDs.includes(row.id));
   const addBarrel = async (): Promise<void> => {
     const values = Object.values(coordinates).map(Number);
     if (Object.values(coordinates).some((value) => value.trim() === '') || values.some((value) => !Number.isFinite(value))) {
@@ -99,15 +89,11 @@ export function CulvertsEditor({
         </nav>
         <div className="geometry-tab-content">
           {page === 'barrels' ? (
-            <div className="geometry-grid geometry-detail-layout">
-              <DetailedCulvertBarrelLayerHeader language={language} rows={currentBarrels} selectedRows={selectedBarrels} />
-              <CulvertsTable language={language} table={snapshot?.barrels} localRows={localBarrels} editable={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleChange('barrel')} onDelete={handleDelete('barrel')} onSelect={selectBarrels} />
-              <CulvertEditor
-                language={language} table={snapshot?.barrels} selectedRows={selectedBarrels} localRows={localBarrels}
-                editable={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleChange('barrel')} onCommand={handleCommand('barrel')}
-                onSelectionChange={handleSelectionChange('barrel')} onSelectionCommand={handleSelectionCommand('barrel')}
-              />
-            </div>
+            <CulvertBarrelLayerActiveFeatures language={language} table={snapshot?.barrels} localRows={localBarrels}
+              editable={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleChange('barrel')}
+              onDelete={handleDelete('barrel')} onSelectionChange={(ids) => onBarrelSelection?.(ids)}
+              onCommand={handleCommand('barrel')} onSelectionFieldChange={handleSelectionChange('barrel')}
+              onSelectionFieldCommand={handleSelectionCommand('barrel')} />
           ) : null}
           {page === 'barrelProperties' ? <GeometryCulvertBarrelPropertiesPage language={language} table={snapshot?.barrelProperties} localRows={localBarrelProperties} canEdit={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleChange('barrelProperties')} onDelete={handleDelete('barrelProperties')} onAdd={() => onAddPropertySet('barrelProperties')} onSelectionChange={handleSelectionChange('barrelProperties')} /> : null}
           {page === 'openingProperties' ? <GeometryCulvertOpeningPropertiesPage language={language} table={snapshot?.openingProperties} localRows={localOpeningProperties} canEdit={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleChange('openingProperties')} onDelete={handleDelete('openingProperties')} onAdd={() => onAddPropertySet('openingProperties')} onCommand={handleCommand('openingProperties')} onSelectionChange={handleSelectionChange('openingProperties')} onSelectionCommand={handleSelectionCommand('openingProperties')} /> : null}

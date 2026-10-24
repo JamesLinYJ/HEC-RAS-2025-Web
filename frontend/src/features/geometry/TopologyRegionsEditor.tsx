@@ -1,10 +1,10 @@
 import type { GeometryTopologyTablePageProps } from './GeometryTopologyTablePage';
-import { ConceptualMeshTopologyRegionsEditor } from './ConceptualMeshTopologyRegionsEditor';
+import { TopologyControlPointsActiveFeatures } from './TopologyControlPointsActiveFeatures';
 
 export type TopologyRegionsEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
 
 export function TopologyRegionsEditor(props: TopologyRegionsEditorProps) {
-  return <ConceptualMeshTopologyRegionsEditor {...props} />;
+  return <TopologyControlPointsActiveFeatures {...props} />;
 }
 
 export default TopologyRegionsEditor;

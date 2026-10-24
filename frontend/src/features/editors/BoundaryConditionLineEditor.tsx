@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { EditorPageProps } from './model';
 import { BoundaryConditionLinePayloadsList } from './BoundaryConditionLinePayloadsList';
 import { BoundaryConditionLineQuickEditPicker } from './BoundaryConditionLineQuickEditPicker';
-import { DetailedBCLineHeaderControl } from './DetailedBCLineHeaderControl';
+import { BCLineLayerLastSelectedFeatureLineEditor } from './BCLineLayerLastSelectedFeatureLineEditor';
 import { IrregularTimeSeriesPayloadEditor } from './IrregularTimeSeriesPayloadEditor';
 import { hasRegularTimeDefinition } from './PayloadListItem';
 import { RegularSpatiallyVariableTimeSeriesPayloadEditor } from './RegularSpatiallyVariableTimeSeriesPayloadEditor';
@@ -12,7 +12,7 @@ import { SpatiallyVariableTimeSeriesPayloadEditor } from './SpatiallyVariableTim
 type BoundaryLine = NonNullable<EditorPageProps['snapshot']['boundary']>['lines'][number];
 
 /** Detail assembly for the source BoundaryConditionLineEditor control. */
-export function BoundaryConditionLineEditor(props: EditorPageProps) {
+export function BoundaryConditionLineEditor({ showLinePicker = true, ...props }: EditorPageProps & { showLinePicker?: boolean }) {
   const boundary = props.draft.boundaryView ?? props.snapshot.boundary;
   const lines = boundary?.lines ?? [];
   const [activeLineID, setActiveLineID] = useState(boundary?.selectedLineId ?? lines[0]?.id ?? '');
@@ -29,12 +29,8 @@ export function BoundaryConditionLineEditor(props: EditorPageProps) {
 
   const boundPayloadIDs = new Set(lineSeries.filter((series) => currentLine.payloads.some((payload) => series.scope.startsWith(payload.scope))).map((series) => series.pageId));
   const unboundSeries = lineSeries.filter((series) => !boundPayloadIDs.has(series.pageId));
-  return <div className="editor-boundary-layout">
-    <nav className="editor-line-list" aria-label={props.language === 'zh' ? '边界线' : 'Boundary lines'}>
-      {lines.map((line) => <LineNavigationItem key={line.id} line={line} selected={line.id === currentLine.id} {...props} onSelect={() => { setActiveLineID(line.id); setCreateOpen(false); }} />)}
-    </nav>
-    <div className="editor-boundary-content">
-      <DetailedBCLineHeaderControl {...props} line={currentLine} />
+  const detail = <div className="editor-boundary-content">
+      <BCLineLayerLastSelectedFeatureLineEditor {...props} line={currentLine} />
       <BoundaryConditionLineQuickEditPicker {...props} line={currentLine} onAddPayload={() => setCreateOpen(true)} />
       <BoundaryConditionLinePayloadsList
         {...props}
@@ -53,7 +49,13 @@ export function BoundaryConditionLineEditor(props: EditorPageProps) {
         if (series.schemaId === 'RegularTimeSeriesPayloadEditor') return <RegularTimeSeriesPayloadEditor {...props} key={series.pageId} series={series} />;
         return <p className="editor-field-muted" key={series.pageId}>{props.language === 'zh' ? `当前没有迁移 ${series.schemaId} 的时序编辑控件。` : `No time-series editor has been ported for ${series.schemaId}.`}</p>;
       })}
-    </div>
+    </div>;
+  if (!showLinePicker) return detail;
+  return <div className="editor-boundary-layout">
+    <nav className="editor-line-list" aria-label={props.language === 'zh' ? '边界线列表' : 'Boundary line list'}>
+      {lines.map((line) => <LineNavigationItem key={line.id} line={line} selected={line.id === currentLine.id} {...props} onSelect={() => { setActiveLineID(line.id); setCreateOpen(false); }} />)}
+    </nav>
+    {detail}
   </div>;
 }
 

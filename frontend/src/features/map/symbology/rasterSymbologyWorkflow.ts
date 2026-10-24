@@ -36,6 +36,24 @@ export interface RasterSymbologyColorStop {
 
 export type RasterSymbologyValueSource = 'Histogram' | 'Linear' | 'Manual';
 
+export interface RasterHillshadeProperties {
+  isEnabled: boolean;
+  zFactor: number;
+  azimuth: number;
+  zenith: number;
+}
+
+export interface RasterContourProperties {
+  isEnabled: boolean;
+  autoInterval: boolean;
+  interval: number;
+  indexEvery: number;
+  color: string;
+  opacity: number;
+  showLabels: boolean;
+  density: number;
+}
+
 export interface RasterSymbologyDraft {
   paletteID: string | null;
   name: string;
@@ -45,6 +63,12 @@ export interface RasterSymbologyDraft {
   isEditing: boolean;
   updateHistogramWithView: boolean;
   canComputeHistogram: boolean;
+  alpha: number;
+  isSurfaceFillEnabled: boolean;
+  smoothingRadius: number;
+  resampleCellSizeRatio: number;
+  hillshade: RasterHillshadeProperties;
+  contours: RasterContourProperties;
 }
 
 export interface RasterSymbologyPalette {
@@ -186,7 +210,8 @@ export function rasterSymbologyContextKey(context: WorkbenchContext): string {
 }
 
 export function cloneRasterSymbologyDraft(draft: RasterSymbologyDraft): RasterSymbologyDraft {
-  return { ...draft, stops: draft.stops.map(stop => ({ ...stop })) };
+  return { ...draft, stops: draft.stops.map(stop => ({ ...stop })),
+    hillshade: { ...draft.hillshade }, contours: { ...draft.contours } };
 }
 
 export function parseRasterSymbologyInspect(value: unknown): RasterSymbologyInspectResult {
@@ -328,7 +353,29 @@ export function isValidRasterSymbologyDraft(draft: RasterSymbologyDraft): boolea
     if (index > 0 && stop.value <= draft.stops[index - 1].value) return false;
     ids.add(stop.id);
   }
-  return ['Histogram', 'Linear', 'Manual'].includes(draft.valueSource);
+  return ['Histogram', 'Linear', 'Manual'].includes(draft.valueSource)
+    && Number.isInteger(draft.alpha) && draft.alpha >= 0 && draft.alpha <= 255
+    && typeof draft.isSurfaceFillEnabled === 'boolean'
+    && Number.isFinite(draft.smoothingRadius) && draft.smoothingRadius >= 0 && draft.smoothingRadius <= 1_000_000
+    && Number.isFinite(draft.resampleCellSizeRatio) && draft.resampleCellSizeRatio >= 0 && draft.resampleCellSizeRatio <= 1_000_000
+    && isValidHillshade(draft.hillshade) && isValidContours(draft.contours);
+}
+
+function isValidHillshade(value: RasterHillshadeProperties): boolean {
+  return typeof value.isEnabled === 'boolean'
+    && Number.isFinite(value.zFactor) && value.zFactor >= 0 && value.zFactor <= 1_000_000
+    && Number.isFinite(value.azimuth) && Math.abs(value.azimuth) <= 1_000_000
+    && Number.isFinite(value.zenith) && Math.abs(value.zenith) <= 1_000_000;
+}
+
+function isValidContours(value: RasterContourProperties): boolean {
+  return typeof value.isEnabled === 'boolean' && typeof value.autoInterval === 'boolean'
+    && Number.isFinite(value.interval) && value.interval > 0 && value.interval <= 1_000_000
+    && Number.isInteger(value.indexEvery) && value.indexEvery >= 0 && value.indexEvery <= 1_000_000
+    && isHexColor(value.color)
+    && Number.isInteger(value.opacity) && value.opacity >= 0 && value.opacity <= 100
+    && typeof value.showLabels === 'boolean'
+    && Number.isFinite(value.density) && value.density >= 0.025 && value.density <= 4;
 }
 
 export function isHexColor(value: string): boolean {
@@ -387,7 +434,7 @@ function parseDraft(value: unknown): RasterSymbologyDraft {
     throw new Error('C# Host 返回的 RasterSymbologyDraftContract 结构无效。');
   }
   const stops = value.stops.map(parseStop);
-  return {
+  const draft: RasterSymbologyDraft = {
     paletteID: value.paletteID,
     name: value.name,
     stops,
@@ -396,7 +443,74 @@ function parseDraft(value: unknown): RasterSymbologyDraft {
     isEditing: value.isEditing,
     updateHistogramWithView: value.updateHistogramWithView,
     canComputeHistogram: value.canComputeHistogram,
+    alpha: optionalInteger(value.alpha, 255, 0, 255, 'alpha'),
+    isSurfaceFillEnabled: optionalBoolean(value.isSurfaceFillEnabled, true, 'isSurfaceFillEnabled'),
+    smoothingRadius: optionalNumber(value.smoothingRadius, 15, 0, 1_000_000, 'smoothingRadius'),
+    resampleCellSizeRatio: optionalNumber(value.resampleCellSizeRatio, 1, 0, 1_000_000, 'resampleCellSizeRatio'),
+    hillshade: parseHillshade(value.hillshade),
+    contours: parseContours(value.contours),
   };
+  if (!isValidRasterSymbologyDraft(draft)) throw new Error('C# Host 返回的栅格符号设置超出有效范围。');
+  return draft;
+}
+
+function parseHillshade(value: unknown): RasterHillshadeProperties {
+  if (value === undefined || value === null) return { isEnabled: false, zFactor: 3, azimuth: 315, zenith: 45 };
+  if (!isRecord(value)) throw new Error('C# Host 返回的 Hillshade 属性无效。');
+  const result = {
+    isEnabled: optionalBoolean(value.isEnabled, false, 'hillshade.isEnabled'),
+    zFactor: optionalNumber(value.zFactor, 3, 0, 1_000_000, 'hillshade.zFactor'),
+    azimuth: optionalNumber(value.azimuth, 315, -1_000_000, 1_000_000, 'hillshade.azimuth'),
+    zenith: optionalNumber(value.zenith, 45, -1_000_000, 1_000_000, 'hillshade.zenith'),
+  };
+  if (!isValidHillshade(result)) throw new Error('C# Host 返回的 Hillshade 属性超出有效范围。');
+  return result;
+}
+
+function parseContours(value: unknown): RasterContourProperties {
+  if (value === undefined || value === null) return {
+    isEnabled: false, autoInterval: true, interval: 10, indexEvery: 5,
+    color: '000000FF', opacity: 70, showLabels: true, density: 1,
+  };
+  if (!isRecord(value)) throw new Error('C# Host 返回的 Contours 属性无效。');
+  const result = {
+    isEnabled: optionalBoolean(value.isEnabled, false, 'contours.isEnabled'),
+    autoInterval: optionalBoolean(value.autoInterval, true, 'contours.autoInterval'),
+    interval: optionalNumber(value.interval, 10, Number.MIN_VALUE, 1_000_000, 'contours.interval'),
+    indexEvery: optionalInteger(value.indexEvery, 5, 0, 1_000_000, 'contours.indexEvery'),
+    color: optionalColor(value.color, '000000FF', 'contours.color'),
+    opacity: optionalInteger(value.opacity, 70, 0, 100, 'contours.opacity'),
+    showLabels: optionalBoolean(value.showLabels, true, 'contours.showLabels'),
+    density: optionalNumber(value.density, 1, 0.025, 4, 'contours.density'),
+  };
+  if (!isValidContours(result)) throw new Error('C# Host 返回的 Contours 属性超出有效范围。');
+  return result;
+}
+
+function optionalBoolean(value: unknown, fallback: boolean, name: string): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'boolean') throw new Error(`C# Host 返回的 ${name} 属性无效。`);
+  return value;
+}
+
+function optionalNumber(value: unknown, fallback: number, min: number, max: number, name: string): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`C# Host 返回的 ${name} 属性无效。`);
+  }
+  return value;
+}
+
+function optionalInteger(value: unknown, fallback: number, min: number, max: number, name: string): number {
+  const result = optionalNumber(value, fallback, min, max, name);
+  if (!Number.isInteger(result)) throw new Error(`C# Host 返回的 ${name} 属性必须是整数。`);
+  return result;
+}
+
+function optionalColor(value: unknown, fallback: string, name: string): string {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'string' || !isHexColor(value)) throw new Error(`C# Host 返回的 ${name} 颜色无效。`);
+  return value;
 }
 
 function parseStop(value: unknown): RasterSymbologyColorStop {
