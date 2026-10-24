@@ -7,6 +7,7 @@ import { TopologyFeatureErrorControl } from './TopologyFeatureErrorControl';
 import { TopologyRecipeBuilder } from './TopologyRecipeBuilder';
 import { TopologyRegionQuickEditPicker } from './TopologyRegionQuickEditPicker';
 import { TagFilterControl } from './TagFilterControl';
+import { ConceptualMeshContextualControl } from './ConceptualMeshContextualControl';
 import type { GeometryRow } from './geometryTypes';
 
 export type ConceptualMeshTopologyRegionsEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
@@ -25,6 +26,8 @@ export function ConceptualMeshTopologyRegionsEditor(props: ConceptualMeshTopolog
 
   return <div className="geometry-grid">
     <RegionsTable {...props} selectedRowIDs={selectedIDs} onSelectionChange={selectRows} />
+    <ConceptualMeshContextualControl language={props.language} featureKind="region" rows={selectedRows}
+      canEdit={props.canEdit} busy={props.busy} onApplyFactor={props.onApplyTopologyFactor} />
     <TagFilterControl language={props.language} featureKind="region" rows={rows} snapshot={props.topologySnapshot}
       canFilter={!!props.canFilterTopology} busy={props.busy} onFilter={props.onTopologyFilter}
       onSelectMatches={(fids) => {

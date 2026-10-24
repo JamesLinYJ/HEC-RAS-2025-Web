@@ -592,7 +592,7 @@
           "rasterSymbology.inspect",
           "rasterSymbology.histogram"
         ],
-        "writeBoundary": "rasterSymbology.apply commits a matching .vis revision and source identity before publishing a legend; palette save/delete are separate from the applied stops, which remain visible until a new apply receipt is accepted. The local feature pane can zoom to that feature and show its CRS/properties; a backend node pane shows type/name/diagnostics and can zoom only when a loaded extent exists. Property inspection does not mutate project data. Source wiring is not runtime acceptance."
+        "writeBoundary": "rasterSymbology.apply commits the editable palette/stops/value-source/grayscale draft to the captured .vis revision; palette save/delete are separate Host transactions and do not apply stop values. The Host raster plot-option descriptors remain read-only because the current map save/reload path has no operation that applies them. A legend is published only after a matching apply receipt and refreshed Host snapshot. The local feature pane can zoom to its feature and show CRS/properties; a backend node pane shows type/name/diagnostics and zooms only when a loaded extent exists. Source wiring is not runtime acceptance."
       },
       {
         "id": "plan-compute-feedback",
@@ -616,6 +616,134 @@
           "plan.compute.inspect"
         ],
         "writeBoundary": "plan.compute.execute remains the compute action and keeps the existing cancellation/terminal-receipt behavior. The feedback controls display actual sample message/sequence/timestamp and raw progress diagnostics; the linear remaining-time display is an estimate, not a solver completion promise. The list is time-window filtered and capped at the latest 200 samples with an omitted count. No pause/resume operation is introduced."
+      },
+      {
+        "id": "project-model-association-transaction",
+        "mount": "EditorWorkbench model view (ready Plan/Geometry snapshot) → ModelAssociationsPanel, rendered beside and outside the model form → PlanAssociationsPicker / GeometryAssociationsPicker",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/associations/ModelAssociationsPanel.tsx",
+          "frontend/src/features/editors/associations/AssociationWorkflow.ts",
+          "frontend/src/features/editors/associations/AssociationTypes.ts",
+          "frontend/src/features/editors/associations/PlanAssociationsPicker.tsx",
+          "frontend/src/features/editors/associations/GeometryAssociationsPicker.tsx",
+          "frontend/src/features/editors/associations/DetailedPlanHeader.tsx",
+          "backend/Host/ProjectAssociationService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The panel is mounted only for an active, ready Plan or Geometry. Its source key captures project session/path/XML/revision, selected model path/kind/revision, model revision, sourceState and any carried core-layer identity. Association choices remain panel-local until commit. The parent blocks edits while the model or another draft owner is dirty/busy and supplies the project-context receipt callback.",
+        "readActions": [
+          "project.association.inspect",
+          "project.association.commit performs a fresh inspect before commit"
+        ],
+        "writeBoundary": "Plan choices require project Geometry and Boundary Condition; Geometry choices can independently set or clear Terrain and N-Value. The Host validates target/model SHA, project XML SHA/revision/session, before-state, candidate options and source-reference dependencies under the project write lock. It changes only standard association rows in the saved .ras XML, atomically publishes and reopens/verifies the target through the Project tree, and rolls back a post-publish failure when the captured file is still current; it does not call Project.Save or write a model HDF. The client checks the complete before/after and source-capture receipt plus the XML SHA, then calls onContextCommit. This is a project XML transaction independent of model.save; this entry records source relationships, not runtime acceptance."
+      },
+      {
+        "id": "boundary-initial-conditions-transaction",
+        "mount": "EditorWorkbench → Boundary Conditions summary page → AttachInitialConditionsDialog",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/AttachInitialConditionsDialog.tsx",
+          "frontend/src/features/editors/model.ts",
+          "backend/Host/BoundaryInitialConditionsService.cs",
+          "backend/Host/InitialConditionsTransaction.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "EditorWorkbench owns the operation keyed by project session/path/revision, Boundary Conditions HDF identity/source revision and project XML fingerprint. The dialog loads real ObservableResult nodes from project.tree.load, then scopes inspect/attach to that same owner, captured Result path/revision, optional timestamp and number culture. The exact request, operation ID, inspection and baseline line identities are retained in sessionStorage; attaching and awaiting-context states restore as uncertain after reload.",
+        "readActions": [
+          "project.tree.load",
+          "boundary.initialConditions.inspect",
+          "boundary.initialConditions.status"
+        ],
+        "writeBoundary": "Attach is an immediate paired transaction, independent of ModelDraft and parent model.save: the Host binds the selected Result HDF SHA and captured project/model revisions, applies the retained initial Stage/Velocity source setter to a staged Boundary Conditions HDF, and commits the project XML external connection with a journaled operation ID. A full receipt contains the committed project XML/revision and reloaded model snapshot; only the matching active project session may accept it. Status is read-only and returns the committed receipt or a transaction state. Uncertain outcomes query status with the same operation ID; exact-request retry is offered only for notFound/prepared/rolledBack, while conflict is not auto-retried. If the write committed but context acceptance failed, the stored receipt can be accepted again without repeating the HDF write."
+      },
+      {
+        "id": "schema-description-and-embedded-images",
+        "mount": "EditorWorkbench model page → SchemaPage → SchemaFieldRenderer → DescriptionGroupControl / MetaDataPropertiesRepeater / EmbededImageGallery → EmbededImageControl",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/SchemaFieldRenderer.tsx",
+          "frontend/src/features/editors/model.ts",
+          "frontend/src/controls/DescriptionGroupControl.tsx",
+          "frontend/src/controls/MetaDataPropertiesRepeater.tsx",
+          "frontend/src/controls/EmbededImageGallery.tsx",
+          "frontend/src/controls/EmbededImageControl.tsx",
+          "backend/Host/ModelEditorAdapter.cs",
+          "frontend/src/features/editors/PlanSettingsPage.tsx",
+          "frontend/src/features/editors/BoundaryConditionsSummary.tsx",
+          "frontend/src/features/editors/TerrainLayersEditor.tsx"
+        ],
+        "stateOwner": "SchemaFieldRenderer groups a description field with an images field only when both occur in the same schema group. Description values use the normal field key; image collections use the scoped image field key in ModelSnapshot/ModelDraft and update via onImagesChange. Gallery preview/upload/removal state is local to the field; image bytes and IDs remain in the model draft.",
+        "readActions": [
+          "model.load"
+        ],
+        "writeBoundary": "The gallery accepts signature-checked raster PNG/JPEG/GIF/WebP/BMP/AVIF payloads, rejects SVG, limits each new image to 2 MiB and the merged model image collection to 3 MiB, and permits preview/removal of existing over-budget content. Image changes remain in ModelDraft and are written only by model.save; the Host accepts image collections only for schema-declared image keys and replaces embedded images through the model adapter. There is no separate image-save operation."
+      },
+      {
+        "id": "result-time-window-controls",
+        "mount": "ResultsWorkspace time-series analysis → Timeline / IntervalPicker / TimeWindow / TimeWindowGroup → MapResultsChart",
+        "source": [
+          "frontend/src/features/results/ResultsWorkspace.tsx",
+          "frontend/src/features/results/charting/Timeline.tsx",
+          "frontend/src/features/results/charting/IntervalPicker.tsx",
+          "frontend/src/features/results/charting/TimeWindow.tsx",
+          "frontend/src/features/results/charting/TimeWindowGroup.tsx",
+          "frontend/src/features/results/charting/timeWindowMath.ts"
+        ],
+        "stateOwner": "ResultsWorkspace owns the selected native time index and normalized chart range over the currently selected result or imported dataset. The time controls consume the same times, visible series and dataset; they do not open another result session or make backend requests of their own.",
+        "readActions": [
+          "ResultsWorkspace result.catalog/result.profile reads supply the times and values; the controls themselves issue no Host operation"
+        ],
+        "writeBoundary": "Interval navigation requires parseable nondecreasing timestamps and lands on an existing output step; an editable time window requires complete endpoint labels and at least two steps. Range changes alter only the chart viewport and visible-range summary counts valid versus NoData samples. They do not filter/resample source data or write the Result HDF; source times, values and NoData remain intact."
+      },
+      {
+        "id": "geometry-contextual-controls",
+        "mount": "GeometryEditor → GeometryTopologyArcsPage / GeometryTopologyRegionsPage → ConceptualMeshTopologyArcsEditor / ConceptualMeshTopologyRegionsEditor → ConceptualMeshContextualControl / TopologyRegionQuickEditPicker; GeometryEditor → GeometryMeshPage → FlowAreaEditorContextualControl; GeometryEditor → GeometryCulvertsPage → CulvertsEditor → DetailedCulvertBarrelLayerHeader",
+        "source": [
+          "frontend/src/features/geometry/GeometryEditor.tsx",
+          "frontend/src/features/geometry/useGeometryWorkbench.ts",
+          "frontend/src/features/geometry/ConceptualMeshTopologyArcsEditor.tsx",
+          "frontend/src/features/geometry/ConceptualMeshTopologyRegionsEditor.tsx",
+          "frontend/src/features/geometry/ConceptualMeshContextualControl.tsx",
+          "frontend/src/features/geometry/TopologyRegionQuickEditPicker.tsx",
+          "frontend/src/features/geometry/QuickRatioCellSizeButton.tsx",
+          "frontend/src/features/geometry/GeometryMeshPage.tsx",
+          "frontend/src/features/geometry/FlowAreaEditorContextualControl.tsx",
+          "frontend/src/features/geometry/FlowAreaTableControl.tsx",
+          "frontend/src/features/geometry/FlowAreaEditorControl.tsx",
+          "frontend/src/features/geometry/FlowAreaMetaDataContextualControl.tsx",
+          "frontend/src/features/geometry/FlowAreaInformation.tsx",
+          "frontend/src/features/geometry/CulvertsEditor.tsx",
+          "frontend/src/features/geometry/DetailedCulvertBarrelLayerHeader.tsx"
+        ],
+        "stateOwner": "Topology controls share each active table selection and stable source FID; the custom factor editor uses finite positive values. The flow-area context retains selected row IDs from the current mesh snapshot and derives detail panels from those rows. Culvert header is a read-only count/selection summary. All editable state remains owned by the Geometry topology/mesh/culvert draft and its revision/draftState.",
+        "readActions": [
+          "topology.load",
+          "geometry.mesh.load",
+          "geometry.culverts.load"
+        ],
+        "writeBoundary": "Selected arc/control-point factor edits and region quick-size commands use topology.edit with source FIDs; quad quick sizing passes a supported axis, and non-source rows cannot be mutated. Flow-area Name and TargetedCellSpacing edits use geometry.mesh.edit when available; mesh metadata and culvert header summaries are read-only. Unsupported local-only flow-area overrides are not persistence receipts. Supported edits stay in the Geometry workbench draft/undo history; parent model.save is the HDF persistence boundary. These controls do not create a separate model save path."
+      },
+      {
+        "id": "geoprocessing-parameter-validation",
+        "mount": "ToolsPageView → GeoprocessingToolControl → ToolGroupButton / ToolRichFlyoutControl → ToolOptionsFlyout → ToolParameterForm / ToolParameterField",
+        "source": [
+          "frontend/src/features/tools/GeoprocessingToolControl.tsx",
+          "frontend/src/features/tools/GeoprocessingToolBase.ts",
+          "frontend/src/features/tools/tool-controls/ToolOptionsFlyout.tsx",
+          "frontend/src/features/tools/tool-controls/ToolGroupButton.tsx",
+          "frontend/src/features/tools/tool-controls/ToolRichFlyoutControl.tsx",
+          "frontend/src/features/tools/tool-controls/ToolParameterForm.tsx",
+          "frontend/src/features/tools/tool-controls/ToolParameterField.tsx",
+          "backend/Host/GeoprocessingToolService.cs",
+          "backend/Host/GeoprocessingSourceOperations.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The built-in tool definition, parameters, input mode, output choice/name and search live in the geoprocessing page. A validation owner captures project/model source context and active tool; changing either invalidates and cancels the old validation response. The UI accepts only a structurally valid validationIssues receipt for the same request generation/owner/tool.",
+        "readActions": [
+          "geoprocessing.validate"
+        ],
+        "writeBoundary": "This operation returns backend parameter issues and does not prove that a source was opened or a geoprocessing operation ran. A valid empty issue list is only a parameter-validation receipt. Parameter JSON export is local. The Run button remains disabled because this page lacks a verified map-layer locator, source revision and input geometry capture; no execution/output write is implied."
       }
     ],
     "stateInvariants": [

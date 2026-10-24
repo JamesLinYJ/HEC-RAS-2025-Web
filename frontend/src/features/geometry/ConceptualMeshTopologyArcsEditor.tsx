@@ -8,6 +8,7 @@ import { DetailedArcHeader } from './DetailedArcHeader';
 import { TopologyArcQuickEditPicker } from './TopologyArcQuickEditPicker';
 import { TopologyFeatureErrorControl } from './TopologyFeatureErrorControl';
 import { TagFilterControl } from './TagFilterControl';
+import { ConceptualMeshContextualControl } from './ConceptualMeshContextualControl';
 import type { GeometryRow } from './geometryTypes';
 
 export type ConceptualMeshTopologyArcsEditorProps = Omit<GeometryTopologyTablePageProps, 'kind'>;
@@ -26,6 +27,8 @@ export function ConceptualMeshTopologyArcsEditor(props: ConceptualMeshTopologyAr
 
   return <div className="geometry-grid">
     <ArcsTable {...props} selectedRowIDs={selectedIDs} onSelectionChange={selectRows} />
+    <ConceptualMeshContextualControl language={props.language} featureKind="arc" rows={selectedRows}
+      canEdit={props.canEdit} busy={props.busy} onApplyFactor={props.onApplyTopologyFactor} />
     <TagFilterControl language={props.language} featureKind="arc" rows={rows} snapshot={props.topologySnapshot}
       canFilter={!!props.canFilterTopology} busy={props.busy} onFilter={props.onTopologyFilter}
       onSelectMatches={(fids) => {

@@ -1,4 +1,6 @@
 export type ToolLocale = { zh: string; en: string };
+export type ToolGroupDefinition = { id: string; title: ToolLocale; ids: string[] };
+export type GeoprocessingFieldValues = Record<string, string | boolean>;
 export type ToolField = {
   key: string;
   label: ToolLocale;

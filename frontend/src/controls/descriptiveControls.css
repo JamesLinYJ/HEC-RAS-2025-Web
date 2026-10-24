@@ -1,0 +1,22 @@
+.editor-metadata-properties.is-vertical{grid-template-columns:minmax(0,1fr)}
+.editor-description-group>summary,.editor-metadata-group>summary{color:#394a59;font-weight:650;cursor:pointer}
+.editor-description-group[open]>summary,.editor-metadata-group[open]>summary{margin-bottom:12px}
+.editor-rich-description{display:grid;gap:7px}
+.editor-rich-description textarea{min-height:116px;white-space:pre-wrap}
+.editor-rich-description-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#758391;font-size:11px}
+.editor-rich-description-actions .editor-button{min-height:28px;padding:4px 8px;font-size:11px}
+.editor-rich-description-preview{padding:8px 10px;border:1px solid #e1e6eb;border-radius:6px;background:#f8fafb;color:#344453;white-space:pre-wrap;overflow-wrap:anywhere}
+.editor-rich-description-preview p{margin:0}
+.editor-image-gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px}
+.editor-image-card{display:grid;min-width:0;grid-template-rows:112px auto;overflow:hidden;border:1px solid #e1e5e9;border-radius:7px;background:#fff}
+.editor-image-preview-button{display:grid;place-items:center;min-width:0;overflow:hidden;border:0;background:#f3f6f8;cursor:zoom-in}
+.editor-image-preview-button img{width:100%;height:100%;object-fit:contain}
+.editor-image-unavailable{padding:8px;color:#758391;font-size:10px;text-align:center}
+.editor-image-card-footer{display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0;padding:5px 7px;font-size:11px}
+.editor-image-card-footer>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.editor-image-preview-backdrop{position:fixed;z-index:1300;inset:0;display:grid;place-items:center;padding:18px;background:#17212b8a}
+.editor-image-preview-dialog{display:grid;gap:10px;width:min(100%,900px);max-height:92vh;overflow:auto;padding:12px;border:1px solid #cdd7df;border-radius:10px;background:#fff;box-shadow:0 16px 48px #14253645}
+.editor-image-preview-dialog header{display:flex;align-items:center;justify-content:space-between;gap:12px;overflow-wrap:anywhere}
+.editor-image-preview-dialog>img{max-width:100%;max-height:78vh;justify-self:center;object-fit:contain}
+.editor-file-button[aria-disabled=true]{opacity:.56;cursor:not-allowed}
+@media(max-width:600px){.editor-image-gallery-grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}.editor-rich-description-actions{align-items:flex-start;flex-direction:column}}

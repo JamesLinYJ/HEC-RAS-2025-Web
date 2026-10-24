@@ -1,5 +1,6 @@
 import type { Language } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
+import { ClearFiltersBanner } from '../../controls/ClearFiltersBanner';
 import type { ProjectTreeCategory, ProjectTreeModeName } from './ProjectTreeModeVM';
 
 export interface RasCatalogTreeModeProps {
@@ -46,6 +47,9 @@ export function RasCatalogTreeMode({
           ['results', text(language, '结果', 'Results')],
         ] as const).map(([key, label]) => <button type="button" key={key} className={category === key ? 'is-active' : ''} onClick={() => onCategoryChange(key)}>{label}</button>)}
       </nav>
+      <ClearFiltersBanner language={language} active={Boolean(query.trim()) || category !== 'all'}
+        description={text(language, '当前目录已应用筛选。', 'This catalog is filtered.')}
+        onClear={() => { onQueryChange(''); onCategoryChange('all'); }} />
     </>
   );
 }

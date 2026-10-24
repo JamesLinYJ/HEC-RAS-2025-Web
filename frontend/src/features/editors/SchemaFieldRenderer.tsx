@@ -1,5 +1,4 @@
-import { useId, useRef } from 'react';
-import type { ChangeEvent } from 'react';
+import { useId } from 'react';
 import type { EditorFieldSchema, EditorSchema, EditorPageProps, ModelImage, ModelSnapshot, SchemaChoice } from './model';
 import { schemaForPage } from './model';
 import { editorAssetKind, editorText } from './editorLocalization';
@@ -24,7 +23,14 @@ import { ToggleablePropertyItem } from '../../controls/ToggleablePropertyItem';
 import { ValidateableTextBox } from '../../controls/ValidateableTextBox';
 import { ValidationErrorList } from '../../controls/ValidationErrorList';
 import { isValidDateTimeText } from '../../controls/dateTimeText';
+import { ContentPropertyItem } from '../../controls/ContentPropertyItem';
+import { DescriptionGroupControl } from '../../controls/DescriptionGroupControl';
+import { EmbededImageGallery, embeddedImageCollectionBytes } from '../../controls/EmbededImageGallery';
+import { MetaDataGroup } from '../../controls/MetaDataGroup';
+import { MetaDataPropertiesRepeater } from '../../controls/MetaDataPropertiesRepeater';
+import { RichDescription } from '../../controls/RichDescription';
 import '../../controls/propertyItems.css';
+import '../../controls/descriptiveControls.css';
 
 interface SchemaFieldRendererProps {
   schema: EditorSchema;
@@ -43,33 +49,42 @@ const isChinese = (language: 'zh' | 'en') => language === 'zh';
 
 export function SchemaFieldRenderer({ schema, snapshot, values, images, canEdit = false, preview = false, onFieldChange, onImagesChange, language, fieldKeyPrefix }: SchemaFieldRendererProps) {
   const handled = new Set<string>();
+  const modelImageBytes = embeddedImageCollectionBytes({ ...(snapshot?.images ?? {}), ...(images ?? {}) });
   const sections = schema.groups?.length ? schema.groups : [{ title: '', fields: schema.fields.map((field) => field.id) }];
   const contents = sections.map((section) => {
-    const fields = section.fields.flatMap((id) => {
+    const sectionFields = section.fields.flatMap((id) => {
       const field = schema.fields.find((candidate) => candidate.id === id);
-      if (!field) return [];
-      handled.add(id);
-      return [<FieldControl key={id} schema={schema} field={field} snapshot={snapshot} values={values} images={images} canEdit={canEdit} preview={preview} onFieldChange={onFieldChange} onImagesChange={onImagesChange} language={language} fieldKeyPrefix={fieldKeyPrefix} />];
+      return field ? [field] : [];
+    });
+    const descriptionField = sectionFields.find(isDescriptionField);
+    const imageField = sectionFields.find((field) => field.kind === 'images');
+    const hasDescriptionGroup = Boolean(descriptionField && imageField);
+    const fields = sectionFields.map((field) => {
+      handled.add(field.id);
+      return <FieldControl key={field.id} schema={schema} field={field} snapshot={snapshot} values={values} images={images} modelImageBytes={modelImageBytes} canEdit={canEdit} preview={preview} onFieldChange={onFieldChange} onImagesChange={onImagesChange} language={language} fieldKeyPrefix={fieldKeyPrefix} richDescriptionGroup={hasDescriptionGroup} />;
     });
     if (fields.length === 0) return null;
-    return (
-      <details className="editor-field-group" key={section.title || schema.id} open>
-        {section.title && <summary>{editorText(language, section.title)}</summary>}
-        <div className="editor-field-grid">{fields}</div>
-      </details>
-    );
+    const repeated = <MetaDataPropertiesRepeater>{fields}</MetaDataPropertiesRepeater>;
+    if (hasDescriptionGroup && descriptionField && imageField) {
+      const descriptionFieldKey = fieldKeyFor(schema, descriptionField, fieldKeyPrefix);
+      const imageFieldKey = fieldKeyFor(schema, imageField, fieldKeyPrefix);
+      return <DescriptionGroupControl key={section.title || schema.id} title={editorText(language, section.title || 'Description Group')}
+        descriptionFieldKey={descriptionFieldKey} imageFieldKey={imageFieldKey}>{repeated}</DescriptionGroupControl>;
+    }
+    if (!section.title) return <div key={schema.id}>{repeated}</div>;
+    return <MetaDataGroup key={section.title} title={editorText(language, section.title)}>{repeated}</MetaDataGroup>;
   });
   const remaining = schema.fields.filter((field) => !handled.has(field.id)).map((field) => (
-    <FieldControl key={field.id} schema={schema} field={field} snapshot={snapshot} values={values} images={images} canEdit={canEdit} preview={preview} onFieldChange={onFieldChange} onImagesChange={onImagesChange} language={language} fieldKeyPrefix={fieldKeyPrefix} />
+    <FieldControl key={field.id} schema={schema} field={field} snapshot={snapshot} values={values} images={images} modelImageBytes={modelImageBytes} canEdit={canEdit} preview={preview} onFieldChange={onFieldChange} onImagesChange={onImagesChange} language={language} fieldKeyPrefix={fieldKeyPrefix} />
   ));
 
-  return <div className="editor-field-sections">{contents}{remaining.length > 0 && <div className="editor-field-grid">{remaining}</div>}</div>;
+  return <div className="editor-field-sections">{contents}{remaining.length > 0 && <MetaDataPropertiesRepeater>{remaining}</MetaDataPropertiesRepeater>}</div>;
 }
 
-function FieldControl({ schema, field, snapshot, values, images, canEdit, preview, onFieldChange, onImagesChange, language, fieldKeyPrefix }: SchemaFieldRendererProps & { field: EditorFieldSchema; schema: EditorSchema }) {
+function FieldControl({ schema, field, snapshot, values, images, modelImageBytes, canEdit, preview, onFieldChange, onImagesChange, language, fieldKeyPrefix, richDescriptionGroup = false }: SchemaFieldRendererProps & { field: EditorFieldSchema; schema: EditorSchema; modelImageBytes: number; richDescriptionGroup?: boolean }) {
   const generatedID = useId();
   const scopePrefix = fieldKeyPrefix ?? field.scope ?? schema.id;
-  const fieldKey = `${scopePrefix}/${field.id}`;
+  const fieldKey = fieldKeyFor(schema, field, fieldKeyPrefix);
   const value = values?.[fieldKey] ?? snapshot?.fields[fieldKey] ?? '';
   const sourceControl = (field.sourceControl ?? '').toLowerCase();
   const radioBinding = (field as EditorFieldSchema & { radioBinding?: { route: string; value: string } | null }).radioBinding;
@@ -141,7 +156,7 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
     }
   } else if (field.kind === 'images') {
     const imageList = images?.[fieldKey] ?? snapshot?.images[fieldKey] ?? [];
-    control = <ImageCollection fieldKey={fieldKey} images={imageList} disabled={disabled} onImagesChange={onImagesChange} language={language} />;
+    control = <EmbededImageGallery fieldKey={fieldKey} images={imageList} modelImageBytes={modelImageBytes} disabled={disabled} onImagesChange={onImagesChange} language={language} />;
   } else if (field.kind === 'display') {
     control = <ParagraphPropertyItem id={generatedID} value={value} />;
   } else if (/^doubleclickvalidateabletextbox\d*$/.test(sourceControl)) {
@@ -185,6 +200,14 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
       {sourceControl === 'inputdatetimepropertyitem'
         ? <InputDateTimePropertyItem id={generatedID} mode="datetime-local" value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
         : <DateTimeInputBox id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} groupLabel={title} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />}
+      <ValidationErrorList errors={error ? [error] : []} />
+    </>;
+  } else if (sourceControl === 'richdescription' || (field.kind === 'multiline' && richDescriptionGroup && isDescriptionField(field))) {
+    const error = disabled ? null : validateFieldValue(field, value, language);
+    control = <>
+      <RichDescription id={generatedID} value={value} language={language} readOnly={isReadOnly} disabled={disabled}
+        placeholder={field.placeholder ? editorText(language, field.placeholder) : undefined} ariaInvalid={Boolean(error)}
+        onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
       <ValidationErrorList errors={error ? [error] : []} />
     </>;
   } else if (field.kind === 'multiline') {
@@ -237,54 +260,26 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
     </>;
   }
 
-  return (
-    <div className={`editor-field editor-field-${field.kind}`}>
-      {field.kind !== 'toggle' && !radioTextControl && <label htmlFor={generatedID}>{label}</label>}
-      {control}
-      {help}
-      {Boolean(field.enabledBy?.length) && !enabled && !preview && <small className="editor-field-muted">{isChinese(language) ? '当前计划模式下不可用' : 'Unavailable for the current plan mode'}</small>}
-      {preview && Boolean(field.enabledBy?.length || field.visibleBy?.length) && <small className="editor-field-muted">{isChinese(language) ? '受原始控件条件控制' : 'Controlled by source UI conditions'}</small>}
-    </div>
-  );
+  return <ContentPropertyItem id={generatedID} label={field.kind !== 'toggle' && !radioTextControl ? label : undefined}
+    className={`editor-field editor-field-${field.kind}`} help={help}
+    unavailableMessage={Boolean(field.enabledBy?.length) && !enabled && !preview
+      ? <small className="editor-field-muted">{isChinese(language) ? '当前计划模式下不可用' : 'Unavailable for the current plan mode'}</small> : undefined}
+    conditionalMessage={preview && Boolean(field.enabledBy?.length || field.visibleBy?.length)
+      ? <small className="editor-field-muted">{isChinese(language) ? '受原始控件条件控制' : 'Controlled by source UI conditions'}</small> : undefined}>
+    {control}
+  </ContentPropertyItem>;
 }
 
-function ImageCollection({ fieldKey, images, disabled, onImagesChange, language }: { fieldKey: string; images: ModelImage[]; disabled: boolean; onImagesChange?: (fieldID: string, images: ModelImage[]) => void; language: 'zh' | 'en' }) {
-  const selectionGeneration = useRef(0);
-  const onChooseFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const input = event.currentTarget;
-    const generation = ++selectionGeneration.current;
-    const files = Array.from(input.files ?? []);
-    if (!files.length) return;
-    const added = await Promise.all(files.map(async (file) => ({ id: crypto.randomUUID(), name: file.name, data: await fileAsBase64(file) })));
-    if (selectionGeneration.current !== generation || !input.isConnected) return;
-    onImagesChange?.(fieldKey, [...images, ...added]);
-    input.value = '';
-  };
-  return (
-    <div className="editor-image-collection">
-      {images.map((image) => (
-        <div className="editor-image-row" key={image.id}>
-          <span title={image.name}>{image.name}</span>
-          {!disabled && <button type="button" className="editor-icon-button" aria-label={isChinese(language) ? `移除 ${image.name}` : `Remove ${image.name}`} onClick={() => onImagesChange?.(fieldKey, images.filter((candidate) => candidate.id !== image.id))}>×</button>}
-        </div>
-      ))}
-      {!disabled && <label className="editor-file-button">{isChinese(language) ? '添加图片' : 'Add image'}<input type="file" accept="image/*" multiple onChange={onChooseFiles} /></label>}
-      {images.length === 0 && <small className="editor-field-muted">{isChinese(language) ? '没有嵌入图片' : 'No embedded images'}</small>}
-    </div>
-  );
+function fieldKeyFor(schema: EditorSchema, field: EditorFieldSchema, fieldKeyPrefix?: string): string {
+  return `${fieldKeyPrefix ?? field.scope ?? schema.id}/${field.id}`;
 }
 
-function fileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error('Could not read image file.'));
-    reader.onload = () => {
-      const value = reader.result;
-      if (typeof value !== 'string') return reject(new Error('Could not encode image file.'));
-      resolve(value.slice(value.indexOf(',') + 1));
-    };
-    reader.readAsDataURL(file);
-  });
+function isDescriptionField(field: EditorFieldSchema): boolean {
+  const id = field.id.toLowerCase();
+  const title = field.title.trim().toLowerCase();
+  const sourceControl = (field.sourceControl ?? '').toLowerCase();
+  return sourceControl === 'richdescription' || title === 'description'
+    || id === 'description' || id.endsWith('/description') || id.endsWith('.description');
 }
 
 function truthy(value: string | undefined): boolean {

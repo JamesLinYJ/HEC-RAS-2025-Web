@@ -1,5 +1,10 @@
 export type GeometryFeatureKind = 'node' | 'arc' | 'region' | 'flowArea' | 'barrel' | 'barrelProperties' | 'openingProperties';
 
+export interface GeometryTopologyFactorSelection {
+  featureKind: 'arc' | 'region';
+  featureIDs: number[];
+}
+
 export interface GeometryColumn {
   id: string;
   title: string;

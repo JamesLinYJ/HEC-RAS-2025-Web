@@ -8,6 +8,7 @@ import { CulvertsTable } from './CulvertsTable';
 import { CulvertEditor } from './CulvertEditor';
 import { GeometryCulvertBarrelPropertiesPage } from './GeometryCulvertBarrelPropertiesPage';
 import { GeometryCulvertOpeningPropertiesPage } from './GeometryCulvertOpeningPropertiesPage';
+import { DetailedCulvertBarrelLayerHeader } from './DetailedCulvertBarrelLayerHeader';
 
 export interface CulvertsEditorProps {
   language: Language;
@@ -99,6 +100,7 @@ export function CulvertsEditor({
         <div className="geometry-tab-content">
           {page === 'barrels' ? (
             <div className="geometry-grid geometry-detail-layout">
+              <DetailedCulvertBarrelLayerHeader language={language} rows={currentBarrels} selectedRows={selectedBarrels} />
               <CulvertsTable language={language} table={snapshot?.barrels} localRows={localBarrels} editable={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleChange('barrel')} onDelete={handleDelete('barrel')} onSelect={selectBarrels} />
               <CulvertEditor
                 language={language} table={snapshot?.barrels} selectedRows={selectedBarrels} localRows={localBarrels}

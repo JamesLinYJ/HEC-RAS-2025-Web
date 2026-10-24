@@ -33,8 +33,8 @@ export function RasterSymbologySettingsGroup({ language, draft, plotOptions, dis
           </div>)}
         </div>
         <p className="raster-symbology-note">{zh
-          ? 'Host 当前仅将这些选项用于本次渲染回执；服务不会把它们写入 .vis，因此此处只读。'
-          : 'The Host uses these options for rendering receipts but does not write them to .vis, so they are shown read-only.'}</p>
+          ? 'Host 会返回渲染器选项，但当前地图保存与重载流程没有应用这些值的路径，因此这里只读；等地图渲染接通后再开放编辑。'
+          : 'The Host reports renderer options, but the current map save and reload flow has no path to apply them. They remain read-only until that rendering path is connected.'}</p>
       </details>}
     </section>
   );

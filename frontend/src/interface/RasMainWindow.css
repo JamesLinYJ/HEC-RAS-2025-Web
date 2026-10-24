@@ -46,6 +46,18 @@
 .ras-dialog-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:22px; }
 .ras-dialog-actions button { padding:8px 13px; border:1px solid #5c778a; border-radius:5px; color:inherit; background:#335771; }
 .ras-dialog-actions button.ras-danger { background:#704038; border-color:#b37768; }
+.ras-alert-banner { display:grid; grid-template-columns:22px minmax(0,1fr); align-items:start; gap:10px; color:#c6d3de; }
+.ras-alert-banner-icon { display:inline-grid; width:19px; height:19px; place-items:center; border:1px solid currentColor; border-radius:50%; font:700 12px/1 'DM Mono',monospace; }
+.ras-alert-banner.is-information .ras-alert-banner-icon { color:#88c8dd; }
+.ras-alert-banner.is-warning .ras-alert-banner-icon { color:#e8bb88; }
+.ras-alert-banner.is-error .ras-alert-banner-icon { color:#f09b8d; }
+.ras-alert-banner-content { min-width:0; line-height:1.7; }
+.ras-alert-banner-header { display:block; color:#e2e9ef; }
+.ras-alert-banner-content p { margin:0; line-height:1.8; }
+.ras-alert-banner-content pre { margin:8px 0; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.6 'SFMono-Regular',Consolas,monospace; }
+.ras-confirm-action-control .ras-alert-banner { margin-top:2px; }
+.ras-confirm-action-control .ras-dialog-actions { margin-top:22px; }
+.ras-page-error > button { margin-top:10px; padding:5px 9px; border:1px solid #526c7e; border-radius:4px; background:#2d4c62; color:inherit; }
 .ras-empty,.ras-page-error { margin:28px; line-height:1.8; color:#b8c8d5; }
 .ras-page-error pre { white-space:pre-wrap; }
 @media(max-width:900px) { .ras-main-content { grid-template-columns:minmax(0,1fr) 190px; } .ras-titlebar { gap:10px; } }

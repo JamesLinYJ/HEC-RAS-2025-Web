@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetReference, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { BackendOperationUnavailableError } from '../../shared/workbench';
-import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
+import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFactorSelection, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
 import { geometryDiagnosticMessage } from './geometryErrors';
 
 interface OwnerValue<T> { owner: string; value: T }
@@ -320,11 +320,15 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     return editTopology({ operation, featureKind: kind, featureIDs: [row.fid], ...(axis ? { fieldID: axis } : {}) }).then(() => undefined);
   };
 
-  const applyTopologyFactor = (factor: number): Promise<void> => {
+  const applyTopologyFactor = (factor: number, selection?: GeometryTopologyFactorSelection): Promise<void> => {
     if (!Number.isFinite(factor) || factor <= 0) return Promise.reject(new Error('A positive finite topology factor is required.'));
     if (!topology?.canEdit || !supports('topology.edit')) return Promise.reject(new BackendOperationUnavailableError('topology.edit'));
-    return editTopology({ operation: 'applyFactor', featureKind: 'topology', featureIDs: [], applyToSelectedOnly: false,
-      factorText: String(factor), arcFeatureIDs: [], controlPointFeatureIDs: [] }).then(() => undefined);
+    const ids = selection?.featureIDs ?? [];
+    if (selection && (!ids.length || ids.some((fid) => !Number.isInteger(fid) || fid < 0) || new Set(ids).size !== ids.length))
+      return Promise.reject(new Error('Selected topology scaling requires distinct source feature IDs.'));
+    return editTopology({ operation: 'applyFactor', featureKind: 'topology', featureIDs: [], applyToSelectedOnly: !!selection,
+      factorText: String(factor), arcFeatureIDs: selection?.featureKind === 'arc' ? ids : [],
+      controlPointFeatureIDs: selection?.featureKind === 'region' ? ids : [] }).then(() => undefined);
   };
 
   const editTopologyTag = (kind: 'arc' | 'region', rows: GeometryRow[], tagName: string, value: string | null): Promise<void> => {

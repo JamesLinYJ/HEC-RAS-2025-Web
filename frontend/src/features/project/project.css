@@ -170,6 +170,9 @@
 .project-tree-search input { width: 100%; min-width: 0; border: 0; outline: none; color: #c7d8de; background: transparent; font-size: 9px !important; }
 .project-tree-search input::placeholder { color: #57707d; }
 .project-tree-search button { border: 0; color: #667f8b; background: transparent; cursor: pointer; font-size: 13px !important; }
+.project-clear-filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; color: #a9c8d5; background: rgba(43, 104, 131, .12); border-bottom: 1px solid rgba(126, 163, 179, .13); }
+.project-clear-filters > span { min-width: 0; }
+.project-clear-filters > button { flex-shrink: 0; }
 .project-tree-tool-button { min-height: 26px; padding: 0 7px; border: 1px solid transparent; border-radius: 4px; color: #718995 !important; background: transparent; cursor: pointer; font-size: 8px !important; white-space: nowrap; }
 .project-tree-tool-button:hover { color: #c5d6dd !important; border-color: rgba(136, 171, 186, .12); background: rgba(37, 71, 83, .18); }
 .project-tree-categories { min-height: 32px; flex: 0 0 auto; display: flex; align-items: stretch; gap: 1px; padding: 0 12px; overflow-x: auto; border-bottom: 1px solid rgba(151, 185, 201, .08); }

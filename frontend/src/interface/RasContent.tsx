@@ -4,6 +4,7 @@ import type { FeatureId, FeaturePageProps } from '../shared/workbench';
 import { text } from '../shared/workbench';
 import { ComputeProofPage } from '../features/compute/ComputeProofPage';
 import type { PendingProjectCommand } from '../features/project';
+import { AlertBanner } from '../controls/AlertBanner';
 
 const modules = import.meta.glob<{ default: ComponentType<FeaturePageProps> }>('../features/*/index.tsx');
 const pages = new Map<string, ReturnType<typeof lazy<ComponentType<FeaturePageProps>>>>();
@@ -12,12 +13,15 @@ for (const [path, load] of Object.entries(modules)) {
   if (id) pages.set(id, lazy(load));
 }
 
-class PageBoundary extends Component<{ children: ReactNode; label: string }, { error: string | null }> {
+class PageBoundary extends Component<{ children: ReactNode; label: string; retryLabel: string }, { error: string | null }> {
   state = { error: null as string | null };
   static getDerivedStateFromError(error: Error) { return { error: error.message }; }
   componentDidCatch(_error: Error, _info: ErrorInfo) { /* The visible boundary preserves the exact error. */ }
   render() {
-    if (this.state.error) return <section role="alert" className="ras-page-error"><h2>{this.props.label}</h2><pre>{this.state.error}</pre><button onClick={() => this.setState({ error: null })}>↻</button></section>;
+    if (this.state.error) return <section role="alert" className="ras-page-error">
+      <AlertBanner severity="error" header={this.props.label}><pre>{this.state.error}</pre></AlertBanner>
+      <button type="button" aria-label={this.props.retryLabel} title={this.props.retryLabel} onClick={() => this.setState({ error: null })}>↻</button>
+    </section>;
     return this.props.children;
   }
 }
@@ -35,7 +39,7 @@ export function RasContent({ activeFeature, ...props }: FeaturePageProps & {
     {keys.map((feature) => {
       const Page = pages.get(feature);
       return <div key={feature} className="ras-feature-page" hidden={activeFeature !== feature} data-feature={feature}>
-        <PageBoundary label={text(props.language, '界面加载失败', 'Page failed to load')}>
+        <PageBoundary label={text(props.language, '界面加载失败', 'Page failed to load')} retryLabel={text(props.language, '重新加载界面', 'Retry page')}>
           <Suspense fallback={<p role="status">{text(props.language, '正在加载…', 'Loading…')}</p>}>
             {Page ? <Page {...props} /> : <p className="ras-empty">{text(props.language, '此页面尚未接入工作区。', 'This page is not connected to the workspace yet.')}</p>}
           </Suspense>

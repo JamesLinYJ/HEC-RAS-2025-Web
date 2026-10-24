@@ -6,6 +6,8 @@ import { RasContent } from './RasContent';
 import { RasMenuBar } from './RasMenuBar';
 import './RasMainWindow.css';
 import type { PendingProjectCommand } from '../features/project';
+import { ConfirmActionControlDialog } from '../controls/ConfirmActionControlDialog';
+import { FramedContentDialog } from '../controls/FramedContentDialog';
 
 const features: { id: FeatureId; zh: string; en: string }[] = [
   { id: 'project', zh: '工程', en: 'Project' },
@@ -26,17 +28,6 @@ const initialLanguage = (): Language => {
   try { return localStorage.getItem('hecras.language') === 'en' ? 'en' : 'zh'; }
   catch { return 'zh'; }
 };
-
-function Dialog({ open, children, onCancel, title }: { open: boolean; children: React.ReactNode; onCancel: () => void; title: string }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    else if (!open && dialog.open) dialog.close();
-  }, [open]);
-  return <dialog className="ras-dialog" ref={ref} onCancel={(event) => { event.preventDefault(); onCancel(); }} aria-label={title}><h2>{title}</h2>{children}</dialog>;
-}
 
 /** Web counterpart of RasMainWindow.cs; file/model mutations remain backend-owned. */
 export function RasMainWindow() {
@@ -144,10 +135,21 @@ export function RasMainWindow() {
       {showInspector && <aside className="ras-inspector" aria-label={t('属性', 'Properties')}><h2>{t('属性', 'Properties')}</h2>{context.selectedAsset ? <><dl><dt>{t('名称', 'Name')}</dt><dd>{context.selectedAsset.name}</dd><dt>{t('类型', 'Type')}</dt><dd>{assetKindLabel(context.selectedAsset.kind, language)}</dd><dt>{t('文件', 'File')}</dt><dd>{context.selectedAsset.path}</dd></dl><button onClick={() => onNavigate(context.selectedAsset?.kind.toLowerCase().includes('geometry') ? 'geometry' : 'editors')}>{t('打开编辑器', 'Open editor')}</button></> : <p>{t('选择工程中的对象查看属性。', 'Select a project object to inspect its properties.')}</p>}{runtimeError && <details className="ras-runtime-error"><summary>{t('服务连接失败', 'Server connection failed')}</summary><p>{t('无法连接 C# 服务，请确认服务已启动且当前地址可访问。', 'Cannot connect to the C# server. Confirm that it is running and reachable.')}</p><pre>{runtimeError}</pre></details>}</aside>}
     </div>
     <footer className="ras-statusbar"><span>{dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
-    <Dialog open={pendingContext !== null} title={t('保留未保存的修改？', 'Keep unsaved changes?')} onCancel={() => setPendingContext(null)}><p>{t('当前编辑器有未保存的草稿。你可以返回编辑器保存，或者放弃草稿后切换对象。', 'The current editors contain unsaved drafts. Return to save them, or discard the drafts before switching objects.')}</p><div className="ras-dialog-actions"><button autoFocus onClick={() => setPendingContext(null)}>{t('返回编辑', 'Keep editing')}</button><button className="ras-danger" onClick={() => {
-      if (!pendingContext || pendingContext.source !== identity(contextRef.current)) { setPendingContext(null); return; }
-      dirtyOwnersRef.current = new Set(); setDirtyOwners(dirtyOwnersRef.current); commitContext(pendingContext.target); setPendingContext(null);
-    }}>{t('放弃草稿并继续', 'Discard and continue')}</button></div></Dialog>
-    <Dialog open={showHelp} title="HEC-RAS 2025" onCancel={() => setShowHelp(false)}><p>{t('在工程页选择工程文件，在模型、几何、地图和结果页编辑与查看数据。界面在浏览器与桌面使用同一套 React 组件。', 'Select a project in Project, then use the model, geometry, map and result pages. Browser and desktop share the same React interface.')}</p><p>{t('需要 C# 业务服务的操作会根据服务端实际发布的能力启用。工程数据操作与计算均由 ASP.NET Core 服务处理。', 'Operations are enabled according to capabilities advertised by the C# server. Project-data operations and compute run through ASP.NET Core.')}</p><div className="ras-dialog-actions"><button autoFocus onClick={() => setShowHelp(false)}>{t('关闭', 'Close')}</button></div></Dialog>
+    <ConfirmActionControlDialog
+      open={pendingContext !== null}
+      title={t('保留未保存的修改？', 'Keep unsaved changes?')}
+      message={t('当前编辑器有未保存的草稿。你可以返回编辑器保存，或者放弃草稿后切换对象。', 'The current editors contain unsaved drafts. Return to save them, or discard the drafts before switching objects.')}
+      severity="warning"
+      cancelLabel={t('返回编辑', 'Keep editing')}
+      continueLabel={t('放弃草稿并继续', 'Discard and continue')}
+      continueIsDangerous
+      autoFocusCancel
+      onCancel={() => setPendingContext(null)}
+      onContinue={() => {
+        if (!pendingContext || pendingContext.source !== identity(contextRef.current)) { setPendingContext(null); return; }
+        dirtyOwnersRef.current = new Set(); setDirtyOwners(dirtyOwnersRef.current); commitContext(pendingContext.target); setPendingContext(null);
+      }}
+    />
+    <FramedContentDialog open={showHelp} title="HEC-RAS 2025" onCancel={() => setShowHelp(false)}><p>{t('在工程页选择工程文件，在模型、几何、地图和结果页编辑与查看数据。界面在浏览器与桌面使用同一套 React 组件。', 'Select a project in Project, then use the model, geometry, map and result pages. Browser and desktop share the same React interface.')}</p><p>{t('需要计算能力的操作会根据当前可用功能启用，工程数据编辑与计算会通过关联服务处理。', 'Operations that need compute are enabled according to available capabilities. Project-data editing and computation are handled by the connected service.')}</p><div className="ras-dialog-actions"><button autoFocus onClick={() => setShowHelp(false)}>{t('关闭', 'Close')}</button></div></FramedContentDialog>
   </main>;
 }

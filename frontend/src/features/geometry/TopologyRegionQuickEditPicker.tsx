@@ -1,5 +1,6 @@
 import type { Language } from '../../shared/workbench';
 import type { GeometryRow } from './geometryTypes';
+import { QuickRatioCellSizeButton } from './QuickRatioCellSizeButton';
 
 export interface TopologyRegionQuickEditPickerProps {
   language: Language;
@@ -21,28 +22,27 @@ export function TopologyRegionQuickEditPicker({ language, rows, canEdit, busy, o
   const simple = patchType === 'TrianglePaver' || patchType === 'Cartesian';
   const quad = patchType === 'Quad';
   const canResize = !!region && (simple || quad);
-  const label = (operation: 'halfSize' | 'doubleSize') => operation === 'halfSize'
-    ? (language === 'zh' ? '单元尺寸减半' : 'Half cell size')
-    : (language === 'zh' ? '单元尺寸加倍' : 'Double cell size');
+  const resize = (factor: 0.5 | 2, axis?: 'NorthSouth' | 'EastWest'): void =>
+    onResize(region!, factor === 0.5 ? 'halfSize' : 'doubleSize', axis);
 
   return (
     <section className="geometry-panel" aria-label={language === 'zh' ? '区域快速编辑' : 'Region quick edit'}>
-      <header className="geometry-panel-heading"><div><h3>{language === 'zh' ? '区域快速缩放' : 'Region quick sizing'}</h3><p>{region ? `${language === 'zh' ? '网格类型' : 'Patch type'}: ${patchName(language, patchType)}` : (language === 'zh' ? '请只选择一个源控制点。' : 'Select exactly one source control point.')}</p></div></header>
+      <header className="geometry-panel-heading"><div><h3>{language === 'zh' ? '区域快速缩放' : 'Region quick sizing'}</h3><p>{region ? `${language === 'zh' ? '网格类型' : 'Patch type'}: ${patchName(language, patchType)}` : (language === 'zh' ? '请只选择一个源区域。' : 'Select exactly one source region.')}</p></div></header>
       {!region ? <div className="geometry-empty"><strong>{language === 'zh' ? '快速缩放需要一个源区域。' : 'Quick sizing requires one source region.'}</strong></div> : !canResize ? (
         <div className="geometry-panel-body">{language === 'zh' ? '源快速尺寸命令只支持 TrianglePaver、Cartesian 或 Quad 区域。' : 'Source quick sizing supports TrianglePaver, Cartesian, and Quad patches.'}</div>
       ) : (
         <div className="geometry-panel-body">
           {quad ? <div className="geometry-toolbar-group" style={{ marginBottom: 10 }}>
-            <button className="geometry-secondary" disabled={!canEdit || busy} onClick={() => onResize(region, 'halfSize', 'NorthSouth')}>{language === 'zh' ? '南北向减半' : 'Half North–South'}</button>
-            <button className="geometry-secondary" disabled={!canEdit || busy} onClick={() => onResize(region, 'doubleSize', 'NorthSouth')}>{language === 'zh' ? '南北向加倍' : 'Double North–South'}</button>
+            <QuickRatioCellSizeButton language={language} factor={0.5} axis="NorthSouth" disabled={!canEdit || busy} onResize={(factor) => resize(factor, 'NorthSouth')} />
+            <QuickRatioCellSizeButton language={language} factor={2} axis="NorthSouth" disabled={!canEdit || busy} onResize={(factor) => resize(factor, 'NorthSouth')} />
           </div> : null}
           {!quad ? <div className="geometry-toolbar-group" style={{ width: '100%' }}>
-            <button className="geometry-secondary" disabled={!canEdit || busy} onClick={() => onResize(region, 'halfSize')}>{label('halfSize')}</button>
-            <button className="geometry-secondary" disabled={!canEdit || busy} onClick={() => onResize(region, 'doubleSize')}>{label('doubleSize')}</button>
+            <QuickRatioCellSizeButton language={language} factor={0.5} disabled={!canEdit || busy} onResize={(factor) => resize(factor)} />
+            <QuickRatioCellSizeButton language={language} factor={2} disabled={!canEdit || busy} onResize={(factor) => resize(factor)} />
           </div> : null}
           {quad ? <div className="geometry-toolbar-group" style={{ marginTop: 10 }}>
-            <button className="geometry-secondary" disabled={!canEdit || busy} onClick={() => onResize(region, 'halfSize', 'EastWest')}>{language === 'zh' ? '东西向减半' : 'Half East–West'}</button>
-            <button className="geometry-secondary" disabled={!canEdit || busy} onClick={() => onResize(region, 'doubleSize', 'EastWest')}>{language === 'zh' ? '东西向加倍' : 'Double East–West'}</button>
+            <QuickRatioCellSizeButton language={language} factor={0.5} axis="EastWest" disabled={!canEdit || busy} onResize={(factor) => resize(factor, 'EastWest')} />
+            <QuickRatioCellSizeButton language={language} factor={2} axis="EastWest" disabled={!canEdit || busy} onResize={(factor) => resize(factor, 'EastWest')} />
           </div> : null}
         </div>
       )}

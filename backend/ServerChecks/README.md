@@ -54,6 +54,14 @@ dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --r
 
 This check copies the completed fixture into a new output directory, then exercises ordinary File (`.txt`) add, update and remove through `project.connection.inspect/commit`. It verifies canonical path and source SHA readback, rejects a changed target source and a stale Project revision without modifying the Project, and confirms each commit through `project.open` and `catalog.tree.load`. Original and copied HDF files are checked byte-for-byte; only files and XML in the new output copy are modified. The command requires an already-running loopback server and does not launch one.
 
+Verify saved Plan and Geometry association edits against the same completed fixture:
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --run-project-associations-http http://127.0.0.1:5080 /tmp/hecras-result-hover/result-hover-manifest.json /tmp/hecras-project-associations
+```
+
+This check copies the fixture into a new output directory, rejects a saved Result as a writable Plan, inspects the exact saved Plan and Geometry HDFs, writes and reopens the standard `PlanAssociations` row, clears both optional Geometry dependencies and restores their exact original Terrain/N-Value selections. It verifies `project.open` and `project.tree.load` readback, rejects stale source-reference and Project revisions without touching HDFs, and compares the original and copied HDF SHA-256 values before reporting success. The command uses only an already-running loopback server; it does not start a service or alter the source fixture.
+
 Create a separate fixture for the React meteorological time-series editor:
 
 ```sh

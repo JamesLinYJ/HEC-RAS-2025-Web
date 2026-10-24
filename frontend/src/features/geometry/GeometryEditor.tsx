@@ -109,6 +109,7 @@ export default function GeometryPage(props: FeaturePageProps) {
     onTopologyTagCreate: workspace.createTopologyTag,
     canFilterTopology: workspace.canFilterTopology,
     onTopologyFilter: workspace.filterTopology,
+    onApplyTopologyFactor: workspace.applyTopologyFactor,
     onArcPointCoordinateChange: workspace.editArcPointCoordinate,
     onApplyRecipe: workspace.applyTopologyRecipe,
     onTopologyResize: (featureKind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => {

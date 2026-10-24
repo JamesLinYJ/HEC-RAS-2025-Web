@@ -1,7 +1,7 @@
 import type { Language } from '../../shared/workbench';
 import { GeometryFeatureTable } from './GeometryFeatureTable';
 import { gt } from './geometryText';
-import type { GeometryFeatureKind, GeometryField, GeometryRow, GeometryTable, GeometryTopologyArcPointsSnapshot, GeometryTopologyFilterClause, GeometryTopologyFilterSnapshot, GeometryTopologyRecipeSnapshot, GeometryTopologySnapshot } from './geometryTypes';
+import type { GeometryFeatureKind, GeometryField, GeometryRow, GeometryTable, GeometryTopologyArcPointsSnapshot, GeometryTopologyFactorSelection, GeometryTopologyFilterClause, GeometryTopologyFilterSnapshot, GeometryTopologyRecipeSnapshot, GeometryTopologySnapshot } from './geometryTypes';
 
 export interface GeometryTopologyTablePageProps {
   language: Language;
@@ -17,6 +17,7 @@ export interface GeometryTopologyTablePageProps {
   onTopologyTagCreate?: (kind: 'arc' | 'region', tagName: string, tagType: string) => Promise<void>;
   canFilterTopology?: boolean;
   onTopologyFilter?: (kind: 'arc' | 'region', clauses: GeometryTopologyFilterClause[], signal?: AbortSignal) => Promise<GeometryTopologyFilterSnapshot>;
+  onApplyTopologyFactor?: (factor: number, selection?: GeometryTopologyFactorSelection) => Promise<void>;
   onArcPointCoordinateChange?: (arcFID: number, point: GeometryTopologyArcPointsSnapshot['rows'][number], axis: 'X' | 'Y', value: string,
     expected: { revision: string; draftState: string; draftIdentity: string }) => Promise<void>;
   topologySnapshot?: GeometryTopologySnapshot;

@@ -3,7 +3,7 @@ import type { Language } from '../../shared/workbench';
 import { GeometryFeatureTable } from './GeometryFeatureTable';
 import { gdiagnostic, gfield, gmode, gt } from './geometryText';
 import { GeometryError } from './GeometryError';
-import { FlowAreaEditorControl } from './FlowAreaEditorControl';
+import { FlowAreaEditorContextualControl } from './FlowAreaEditorContextualControl';
 import { GeometryPrepareSummaryControl } from './GeometryPrepareSummaryControl';
 import { MeshDiagnostics } from './MeshDiagnostics';
 import { geometryDiagnosticMessage } from './geometryErrors';
@@ -38,6 +38,8 @@ function flowAreaTable(snapshot: GeometryMeshSnapshot | undefined, language: Lan
       { id: 'CellCount', title: gt(language, 'cells'), sourceType: 'int' },
       { id: 'FaceCount', title: gt(language, 'faces'), sourceType: 'int' },
       { id: 'NodeCount', title: gt(language, 'meshNodes'), sourceType: 'int' },
+      { id: 'HasMeshErrors', title: language === 'zh' ? '网格错误' : 'Mesh errors', sourceType: 'bool' },
+      { id: 'HasPropertyTables', title: language === 'zh' ? '属性表' : 'Property tables', sourceType: 'bool' },
     ],
     editableFields: [
       { id: 'Name', title: gt(language, 'name'), sourceType: 'string' },
@@ -53,6 +55,8 @@ function flowAreaTable(snapshot: GeometryMeshSnapshot | undefined, language: Lan
         CellCount: String(area.cellCount),
         FaceCount: String(area.faceCount),
         NodeCount: String(area.nodeCount),
+        HasMeshErrors: String(area.hasMeshErrors),
+        HasPropertyTables: String(area.hasPropertyTables),
       },
     })),
   };
@@ -116,7 +120,7 @@ export function GeometryMeshPage({
 
   return (
     <div className="geometry-grid">
-      <FlowAreaEditorControl language={language} table={flowAreas} canEdit={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleAreaEdit} headerActions={<>
+      <FlowAreaEditorContextualControl language={language} table={flowAreas} canEdit={canEdit && !!snapshot?.canEdit} busy={busy} onChange={handleAreaEdit} headerActions={<>
         <button className="geometry-secondary" disabled={!canPrepare || busy || !canEdit} onClick={onPrepare}>{gt(language, 'prepare')}</button>
         <button className="geometry-primary" disabled={!canGenerate || busy || !canEdit || !snapshot} onClick={() => void generate()}>{busy ? gt(language, 'generating') : gt(language, 'generate')}</button>
       </>}>
@@ -124,7 +128,7 @@ export function GeometryMeshPage({
         {snapshot?.flowAreas.some((area) => area.hasMeshErrors) && <div className="geometry-validation-list"><div className="geometry-validation-item">{language === 'zh' ? '至少一个流动区域包含网格错误。' : 'At least one flow area contains mesh errors.'}</div></div>}
         {progress && <details className="geometry-panel-body"><summary>{gt(language, 'serverProgress')}</summary><pre className="geometry-report-item">{progress}</pre></details>}
         {taskError && <GeometryError language={language} error={taskError} style={{ margin: 13 }} />}
-      </FlowAreaEditorControl>
+      </FlowAreaEditorContextualControl>
       <GeometryPrepareSummaryControl language={language} summary={snapshot?.prepareSummary} pending={!!snapshot?.preparePending} />
       <section className="geometry-panel">
         <header className="geometry-panel-heading"><div><h2>{gt(language, 'selectedRegions')}</h2><p>{snapshot?.selectedRegionIDs.length ?? 0} {gt(language, 'selected')}</p></div><span className="geometry-count-pill">{gt(language, 'sizingStatus')}</span></header>

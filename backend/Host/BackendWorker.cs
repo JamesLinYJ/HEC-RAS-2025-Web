@@ -12,6 +12,8 @@ public static class BackendWorker
     public static IReadOnlyList<string> OperationNames { get; } = Array.AsReadOnly(new[]
     {
         "project.open",
+        "project.association.commit",
+        "project.association.inspect",
         "project.connection.commit",
         "project.connection.inspect",
         "project.modelAction.inspect",
@@ -295,6 +297,8 @@ public static class BackendWorker
             {
                 "backend.info" => new { protocolVersion = 1, runtime = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier },
                 "project.open" => ProjectWorkspaceService.Open(request.Parameters.Deserialize<ProjectWorkspaceOpenRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project path.")),
+                "project.association.inspect" => ProjectAssociationService.Inspect(request.Parameters.Deserialize<ProjectAssociationInspectRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project association inspection request.")),
+                "project.association.commit" => ProjectAssociationService.Commit(request.Parameters.Deserialize<ProjectAssociationCommitRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project association commit request.")),
                 "project.connection.inspect" => ProjectConnectionService.Inspect(request.Parameters.Deserialize<ProjectConnectionInspectRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project connection inspection request.")),
                 "project.connection.commit" => ProjectConnectionService.Commit(request.Parameters.Deserialize<ProjectConnectionCommitRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project connection commit request.")),
                 "project.modelAction.inspect" => ProjectTreeModelActionService.Inspect(request.Parameters.Deserialize<ProjectTreeModelActionInspectRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project model action inspection.")),

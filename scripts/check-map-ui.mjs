@@ -118,6 +118,10 @@ export async function checkMapUI({ fixture, output, evaluate, waitFor, command, 
     return;
   }
   for (const name of ['Solver Geometry', 'Plan CPU']) {
+    // Result containers can expose embedded models with the same display name.
+    // Filter to the owning model group before opening its copy command.
+    const category = name === 'Solver Geometry' ? '几何' : '计划';
+    await evaluate(`Array.from(document.querySelectorAll('.project-tree-categories button')).find(n=>n.textContent.trim()===${JSON.stringify(category)}).click()`);
     await waitFor(`Array.from(document.querySelectorAll('.project-tree-node')).some(n=>n.querySelector('.project-tree-node-name')?.textContent===${JSON.stringify(name)})`, `source model ${name}`);
     await evaluate(`Array.from(document.querySelectorAll('.project-tree-node')).find(n=>n.querySelector('.project-tree-node-name')?.textContent===${JSON.stringify(name)}).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:300,clientY:300}))`);
     await waitFor("Boolean(document.querySelector('[data-testid=project-tree-copy-model]')) && !document.querySelector('[data-testid=project-tree-copy-model]').disabled", 'real duplicate command');
@@ -125,6 +129,9 @@ export async function checkMapUI({ fixture, output, evaluate, waitFor, command, 
     await evaluate("document.querySelector('[data-testid=project-tree-copy-model]').click()");
     await waitFor(`Array.from(document.querySelectorAll('.project-tree-node-name')).some(n=>n.textContent===${JSON.stringify(name + ' (1)')})`, `committed copy of ${name}`, 60_000);
   }
+  await evaluate("document.querySelector('.project-clear-filters button').click()");
+  await waitFor("!document.querySelector('.project-clear-filters') && Array.from(document.querySelectorAll('.project-tree-categories button')).find(n=>n.textContent==='全部')?.classList.contains('is-active')", 'clear all catalog filters');
+  report.checks.push('model copy selects the owning category rather than embedded Result models, and clearing filters restores the complete tree');
   assert.equal(sha(await readFile(fixture.geometryPath)), initialGeometrySHA, 'Copy modified the original Geometry HDF');
   assert.equal(sha(await readFile(fixture.planPath)), initialPlanSHA, 'Copy modified the original Plan HDF');
   const geometryCopies = (await readdir(path.dirname(fixture.geometryPath))).filter(name => name.includes('(1)'));

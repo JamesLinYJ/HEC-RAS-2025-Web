@@ -8,6 +8,10 @@ import { CrossSectionEditorWindow } from './controls/CrossSectionEditorWindow';
 import { DynamicProfilePlot } from './controls/DynamicProfilePlot';
 import { ScrubbedDataDisplay } from './controls/ScrubbedDataDisplay';
 import type { ChartSettings } from './charting/chartTypes';
+import { IntervalPicker } from './charting/IntervalPicker';
+import { TimeWindow } from './charting/TimeWindow';
+import { TimeWindowGroup } from './charting/TimeWindowGroup';
+import { Timeline } from './charting/Timeline';
 import type {
   ResultPlanAssociationsSnapshot,
   ResultPlanContextSnapshot,
@@ -981,6 +985,15 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
           <button type="button" className="results-primary-button" onClick={saveUserCopy} disabled={!dataset || visibleSeries.length === 0 || (source === 'user' && invalidCellDraftCount > 0)} title={source === 'user' && invalidCellDraftCount > 0 ? text('请先修正无效单元格再导出。', 'Fix invalid cells before exporting.') : undefined}><span aria-hidden="true">⇩</span>{text('导出 CSV', 'Export CSV')}</button>
         </div>
       </div>
+
+      {selectedTimeOptions.length > 0 && <>
+        <Timeline times={selectedTimeOptions} series={visibleSeries} selectedIndex={activeIndex} onSelectIndex={setSelectedIndex} range={range} language={language} />
+        <div className="results-time-control-grid">
+          <IntervalPicker times={selectedTimeOptions} selectedIndex={activeIndex} onSelectIndex={setSelectedIndex} language={language} />
+          <TimeWindow times={selectedTimeOptions} range={range} onRangeChange={setRange} language={language} />
+        </div>
+        <TimeWindowGroup times={selectedTimeOptions} dataset={dataset} series={visibleSeries} range={range} onRangeChange={setRange} language={language} />
+      </>}
 
       {dataset && dataset.series.length > 0 && <div className="results-series-toolbar">
         <span>{text('显示序列', 'Visible series')}</span>

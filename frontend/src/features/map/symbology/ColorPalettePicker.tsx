@@ -1,6 +1,6 @@
 import type { Language } from '../../../shared/workbench';
 import type { RasterSymbologyPalette } from './rasterSymbologyWorkflow';
-import { colorInputValue } from './rasterSymbologyWorkflow';
+import { ColorPaletteControl } from './ColorPaletteControl';
 
 interface Props {
   language: Language;
@@ -22,9 +22,7 @@ export function ColorPalettePicker({ language, palettes, selectedId, disabled, o
           {palettes.map(palette => <option key={palette.id} value={palette.id}>{palette.name}</option>)}
         </select>
       </label>
-      {selected && <div className="raster-symbology-picker-preview" aria-label={selected.name}>
-        {selected.colors.map((color, index) => <span key={`${selected.id}-${index}`} style={{ backgroundColor: colorInputValue(color) }} />)}
-      </div>}
+      {selected && <ColorPaletteControl palette={selected} className="raster-symbology-picker-preview" />}
     </div>
   );
 }

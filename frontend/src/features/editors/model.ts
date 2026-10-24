@@ -258,6 +258,71 @@ export interface SpatialGridSelection {
   timeBehavior: 'ProjectBackwards' | 'ProjectForwards';
 }
 
+export interface BoundaryResultCatalogItem {
+  id: string;
+  name: string;
+  path: string;
+}
+
+export interface BoundaryInitialConditionsInspection {
+  assetPath: string;
+  assetRevision: string;
+  projectPath: string;
+  projectRevision: string;
+  projectXmlFingerprint: string;
+  resultPath: string;
+  resultRevision: string | null;
+  timestamp: string;
+  numberCulture: string;
+  canAttach: boolean;
+  errorMessage: string | null;
+}
+
+export interface BoundaryInitialConditionsReceipt {
+  operationID: string;
+  assetPath: string;
+  projectPath: string;
+  resultPath: string;
+  resultRevision: string;
+  projectRevision: string;
+  projectXml: string;
+  connectionName: string;
+  timestamp: string;
+  model: ModelSnapshot;
+  alreadyCommitted: boolean;
+}
+
+export interface BoundaryInitialConditionsStatus {
+  state: string;
+  receipt: BoundaryInitialConditionsReceipt | null;
+  errorMessage: string | null;
+}
+
+export type BoundaryInitialConditionsOperationState =
+  | 'attaching' | 'uncertain' | 'notFound' | 'prepared' | 'rolledBack' | 'conflict' | 'awaitingContext';
+
+export interface BoundaryInitialConditionsOperationView {
+  operationID: string;
+  resultPath: string;
+  resultRevision: string;
+  state: BoundaryInitialConditionsOperationState;
+  message: string;
+  canRetry: boolean;
+}
+
+export interface BoundaryInitialConditionsWorkflow {
+  canStart: boolean;
+  busy: boolean;
+  blockedByOtherOwner: boolean;
+  blockedMessage?: string;
+  operation?: BoundaryInitialConditionsOperationView | null;
+  loadResults: (signal?: AbortSignal) => Promise<BoundaryResultCatalogItem[]>;
+  inspect: (resultPath: string, timestamp: string, signal?: AbortSignal) => Promise<BoundaryInitialConditionsInspection>;
+  attach: (inspection: BoundaryInitialConditionsInspection) => Promise<boolean>;
+  recover: () => Promise<boolean>;
+  retry: () => Promise<boolean>;
+}
+
 export type SpatialTransformOperation = 'addStation' | 'removeStation' | 'addGauge' | 'removeGauge';
 
 export interface ModelDraft {
@@ -321,6 +386,7 @@ export interface EditorPageProps {
   canTransformSeries?: boolean;
   onSeriesTransform?: (pageID: string, operation: SeriesTransformOperation) => Promise<void>;
   onBoundaryTransform?: (lineID: string, operation: BoundaryPayloadTransformOperation, payloadID: string | null, fields: Record<string, string>) => Promise<boolean>;
+  boundaryInitialConditions?: BoundaryInitialConditionsWorkflow;
   canTransformSpatial?: boolean;
   onSpatialTransform?: (layerID: string, operation: SpatialTransformOperation, itemID: string | null) => Promise<boolean>;
   canImportGrid?: boolean;

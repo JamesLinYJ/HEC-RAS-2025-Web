@@ -16,7 +16,7 @@ export function FlowAreaInformation({ language, rows }: FlowAreaInformationProps
 
   return (
     <section className="geometry-panel geometry-detail-panel" aria-label={language === 'zh' ? '流动区域信息' : 'Flow area information'}>
-      <header className="geometry-panel-heading"><div><h3>{language === 'zh' ? '流动区域信息' : 'Flow area information'}</h3><p>{flowArea?.values.Name || (language === 'zh' ? '尚未选择流动区域。' : 'No flow area selected.')}</p></div></header>
+      <header className="geometry-panel-heading"><div><h3>{language === 'zh' ? '流动区域网格信息' : 'Flow area mesh information'}</h3><p>{flowArea ? (language === 'zh' ? '当前所选区域' : 'Current selection') : (language === 'zh' ? '尚未选择流动区域。' : 'No flow area selected.')}</p></div></header>
       {flowArea ? <div className="geometry-panel-body geometry-kv-grid"><div className="geometry-kv"><span>{gt(language, 'cells')}</span><strong>{flowArea.values.CellCount || '—'}</strong></div></div> : <div className="geometry-empty geometry-detail-empty">{emptyText}</div>}
     </section>
   );
