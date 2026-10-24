@@ -6,10 +6,15 @@ using Visual.Mapping.Observables;
 
 namespace Ras.Backend;
 
-/// <summary>One exact vector node from the currently selected saved map.</summary>
+/// <summary>
+/// One exact vector node from the currently selected saved map. For a
+/// persisted GDB node, ExpectedGdbSource is the full manifest on repeat
+/// inspection; null bootstraps the first capture.
+/// </summary>
 public sealed record GeometryTopologyVectorSourceLayerRequest(
     CatalogTreeNodeLocator Node,
-    MapSourceFamilyCapture? ExpectedFamily = null);
+    MapSourceFamilyCapture? ExpectedFamily = null,
+    GdbMapSourceIdentity? ExpectedGdbSource = null);
 
 /// <summary>
 /// Reads persisted vector components that the existing Geometry DeepConnect
@@ -47,9 +52,14 @@ public sealed record GeometryTopologyVectorSourceComponent(
     int SourceFeatureOrdinal,
     int SourcePartOrdinal,
     int? SourcePolygonIndex = null,
-    bool? SourceIsHole = null);
+    bool? SourceIsHole = null,
+    string? SourceID = null);
 
-/// <summary>Capture and explicit availability diagnostic for one map node.</summary>
+/// <summary>
+/// Capture and explicit availability diagnostic for one map node. For GDB,
+/// SourceSHA256 and SourceFamily remain null; GdbSource.Revision is the
+/// complete directory-manifest revision, not a primary-file SHA.
+/// </summary>
 public sealed record GeometryTopologyVectorSourceLayerResult(
     CatalogTreeNodeLocator Node,
     bool Checked,
@@ -63,7 +73,9 @@ public sealed record GeometryTopologyVectorSourceLayerResult(
     string[] UnsupportedGeometryTypes,
     string DiagnosticCode,
     string? Diagnostic,
-    int OversizedComponentCount = 0);
+    int OversizedComponentCount = 0,
+    GdbMapSourceIdentity? GdbSource = null,
+    GdbMapLayerDescriptor? GdbLayer = null);
 
 /// <summary>Read-only DeepConnect source inspection bound to one exact map owner.</summary>
 public sealed record GeometryTopologyVectorSourceInspectResult(
@@ -104,7 +116,8 @@ public static class GeometryTopologyVectorSourceService
             throw new SourceFileChangedException();
 
         var captured = new List<(GeometryTopologyVectorSourceLayerRequest Request,
-            MapSourceNodeCapture? Source, GeometryTopologyVectorSourceLayerResult Result)>(request.Sources.Length);
+            MapSourceNodeCapture? Source, GdbMapSourceIdentity? GdbSource,
+            GeometryTopologyVectorSourceLayerResult Result)>(request.Sources.Length);
         int totalComponents = 0;
         int totalPoints = 0;
 
@@ -114,13 +127,14 @@ public static class GeometryTopologyVectorSourceService
                 ?? throw new SourceFileChangedException();
             if (!visibility.Checked || !visibility.EffectiveVisible)
             {
-                captured.Add((sourceRequest, null, Unavailable(sourceRequest.Node, visibility,
+                captured.Add((sourceRequest, null, null, Unavailable(sourceRequest.Node, visibility,
                     "source-not-visible", "图层未勾选或父级未显示，不能作为 DeepConnect 来源。")));
                 continue;
             }
 
             GeometryTopologyVectorSourceLayerResult result = InspectSource(request.Map, sourceRequest,
-                visibility, out MapSourceNodeCapture? sourceCapture);
+                visibility, out MapSourceNodeCapture? sourceCapture,
+                out GdbMapSourceIdentity? gdbSourceCapture);
 
             GeometryTopologyVectorSourceComponent[] oversizedComponents = result.Components
                 .Where(component => component.Points.Length > MaximumComponentPoints).ToArray();
@@ -160,7 +174,7 @@ public static class GeometryTopologyVectorSourceService
                 totalPoints += (int)pointCount;
             }
 
-            captured.Add((sourceRequest, sourceCapture, result));
+            captured.Add((sourceRequest, sourceCapture, gdbSourceCapture, result));
         }
 
         MapTreeSnapshot afterTree = MapTreeService.Load(request.Map);
@@ -168,7 +182,7 @@ public static class GeometryTopologyVectorSourceService
             throw new SourceFileChangedException();
 
         foreach ((GeometryTopologyVectorSourceLayerRequest sourceRequest, MapSourceNodeCapture? source,
-                     GeometryTopologyVectorSourceLayerResult result) in captured)
+                     GdbMapSourceIdentity? gdbSource, GeometryTopologyVectorSourceLayerResult result) in captured)
         {
             Visibility afterVisibility = FindVisibility(afterTree.Roots ?? [], sourceRequest.Node)
                 ?? throw new SourceFileChangedException();
@@ -179,20 +193,40 @@ public static class GeometryTopologyVectorSourceService
                     throw new SourceFileChangedException();
                 MapSourceIdentity.VerifyPersistedNode(request.Map, source);
             }
-            else if (result.Checked != afterVisibility.Checked ||
-                     result.EffectiveVisible != afterVisibility.EffectiveVisible)
+            else if (gdbSource is not null)
             {
-                throw new SourceFileChangedException();
-            }
+                if (!result.Checked || !result.EffectiveVisible || !afterVisibility.Checked ||
+                    !afterVisibility.EffectiveVisible || result.GdbSource is null ||
+                    !SameGdbSource(gdbSource, result.GdbSource))
+                    throw new SourceFileChangedException();
 
-            if (source is null && result.SourceKind == "gdb" &&
-                result.CanonicalSourcePath is string gdbPath)
-            {
                 MapSourceNodeLocation currentGdb = MapSourceIdentity.ResolvePersistedGdbNode(request.Map,
                     sourceRequest.Node);
                 MapSourceIdentity.VerifyPersistedGdbNode(request.Map, currentGdb);
-                if (!SourceFilePaths.SameSourceFile(gdbPath, currentGdb.SourcePath))
+                if (!SourceFilePaths.SameSourceFile(gdbSource.SourcePath, currentGdb.SourcePath))
                     throw new SourceFileChangedException();
+                GdbMapSourceService.VerifySource(gdbSource);
+                GdbMapLayerDescriptor currentLayer = GdbMapSourceService.VerifyVectorLayer(request.Map,
+                    sourceRequest.Node, gdbSource.Revision);
+                if (result.GdbLayer is not null && !SameGdbLayer(result.GdbLayer, currentLayer))
+                    throw new SourceFileChangedException();
+            }
+            else
+            {
+                if (result.Checked != afterVisibility.Checked ||
+                    result.EffectiveVisible != afterVisibility.EffectiveVisible)
+                    throw new SourceFileChangedException();
+
+                // Even an unavailable GDB read is still bound to the exact
+                // persisted node path and visibility captured before reading.
+                if (result.SourceKind == "gdb" && result.CanonicalSourcePath is string gdbPath)
+                {
+                    MapSourceNodeLocation currentGdb = MapSourceIdentity.ResolvePersistedGdbNode(request.Map,
+                        sourceRequest.Node);
+                    MapSourceIdentity.VerifyPersistedGdbNode(request.Map, currentGdb);
+                    if (!SourceFilePaths.SameSourceFile(gdbPath, currentGdb.SourcePath))
+                        throw new SourceFileChangedException();
+                }
             }
         }
 
@@ -202,19 +236,16 @@ public static class GeometryTopologyVectorSourceService
 
     private static GeometryTopologyVectorSourceLayerResult InspectSource(MapTreeRequest map,
         GeometryTopologyVectorSourceLayerRequest request, Visibility visibility,
-        out MapSourceNodeCapture? sourceCapture)
+        out MapSourceNodeCapture? sourceCapture, out GdbMapSourceIdentity? gdbSourceCapture)
     {
         sourceCapture = null;
+        gdbSourceCapture = null;
         CatalogTreeNodeLocator node = request.Node;
 
         if (string.Equals(node.NodeType, "GdbVectorLayer", StringComparison.Ordinal) ||
             string.Equals(node.MapType, "GdbVectorLayer", StringComparison.Ordinal))
         {
-            MapSourceNodeLocation location = MapSourceIdentity.ResolvePersistedGdbNode(map, node);
-            MapSourceIdentity.VerifyPersistedGdbNode(map, location);
-            return Unavailable(node, visibility, "gdb-deepconnect-unsupported",
-                "此版本尚未为 GDB 图层定义与地图渲染一致的 DeepConnect 组件编号；GDB 来源不会生成可提交的组件。",
-                "gdb", location.SourcePath);
+            return InspectGdbSource(map, request, visibility, out gdbSourceCapture);
         }
 
         if (!string.Equals(node.NodeType, "MapLayer", StringComparison.Ordinal))
@@ -296,6 +327,96 @@ public static class GeometryTopologyVectorSourceService
             return Unavailable(node, visibility, "source-read-failed", exception.Message,
                 sourceKind, sourceCapture?.Family.SourcePath ?? canonicalPath,
                 sourceCapture?.Family, sourceCapture is null ? null : PrimarySourceSHA256(sourceCapture.Family));
+        }
+    }
+
+    private static GeometryTopologyVectorSourceLayerResult InspectGdbSource(MapTreeRequest map,
+        GeometryTopologyVectorSourceLayerRequest request, Visibility visibility,
+        out GdbMapSourceIdentity? sourceCapture)
+    {
+        sourceCapture = null;
+        CatalogTreeNodeLocator node = request.Node;
+        MapSourceNodeLocation location = MapSourceIdentity.ResolvePersistedGdbNode(map, node);
+        MapSourceIdentity.VerifyPersistedGdbNode(map, location);
+
+        try
+        {
+            GdbMapSourceIdentity capturedSource = request.ExpectedGdbSource ??
+                GdbMapSourceService.CaptureSource(location.SourcePath);
+            if (!SourceFilePaths.SameSourceFile(capturedSource.SourcePath, location.SourcePath))
+                throw new SourceFileChangedException();
+            if (request.ExpectedGdbSource is not null)
+                GdbMapSourceService.VerifySource(request.ExpectedGdbSource);
+            sourceCapture = capturedSource;
+
+            GdbMapSourceLoadResponse loaded = GdbMapSourceService.Load(new GdbMapSourceLoadRequest(
+                map, node, capturedSource.Revision));
+            if (!SameGdbSource(capturedSource, loaded.Source) ||
+                !SourceFilePaths.SameSourceFile(loaded.Source.SourcePath, location.SourcePath))
+                throw new SourceFileChangedException();
+
+            MapSourceIdentity.VerifyPersistedGdbNode(map, location);
+            if (!string.Equals(location.GdbLayerName, loaded.Layer.Name, StringComparison.Ordinal) ||
+                !string.Equals(location.GdbVectorType, loaded.Layer.VectorType, StringComparison.Ordinal))
+                throw new SourceFileChangedException();
+
+            if (loaded.Layer.VectorType is not ("Line" or "LineCollection"))
+            {
+                string geometryType = string.IsNullOrWhiteSpace(loaded.Layer.GeometryType)
+                    ? loaded.Layer.VectorType : loaded.Layer.GeometryType;
+                return Unavailable(node, visibility, "gdb-geometry-unsupported",
+                    $"GDB 图层“{loaded.Layer.Name}”的几何类型为 {geometryType}；DeepConnect 目前只支持线及线集合。",
+                    "gdb", loaded.Source.SourcePath, gdbSource: loaded.Source, gdbLayer: loaded.Layer,
+                    unsupportedGeometryTypes: [geometryType]);
+            }
+
+            GdbMapSourceLineComponent[] lineComponents =
+                GdbMapSourceService.EnumerateRendererLineComponents(loaded.Data);
+            var components = new GeometryTopologyVectorSourceComponent[lineComponents.Length];
+            for (int index = 0; index < lineComponents.Length; index++)
+            {
+                GdbMapSourceLineComponent component = lineComponents[index];
+                if (component.RendererOrdinal != index || component.Points.Length < 2 ||
+                    component.SourceFeatureOrdinal < 0 || component.SourcePartOrdinal < 0 ||
+                    component.Points.Any(point => !double.IsFinite(point.X) || !double.IsFinite(point.Y)))
+                    throw new InvalidDataException("GDB 线读取器返回了无效的 renderer component identity 或 project 坐标。");
+
+                components[index] = new GeometryTopologyVectorSourceComponent(
+                    component.RendererOrdinal, 0,
+                    $"feature:{component.RendererOrdinal}:part:0",
+                    component.Points,
+                    component.SourceFeatureOrdinal,
+                    component.SourcePartOrdinal,
+                    SourceID: component.SourceID);
+            }
+
+            string diagnosticCode = components.Length == 0 ? "gdb-no-line-components" : "ready";
+            string? diagnostic = components.Length == 0
+                ? $"GDB 图层“{loaded.Layer.Name}”没有可映射到地图渲染器的有效线组件。"
+                : null;
+            return new GeometryTopologyVectorSourceLayerResult(node, visibility.Checked,
+                visibility.EffectiveVisible, components.Length > 0, "gdb", loaded.Source.SourcePath,
+                null, null, components, [], diagnosticCode, diagnostic,
+                GdbSource: loaded.Source, GdbLayer: loaded.Layer);
+        }
+        catch (SourceFileChangedException)
+        {
+            throw;
+        }
+        catch (NotSupportedException exception)
+        {
+            return Unavailable(node, visibility, "unsupported-source-content", exception.Message,
+                "gdb", sourceCapture?.SourcePath ?? location.SourcePath, gdbSource: sourceCapture);
+        }
+        catch (InvalidDataException exception)
+        {
+            return Unavailable(node, visibility, "invalid-source-content", exception.Message,
+                "gdb", sourceCapture?.SourcePath ?? location.SourcePath, gdbSource: sourceCapture);
+        }
+        catch (IOException exception)
+        {
+            return Unavailable(node, visibility, "source-read-failed", exception.Message,
+                "gdb", sourceCapture?.SourcePath ?? location.SourcePath, gdbSource: sourceCapture);
         }
     }
 
@@ -446,8 +567,36 @@ public static class GeometryTopologyVectorSourceService
     private static GeometryTopologyVectorSourceLayerResult Unavailable(CatalogTreeNodeLocator node,
         Visibility visibility, string code, string diagnostic, string? sourceKind = null,
         string? canonicalSourcePath = null, MapSourceFamilyCapture? sourceFamily = null,
-        string? sourceSHA256 = null) => new(node, visibility.Checked, visibility.EffectiveVisible,
-        false, sourceKind, canonicalSourcePath, sourceFamily, sourceSHA256, [], [], code, diagnostic);
+        string? sourceSHA256 = null, string[]? unsupportedGeometryTypes = null,
+        GdbMapSourceIdentity? gdbSource = null, GdbMapLayerDescriptor? gdbLayer = null) => new(
+        node, visibility.Checked, visibility.EffectiveVisible, false, sourceKind, canonicalSourcePath,
+        sourceFamily, sourceSHA256, [], unsupportedGeometryTypes ?? [], code, diagnostic,
+        GdbSource: gdbSource, GdbLayer: gdbLayer);
+
+    private static bool SameGdbSource(GdbMapSourceIdentity left, GdbMapSourceIdentity right)
+    {
+        if (!SourceFilePaths.SameSourceFile(left.SourcePath, right.SourcePath) ||
+            !SameRevision(left.Revision, right.Revision) || left.Files is null || right.Files is null ||
+            left.Files.Length != right.Files.Length)
+            return false;
+        for (int index = 0; index < left.Files.Length; index++)
+        {
+            GdbMapSourceFileRevision first = left.Files[index];
+            GdbMapSourceFileRevision second = right.Files[index];
+            if (!string.Equals(first.RelativePath, second.RelativePath, StringComparison.Ordinal) ||
+                first.Length != second.Length || !SameRevision(first.Revision, second.Revision))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool SameGdbLayer(GdbMapLayerDescriptor left, GdbMapLayerDescriptor right) =>
+        string.Equals(left.Name, right.Name, StringComparison.Ordinal) &&
+        string.Equals(left.GeometryType, right.GeometryType, StringComparison.Ordinal) &&
+        left.GeometryTypeCode == right.GeometryTypeCode &&
+        string.Equals(left.VectorType, right.VectorType, StringComparison.Ordinal) &&
+        left.FeatureCount == right.FeatureCount &&
+        string.Equals(left.ProjectionWKT, right.ProjectionWKT, StringComparison.Ordinal);
 
     private static string? PrimarySourceSHA256(MapSourceFamilyCapture family)
     {
@@ -641,6 +790,15 @@ public static class GeometryTopologyVectorSourceService
         for (int right = left + 1; right < request.Sources.Length; right++)
             if (SameLocator(request.Sources[left].Node, request.Sources[right].Node))
                 throw new ArgumentException("A map node may appear only once in a vector source inspection.", nameof(request.Sources));
+        foreach (GeometryTopologyVectorSourceLayerRequest source in request.Sources)
+        {
+            bool gdb = string.Equals(source.Node.NodeType, "GdbVectorLayer", StringComparison.Ordinal) ||
+                string.Equals(source.Node.MapType, "GdbVectorLayer", StringComparison.Ordinal);
+            if (gdb && source.ExpectedFamily is not null)
+                throw new ArgumentException("GDB vector inspection uses the complete directory manifest, not a file-family capture.");
+            if (!gdb && source.ExpectedGdbSource is not null)
+                throw new ArgumentException("A GDB directory manifest can only be used for a persisted GDB vector node.");
+        }
         _ = ResolveProjectSessionID(request.Map);
     }
 

@@ -24,6 +24,14 @@ public sealed record GdbMapRendererCapture(
     IRenderLayer Renderer,
     int[]? SourceFeatureIndices);
 
+/// <summary>
+/// One line in the exact flattened order used by the retained GDB line
+/// renderer. RendererOrdinal is the renderer feature FID; source ordinals are
+/// provenance only and must not be used to index the rendered line collection.
+/// </summary>
+public sealed record GdbMapSourceLineComponent(int RendererOrdinal, int SourceFeatureOrdinal,
+    string? SourceID, int SourcePartOrdinal, GeometryTopologyCoordinate[] Points);
+
 /// <summary>Reads and renders exact, source-backed vector layers from an OpenFileGDB dataset.</summary>
 public static class GdbMapSourceService
 {
@@ -166,6 +174,41 @@ public static class GdbMapSourceService
         if (!SameMapCapture(location.Map, currentMap)) throw new SourceFileChangedException();
         return new(location.Map, location.Locator, source, layer, source.SourcePath, source.Revision,
             layer.Name, layer.VectorType, renderer, sourceFeatureIndices);
+    }
+
+    /// <summary>
+    /// Enumerates only drawable retained line leaves, preserving the same
+    /// feature order, depth-first geometry order, and short-line filtering as
+    /// the map renderer. DeepConnect and rendering must share this method so a
+    /// renderer FID can never drift from the source component it identifies.
+    /// This intentionally enumerates OGR Line leaves only: retained
+    /// ComplexPolygonRenderLayer is not an ILineSegmentSource, so polygon rings
+    /// are not promoted to DeepConnect components by guessed traversal rules
+    /// (see Visual.Mapping.Observables/DeepConnectSupport.cs and
+    /// Geospatial.Rendering.Layers/ComplexPolygonRenderLayer.cs in the retained source).
+    /// </summary>
+    public static GdbMapSourceLineComponent[] EnumerateRendererLineComponents(GdbMapSourceData data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        var components = new List<GdbMapSourceLineComponent>();
+        foreach (GdbMapSourceFeature feature in data.Features)
+        {
+            int sourcePartOrdinal = 0;
+            foreach (GdbMapSourceGeometry geometry in FlattenGeometries(feature.Geometry))
+            {
+                if (VectorTypeHelpers.Parse((OSGeo.OGR.wkbGeometryType)geometry.GeometryTypeCode)
+                    is not Geospatial.GDALAssist.VectorType.Line)
+                    continue;
+
+                int currentPartOrdinal = sourcePartOrdinal++;
+                if (geometry.Vertices.Length < 2) continue;
+                GeometryTopologyCoordinate[] points = geometry.Vertices.Select(vertex =>
+                    new GeometryTopologyCoordinate(vertex.X, vertex.Y)).ToArray();
+                components.Add(new(components.Count, feature.SourceOrdinal, feature.SourceID,
+                    currentPartOrdinal, points));
+            }
+        }
+        return components.ToArray();
     }
 
     public static void VerifyRendererCapture(MapTreeRequest map, CatalogTreeNodeLocator node,
@@ -679,17 +722,14 @@ public static class GdbMapSourceService
             case Geospatial.GDALAssist.VectorType.LineCollection:
             {
                 var lines = new PolylineCollection();
-                foreach (GdbMapSourceFeature feature in data.Features)
-                    foreach (GdbMapSourceGeometry line in FlattenGeometries(feature.Geometry)
-                                 .Where(geometry => VectorTypeHelpers.Parse((OSGeo.OGR.wkbGeometryType)geometry.GeometryTypeCode)
-                                     is Geospatial.GDALAssist.VectorType.Line))
-                    {
-                        if (line.Vertices.Length < 2) continue;
-                        var polyline = new Polyline(line.Vertices.Length);
-                        foreach (GdbMapSourceVertex vertex in line.Vertices) polyline.Add(vertex.X, vertex.Y);
-                        lines.Add(polyline);
-                        indices.Add(feature.SourceOrdinal);
-                    }
+                foreach (GdbMapSourceLineComponent component in EnumerateRendererLineComponents(data))
+                {
+                    var polyline = new Polyline(component.Points.Length);
+                    foreach (GeometryTopologyCoordinate point in component.Points)
+                        polyline.Add(point.X, point.Y);
+                    lines.Add(polyline);
+                    indices.Add(component.SourceFeatureOrdinal);
+                }
                 if (lines.Count == 0) throw new InvalidDataException("The GDB line layer contains no drawable paths.");
                 sourceFeatureIndices = indices.ToArray();
                 return new PolylineRenderLayer(lines);

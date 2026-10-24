@@ -10,6 +10,28 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-geometry-gdb-deep-connect-http", string gdbTraceBase, string gdbTraceManifest, string gdbTraceOutput])
+            {
+                TextWriter protocol = Console.Out;
+                GeometryGdbDeepConnectAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunGeometryGdbDeepConnectAsync(
+                    new Uri(EnsureTrailingSlash(gdbTraceBase)), gdbTraceManifest, gdbTraceOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--run-geometry-mesh-generation-http", string meshGenerationBase, string meshGenerationOutput])
+            {
+                TextWriter protocol = Console.Out;
+                GeometryMeshGenerationAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunGeometryMeshGenerationAsync(
+                    new Uri(EnsureTrailingSlash(meshGenerationBase)), meshGenerationOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-geometry-polyline-trace-http", string traceBaseUrl, string traceManifest, string traceOutput])
             {
                 TextWriter protocol = Console.Out;
@@ -339,6 +361,8 @@ internal static class Program
             }
 
             Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-gdb-deep-connect-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-mesh-generation-http <loopback-base-url> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-polyline-trace-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-smart-connect-http <loopback-base-url> <arc-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-culvert-result-http <loopback-base-url> <new-output-directory>");

@@ -109,9 +109,10 @@ public sealed record GeometryTopologySmartAddSource(GeometryTopologySmartAddTerr
 /// The accepted source line captured by the map owner for a DeepConnect edit.
 /// Its locator/revision/FID identify provenance; points plus arc-relative
 /// segment/fraction anchors make journal replay deterministic. FeatureFID is
-/// the retained renderer's line-reader ordinal for GeoJSON polylines and all
-/// polygon rings; only persisted Shapefile polylines keep record-ordinal plus
-/// source-part PathIndex semantics.
+/// the retained renderer's line-reader ordinal for GeoJSON polylines, GDB line
+/// leaves, and the supported polygon-ring reader; GDB uses a shared line-leaf
+/// enumeration with PathIndex zero. Only persisted Shapefile polylines keep
+/// record-ordinal plus source-part PathIndex semantics.
 /// </summary>
 public sealed record GeometryTopologyDeepConnectSource(string SourceKind, string SourceLocator,
     string SourceRevision, int FeatureFID, int PathIndex, string ComponentIdentity,
@@ -145,9 +146,12 @@ public sealed record GeometryTopologyMapCommandPreviewResponse(string RequestID,
 /// Persisted map owner and source layer identity for a vector snap target. The
 /// Host resolves the layer again and reads its exact source path; the captured
 /// feature coordinates are only a consistency check, never the edit source.
+/// ExpectedGdbSource is the full directory manifest for file-geodatabase
+/// layers; it is mutually exclusive with the single/family file capture.
 /// </summary>
 public sealed record GeometryTopologyDeepConnectVectorSource(MapTreeRequest Map,
-    CatalogTreeNodeLocator Node, MapSourceFamilyCapture? ExpectedFamily);
+    CatalogTreeNodeLocator Node, MapSourceFamilyCapture? ExpectedFamily,
+    GdbMapSourceIdentity? ExpectedGdbSource = null);
 
 /// <summary>
 /// Exact Geometry draft owner for a Conceptual Mesh arc snap target. This is a

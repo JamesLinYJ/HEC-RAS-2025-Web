@@ -483,8 +483,11 @@ public static partial class ModelEditorAdapter
         {
             GeometryTopologyDeepConnectVectorSource owner = source.VectorSource
                 ?? throw new ArgumentException("The vector DeepConnect source is missing its persisted map owner.");
+            string persistedSourcePath = IsPersistedGdbVectorNode(owner.Node)
+                ? MapSourceIdentity.ResolvePersistedGdbNode(owner.Map, owner.Node).SourcePath
+                : MapSourceIdentity.ResolvePersistedNode(owner.Map, owner.Node).SourcePath;
             if (source.TopologySource is not null || source.SourceLocator != SourceFilePaths.Canonical(
-                    MapSourceIdentity.ResolvePersistedNode(owner.Map, owner.Node).SourcePath)
+                    persistedSourcePath)
                 || source.ComponentIdentity != $"feature:{source.FeatureFID}:part:{source.PathIndex}")
                 throw new SourceFileChangedException();
             line = ReadPersistedDeepConnectVector(model, mapRequestContext, source, owner);
@@ -609,14 +612,19 @@ public static partial class ModelEditorAdapter
     {
         MapTreeRequest map = owner.Map;
         CatalogTreeNodeLocator node = owner.Node;
-        if (node.MapType is not ("PolylinesVector" or "PolygonsVector")
+        bool isGdb = IsPersistedGdbVectorNode(node);
+        if ((!isGdb && node.MapType is not ("PolylinesVector" or "PolygonsVector"))
             || map.MapID != mapRequestContext.MapID
             || !SameOptionalCanonicalPath(map.ProjectPath, model.ProjectPath)
             || !SameOptionalMapCoreLayerContext(map, model))
             throw new SourceFileChangedException();
 
+        if (isGdb)
+            return ReadPersistedDeepConnectGdbVector(model, mapRequestContext, source, owner);
+
         MapSourceNodeLocation location = MapSourceIdentity.ResolvePersistedNode(map, node);
         string path = Path.GetFullPath(location.SourcePath);
+        if (owner.ExpectedGdbSource is not null) throw new SourceFileChangedException();
         MapSourceFamilyCapture family;
         if (Path.GetExtension(path).Equals(".shp", StringComparison.OrdinalIgnoreCase))
         {
@@ -707,6 +715,58 @@ public static partial class ModelEditorAdapter
         VerifyVisibleMapVectorSource(map, node);
         return line;
     }
+
+    private static Polyline ReadPersistedDeepConnectGdbVector(GeometryTopologyModelRequest model,
+        GeometryTopologyMapRequestContext mapRequestContext, GeometryTopologyDeepConnectSource source,
+        GeometryTopologyDeepConnectVectorSource owner)
+    {
+        MapTreeRequest map = owner.Map;
+        CatalogTreeNodeLocator node = owner.Node;
+        if (node.NodeType != "GdbVectorLayer" || node.MapType != "GdbVectorLayer"
+            || owner.ExpectedFamily is not null
+            || owner.ExpectedGdbSource is not { } expectedSource
+            || map.MapID != mapRequestContext.MapID
+            || source.PathIndex != 0
+            || source.ComponentIdentity != $"feature:{source.FeatureFID}:part:0"
+            || !string.Equals(source.SourceRevision, expectedSource.Revision, StringComparison.OrdinalIgnoreCase))
+            throw new SourceFileChangedException();
+
+        MapSourceNodeLocation location = MapSourceIdentity.ResolvePersistedGdbNode(map, node);
+        string canonicalSourcePath = SourceFilePaths.Canonical(location.SourcePath);
+        if (!SourceFilePaths.SameSourceFile(expectedSource.SourcePath, canonicalSourcePath)
+            || source.SourceLocator != canonicalSourcePath)
+            throw new SourceFileChangedException();
+
+        // The expected capture is a full non-lock-file directory manifest, not
+        // a synthetic single-file family. Verify it before reading, bind the
+        // load to its exact manifest revision, then verify again after the
+        // projected line geometry has been selected.
+        GdbMapSourceService.VerifySource(expectedSource);
+        GdbMapSourceLoadResponse loaded = GdbMapSourceService.Load(
+            new GdbMapSourceLoadRequest(map, node, expectedSource.Revision));
+        if (!SourceFilePaths.SameSourceFile(loaded.Source.SourcePath, canonicalSourcePath)
+            || !string.Equals(loaded.Source.Revision, expectedSource.Revision, StringComparison.OrdinalIgnoreCase)
+            || (!string.Equals(loaded.Layer.VectorType, "Line", StringComparison.Ordinal)
+                && !string.Equals(loaded.Layer.VectorType, "LineCollection", StringComparison.Ordinal)))
+            throw new SourceFileChangedException();
+
+        GdbMapSourceLineComponent component = GdbMapSourceService
+            .EnumerateRendererLineComponents(loaded.Data)
+            .SingleOrDefault(item => item.RendererOrdinal == source.FeatureFID)
+            ?? throw new SourceFileChangedException();
+        if (component.Points.Length < 2 || !CoordinateSequenceEqual(component.Points, source.Points))
+            throw new SourceFileChangedException();
+
+        GdbMapSourceService.VerifyVectorLayer(map, node, expectedSource.Revision);
+        GdbMapSourceService.VerifySource(expectedSource);
+        MapSourceIdentity.VerifyPersistedGdbNode(map, location);
+        VerifyVisibleMapVectorSource(map, node);
+        return new Polyline(component.Points.Select(PointFor));
+    }
+
+    private static bool IsPersistedGdbVectorNode(CatalogTreeNodeLocator node) =>
+        string.Equals(node.NodeType, "GdbVectorLayer", StringComparison.Ordinal)
+        && string.Equals(node.MapType, "GdbVectorLayer", StringComparison.Ordinal);
 
     private static bool SameOptionalMapCoreLayerContext(MapTreeRequest map,
         GeometryTopologyModelRequest model)
