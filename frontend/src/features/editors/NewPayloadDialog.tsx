@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { EditorPageProps } from './model';
 import { NewPayloadPage } from './NewPayloadPage';
 import { PayloadExternalConnectionFlow } from './PayloadExternalConnectionFlow';
@@ -43,7 +44,7 @@ export function NewPayloadDialog({ line, open, onOpenChange, boundaryExternalCon
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
     return () => { if (dialog?.open) dialog.close(); };
-  }, [open]);
+  }, [open, props.payloadDialogHost]);
 
   useEffect(() => {
     if (!open) return;
@@ -145,9 +146,12 @@ export function NewPayloadDialog({ line, open, onOpenChange, boundaryExternalCon
     }
   };
 
-  if (!open || !line.newPayload) return null;
+  if (!open || !line.newPayload || !props.payloadDialogHost) return null;
   const disabled = !props.snapshot.canEdit || !props.onBoundaryTransform || submitting || creatingExternalConnection;
-  return <dialog ref={dialogRef} className="editor-payload-dialog" aria-label={props.language === 'zh' ? '新建边界载荷' : 'New boundary payload'} style={{ width: 'min(900px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', border: 0, borderRadius: 12, padding: 12 }} onCancel={(event) => { event.preventDefault(); close(); }}>
+  // The wizard owns a form; mount outside the model form while retaining the
+  // editor feature's visibility/theme. React portal events still bubble, so
+  // prevent wizard submits from invoking the parent model's save handler.
+  return createPortal(<dialog ref={dialogRef} className="editor-payload-dialog" aria-label={props.language === 'zh' ? '新建边界载荷' : 'New boundary payload'} style={{ width: 'min(900px, calc(100vw - 32px))', maxHeight: '90vh', overflowY: 'auto', border: 0, borderRadius: 12, padding: 12 }} onSubmit={(event) => event.stopPropagation()} onCancel={(event) => { event.preventDefault(); close(); }}>
     {showExternalConnectionFlow
       ? <PayloadExternalConnectionFlow line={line} language={props.language} workflow={boundaryExternalConnection}
           onCreated={acceptCreatedConnection} onCancel={() => setShowExternalConnectionFlow(false)} onCreatingChange={setExternalConnectionCreating} />
@@ -156,5 +160,5 @@ export function NewPayloadDialog({ line, open, onOpenChange, boundaryExternalCon
           externalConnectionCreating={creatingExternalConnection}
           onCreateExternalConnection={() => setShowExternalConnectionFlow(true)}
           onCancel={close} onSubmit={() => { void submit(); }} />}
-  </dialog>;
+  </dialog>, props.payloadDialogHost);
 }

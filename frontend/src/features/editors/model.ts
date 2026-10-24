@@ -440,6 +440,7 @@ export interface EditorPageProps {
   onBoundaryTransform?: (lineID: string, operation: BoundaryPayloadTransformOperation, payloadID: string | null, fields: Record<string, string>) => Promise<boolean>;
   boundaryExternalConnection?: BoundaryExternalConnectionWorkflow;
   onPayloadFormDirtyChange?: (lineID: string, dirty: boolean) => void;
+  payloadDialogHost?: HTMLElement | null;
   boundaryInitialConditions?: BoundaryInitialConditionsWorkflow;
   canTransformSpatial?: boolean;
   onSpatialTransform?: (layerID: string, operation: SpatialTransformOperation, itemID: string | null) => Promise<boolean>;

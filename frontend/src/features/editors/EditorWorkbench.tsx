@@ -86,6 +86,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const [payloadConnectionCreating, setPayloadConnectionCreating] = useState(false);
   const [payloadConnectionState, setPayloadConnectionState] = useState<'idle' | 'refresh' | 'uncertain'>('idle');
   const [payloadForms, setPayloadForms] = useState<ReadonlySet<string>>(() => new Set());
+  const [payloadDialogHost, setPayloadDialogHost] = useState<HTMLDivElement | null>(null);
   const onPayloadFormDirtyChange = useCallback((lineID: string, formDirty: boolean): void => {
     setPayloadForms(current => {
       if (current.has(lineID) === formDirty) return current;
@@ -2620,9 +2621,10 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     ...(boundaryInitialConditionsWorkflow ? { boundaryInitialConditions: boundaryInitialConditionsWorkflow } : {}),
     canTransformSeries: snapshot.canEdit && !!source.context.projectPath && validations.length === 0,
     ...(backend.supports('model.seriesTransform') && backend.supports('model.save') ? { onSeriesTransform } : {}),
-    ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.boundaryTransform') && backend.supports('model.save') ? { onBoundaryTransform } : {}),
+    ...(snapshot.canEdit && !!source.context.projectPath && payloadConnectionState === 'idle' && backend.supports('model.boundaryTransform') && backend.supports('model.save') ? { onBoundaryTransform } : {}),
     ...(boundaryExternalConnection ? { boundaryExternalConnection } : {}),
     onPayloadFormDirtyChange,
+    payloadDialogHost,
     canTransformSpatial: snapshot.canEdit && !!source.context.projectPath && validations.length === 0 && !busy
       && backend.supports('model.spatialTransform') && backend.supports('model.save'),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.spatialTransform') && backend.supports('model.save') ? { onSpatialTransform } : {}),
@@ -2651,6 +2653,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
 
   return (
     <main className="editor-workbench">
+      <div ref={setPayloadDialogHost} style={{ display: 'contents' }} />
       <header className="editor-workbench-header">
         <div className="editor-workbench-title">
           <p className="editor-eyebrow">{text(language, 'HEC-RAS 2025 · 模型编辑器', 'HEC-RAS 2025 · Model editors')}</p>
