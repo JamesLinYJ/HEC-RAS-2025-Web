@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FeatureId, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
-import { message, text } from '../../shared/workbench';
+import { errorDiagnostics, message, text } from '../../shared/workbench';
 import type { WorkspaceUploadResult } from '../../shared/workbench';
 import type { CatalogTreeNode, CatalogTreeRequest, CatalogTreeSnapshot } from './CatalogTreeSnapshot';
 import { catalogAssetKind } from './CatalogTreeSnapshot';
@@ -130,6 +130,20 @@ function sameServerPath(left: string, right: string): boolean {
     : normalizedLeft === normalizedRight;
 }
 
+function rawDiagnosticText(error: unknown): string {
+  const details = errorDiagnostics(error);
+  if (details instanceof Error) return `${details.name}: ${details.message}${details.stack ? `\n${details.stack}` : ''}`;
+  try { return JSON.stringify(details, null, 2) ?? String(details); }
+  catch { return String(details); }
+}
+
+function userErrorText(error: unknown, language: FeaturePageProps['language'], fallback: string): string {
+  if (error && typeof error === 'object' && typeof (error as { localizedMessage?: unknown }).localizedMessage === 'function') {
+    return message(error, language);
+  }
+  return fallback;
+}
+
 function featureForNode(node: CatalogTreeNode): FeatureId {
   const kind = catalogAssetKind(node);
   if (kind === 'Geometry') return 'geometry';
@@ -143,7 +157,9 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const [recentProjects, setRecentProjects] = useState<RecentProjectRecord[]>(readRecentProjects);
   const [currentFile, setCurrentFile] = useState<SelectedProjectFile | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
+  const [libraryImportBusy, setLibraryImportBusyState] = useState(false);
   const [fileError, setFileError] = useState<string>();
+  const [fileErrorDetails, setFileErrorDetails] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [openProjectDialog, setOpenProjectDialog] = useState(false);
@@ -174,6 +190,10 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const handledProjectCommand = useRef<string | undefined>(undefined);
   const contextRef = useRef(context);
   contextRef.current = context;
+  const draftProtectionRef = useRef({ newProjectDirty: false, hasUnsavedDrafts: false });
+  draftProtectionRef.current = { newProjectDirty, hasUnsavedDrafts: Boolean(props.hasUnsavedDrafts) };
+  const libraryImportBusyRef = useRef(false);
+  libraryImportBusyRef.current = libraryImportBusy;
 
   const hasCurrentProject = Boolean(context.projectPath);
   const hasProjectRevision = /^[0-9a-f]{64}$/i.test(context.projectRevision ?? '');
@@ -221,14 +241,16 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     });
   }, [publishSelectedAsset]);
 
-  const commitOpenServerProject = useCallback(async (requestedPath: string): Promise<void> => {
+  const commitOpenServerProject = useCallback(async (requestedPath: string): Promise<boolean> => {
     if (!backend.supports('project.open')) {
       setFileError(text(language, '当前后端未提供 project.open。', 'The connected backend does not provide project.open.'));
-      return;
+      setFileErrorDetails(undefined);
+      return false;
     }
     if (!isAbsoluteServerPath(requestedPath.trim())) {
       setFileError(text(language, '请输入运行 C# 服务的机器上的绝对工程路径。', 'Enter an absolute project path on the machine running the C# service.'));
-      return;
+      setFileErrorDetails(undefined);
+      return false;
     }
     const generation = ++projectOpenGeneration.current;
     const sourceContext = contextRef.current;
@@ -237,11 +259,12 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     projectOpenAbort.current = controller;
     setFileBusy(true);
     setFileError(undefined);
+    setFileErrorDetails(undefined);
     setNotice(undefined);
     try {
       const response = await backend.request<ProjectOpenResponse>('project.open', { projectPath: requestedPath.trim() }, { signal: controller.signal });
-      if (generation !== projectOpenGeneration.current || controller.signal.aborted) return;
-      if (!sameProjectSource(contextRef.current, sourceContext)) return;
+      if (generation !== projectOpenGeneration.current || controller.signal.aborted) return false;
+      if (!sameProjectSource(contextRef.current, sourceContext)) return false;
       if (response?.success !== true) throw new Error(response?.error || text(language, 'C# 后端未确认打开工程。', 'The C# backend did not confirm opening the project.'));
       const revision = response.revision;
       if (typeof response.projectPath !== 'string' || response.projectPath.length === 0 ||
@@ -288,27 +311,52 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
       });
       setOpenProjectDialog(false);
       setNotice(text(language, 'C# 后端工程模型已从服务器路径打开，并返回实际 XML 与修订。', 'C# Project opened the server path and returned the actual XML and revision.'));
+      return true;
     } catch (error) {
-      if (generation === projectOpenGeneration.current && !controller.signal.aborted) setFileError(message(error));
+      if (generation === projectOpenGeneration.current && !controller.signal.aborted) {
+        setFileError(userErrorText(error, language, text(language, 'C# 后端打开工程失败。展开查看原始诊断。', 'C# Project could not open the project. Expand the raw diagnostics for details.')));
+        setFileErrorDetails(rawDiagnosticText(error));
+      }
+      return false;
     } finally {
       if (generation === projectOpenGeneration.current && !controller.signal.aborted) setFileBusy(false);
     }
   }, [backend, language, onContextChange]);
 
-  const requestProjectPathOpen = useCallback(async (projectPath: string): Promise<void> => {
+  const requestProjectPathOpen = useCallback(async (projectPath: string): Promise<boolean> => {
     setFileError(undefined);
+    setFileErrorDetails(undefined);
     if (newProjectDirty) {
       setPendingOpen({ projectPath });
       setOpenProjectDialog(false);
-      return;
+      return false;
     }
     setNewProjectOpen(false);
-    await commitOpenServerProject(projectPath);
+    return commitOpenServerProject(projectPath);
   }, [commitOpenServerProject, newProjectDirty]);
+
+  const updateLibraryImportBusy = useCallback((busy: boolean): void => {
+    libraryImportBusyRef.current = busy;
+    setLibraryImportBusyState(busy);
+  }, []);
+
+  const openLibraryProject = useCallback(async (projectPath: string, sourceContext: WorkbenchContext): Promise<boolean> => {
+    if (!sameProjectSource(contextRef.current, sourceContext)) {
+      setNotice(text(language, '工程会话在示例准备期间发生变化；为避免打开过期目标，请重新选择。', 'The project session changed while the example was being prepared. Select the example again to avoid opening a stale target.'));
+      return false;
+    }
+    const drafts = draftProtectionRef.current;
+    if (drafts.newProjectDirty || drafts.hasUnsavedDrafts) {
+      setNotice(text(language, '存在未保存的工程或模型草稿。请先处理草稿，再导入示例工程。', 'There are unsaved project or model drafts. Resolve them before importing an example project.'));
+      return false;
+    }
+    return requestProjectPathOpen(projectPath);
+  }, [language, requestProjectPathOpen]);
 
   const uploadWorkspace = useCallback(async (files: File[], directoryUpload: boolean): Promise<void> => {
     if (!backend.uploadWorkspace) {
       setFileError(text(language, '当前后端连接没有工作区上传能力。', 'The connected backend does not provide workspace upload.'));
+      setFileErrorDetails(undefined);
       return;
     }
     const sourceContext = contextRef.current;
@@ -318,6 +366,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     workspaceUploadAbort.current = controller;
     setFileBusy(true);
     setFileError(undefined);
+    setFileErrorDetails(undefined);
     setNotice(undefined);
     try {
       const result = await backend.uploadWorkspace(files, { signal: controller.signal });
@@ -337,20 +386,28 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         await requestProjectPathOpen(workspace.projects[0].path);
       } else if (workspace.projects.length === 0) {
         setFileError(text(language, '上传完成，但没有发现 .ras 工程。', 'Upload completed, but no .ras project was found.'));
+        setFileErrorDetails(undefined);
       } else {
         setNotice(text(language, `已上传工作区，发现 ${workspace.projects.length} 个工程；请选择要打开的工程。`, `Workspace uploaded with ${workspace.projects.length} projects; choose one to open.`));
       }
     } catch (error) {
-      if (generation === workspaceUploadGeneration.current && !controller.signal.aborted) setFileError(message(error));
+      if (generation === workspaceUploadGeneration.current && !controller.signal.aborted) {
+        setFileError(userErrorText(error, language, text(language, '工作区上传或工程发现失败。展开查看原始诊断。', 'Workspace upload or project discovery failed. Expand the raw diagnostics for details.')));
+        setFileErrorDetails(rawDiagnosticText(error));
+      }
     } finally {
       if (generation === workspaceUploadGeneration.current && !controller.signal.aborted) setFileBusy(false);
     }
   }, [backend, language, requestProjectPathOpen]);
 
   const runProjectCommand = useCallback((kind: ProjectCommandKind): void => {
+    if (libraryImportBusyRef.current) {
+      setNotice(text(language, '示例工程正在准备中，请稍候再切换工程操作。', 'An example project is being prepared. Wait before starting another project action.'));
+      return;
+    }
     if (kind === 'open') setOpenProjectDialog(true);
     else setNewProjectOpen(true);
-  }, []);
+  }, [language]);
 
   useLayoutEffect(() => {
     const pending = props.pendingProjectCommand;
@@ -645,6 +702,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     const generation = ++projectSaveGeneration.current;
     setSavingProject(true);
     setFileError(undefined);
+    setFileErrorDetails(undefined);
     try {
       const response = await backend.request<ProjectSaveResponse>('project.save', {
         projectPath,
@@ -706,13 +764,15 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const currentProjectSummary = useMemo(() => currentFile, [currentFile]);
   const projectStatus = fileBusy
     ? text(language, '正在读取工程文件…', 'Reading project file…')
-    : !hasCurrentProject
-      ? text(language, '未打开工程', 'No project open')
-      : isBrowserFileIdentity(context.projectPath)
-        ? text(language, '本地文件已选 · 等待后端解析', 'Local file selected · backend parsing pending')
-        : snapshotForCurrentMode
-          ? text(language, '工程目录已由 C# 后端加载', 'Catalog loaded by the C# backend')
-          : text(language, '工程已打开 · 目录待加载', 'Project open · catalog pending');
+    : libraryImportBusy
+      ? text(language, '正在准备示例工程…', 'Preparing example project…')
+      : !hasCurrentProject
+        ? text(language, '未打开工程', 'No project open')
+        : isBrowserFileIdentity(context.projectPath)
+          ? text(language, '本地文件已选 · 等待后端解析', 'Local file selected · backend parsing pending')
+          : snapshotForCurrentMode
+            ? text(language, '工程目录已由 C# 后端加载', 'Catalog loaded by the C# backend')
+            : text(language, '工程已打开 · 目录待加载', 'Project open · catalog pending');
 
   const headerAction = canSaveProject ? (
     <button type="button" className="project-button project-button-secondary" data-testid="project-save" disabled={savingProject} onClick={() => void saveProject()}>{savingProject ? text(language, '保存中…', 'Saving…') : text(language, '保存', 'Save')}</button>
@@ -733,37 +793,59 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         <div className="project-toolbar-actions">
           {headerAction}
           {workspaceArchiveUrl && downloadableWorkspace && <a className="project-button project-button-secondary" data-testid="project-download-workspace" aria-label={text(language, '请求下载当前工程所属的完整上传工作区 ZIP', 'Request the complete uploaded workspace ZIP that contains the current project')} href={workspaceArchiveUrl} download title={text(language, '请求下载当前工程所属的完整上传工作区 ZIP。', 'Request the complete uploaded workspace ZIP that contains the current project.')}>{text(language, '下载工作区 ZIP', 'Download workspace ZIP')}</a>}
-          <button type="button" className="project-button project-button-secondary" disabled={fileBusy} onClick={() => setOpenProjectDialog(true)}>{text(language, '打开工程', 'Open project')}</button>
-          <button type="button" className="project-button project-button-primary" onClick={() => setNewProjectOpen(true)}>{text(language, '新建工程', 'New project')}</button>
+          <button type="button" className="project-button project-button-secondary" disabled={fileBusy || libraryImportBusy} onClick={() => setOpenProjectDialog(true)}>{text(language, '打开工程', 'Open project')}</button>
+          <button type="button" className="project-button project-button-primary" disabled={libraryImportBusy} onClick={() => setNewProjectOpen(true)}>{text(language, '新建工程', 'New project')}</button>
         </div>
       </div>
 
-      {fileError && <div className="project-global-notice is-error" role="alert"><span>!</span>{fileError}<button type="button" onClick={() => setFileError(undefined)}>×</button></div>}
+      {fileError && <div className="project-global-notice is-error" role="alert"><span>!</span><div className="project-global-error-copy">{fileError}{fileErrorDetails && <details><summary>{text(language, '原始诊断', 'Raw diagnostics')}</summary><pre>{fileErrorDetails}</pre></details>}</div><button type="button" onClick={() => { setFileError(undefined); setFileErrorDetails(undefined); }}>×</button></div>}
       {notice && <div className="project-global-notice" role="status"><span>i</span>{notice}<button type="button" onClick={() => setNotice(undefined)}>×</button></div>}
 
       {!hasCurrentProject ? (
         <ProjectExplorerMainPageTiled
           language={language}
+          backend={backend}
+          context={context}
+          backendRevision={props.backendRevision}
           currentProject={null}
           recents={recentProjects}
           busy={fileBusy}
+          importBusy={libraryImportBusy}
+          importBlockedReason={newProjectDirty
+            ? text(language, '存在未保存的新建工程表单。请先保存或放弃草稿，再导入示例工程。', 'The new-project form has unsaved edits. Save or discard the draft before importing an example.')
+            : hasUnsavedDrafts
+              ? text(language, '存在未保存的模型草稿。请先保存模型编辑，再导入示例工程。', 'There are unsaved model drafts. Save the model edits before importing an example.')
+              : undefined}
           onOpen={() => setOpenProjectDialog(true)}
           onNew={() => setNewProjectOpen(true)}
           onOpenRecent={(recent) => requestProjectPathOpen(recent.projectPath)}
           onClearRecents={() => setRecentProjects([])}
+          onImportBusyChange={updateLibraryImportBusy}
+          onOpenLibraryProject={openLibraryProject}
         />
       ) : (
         <div className="project-active-layout">
           <ProjectExplorerMainPageTiled
             language={language}
+            backend={backend}
+            context={context}
+            backendRevision={props.backendRevision}
             currentProject={currentProjectSummary}
             externalProjectPath={currentProjectSummary ? null : context.projectPath}
             recents={recentProjects}
             busy={fileBusy}
+            importBusy={libraryImportBusy}
+            importBlockedReason={newProjectDirty
+              ? text(language, '存在未保存的新建工程表单。请先保存或放弃草稿，再导入示例工程。', 'The new-project form has unsaved edits. Save or discard the draft before importing an example.')
+              : hasUnsavedDrafts
+                ? text(language, '存在未保存的模型草稿。请先保存模型编辑，再导入示例工程。', 'There are unsaved model drafts. Save the model edits before importing an example.')
+                : undefined}
             onOpen={() => setOpenProjectDialog(true)}
             onNew={() => setNewProjectOpen(true)}
             onOpenRecent={(recent) => requestProjectPathOpen(recent.projectPath)}
             onClearRecents={() => setRecentProjects([])}
+            onImportBusyChange={updateLibraryImportBusy}
+            onOpenLibraryProject={openLibraryProject}
           />
           {hasBackendFileIdentity && <ProjectTreeMode
             language={language}
@@ -784,7 +866,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         </div>
       )}
 
-      <footer className="project-feature-statusbar"><span><i className={`project-status-dot ${treeLoading || fileBusy ? 'is-busy' : ''}`} />{projectStatus}</span><span>{context.projectSessionID ? `${text(language, '会话', 'Session')} ${context.projectSessionID.slice(0, 8)}` : text(language, '无工程会话', 'No project session')}</span></footer>
+      <footer className="project-feature-statusbar"><span><i className={`project-status-dot ${treeLoading || fileBusy || libraryImportBusy ? 'is-busy' : ''}`} />{projectStatus}</span><span>{context.projectSessionID ? `${text(language, '会话', 'Session')} ${context.projectSessionID.slice(0, 8)}` : text(language, '无工程会话', 'No project session')}</span></footer>
 
       <NewProjectPage
         language={language}
@@ -805,7 +887,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         canUploadWorkspace={Boolean(backend.uploadWorkspace)}
         error={fileError}
         workspace={uploadedWorkspace}
-        onClose={() => { setOpenProjectDialog(false); setFileError(undefined); }}
+        onClose={() => { setOpenProjectDialog(false); setFileError(undefined); setFileErrorDetails(undefined); }}
         onOpenPath={requestProjectPathOpen}
         onOpenUploadedProject={requestProjectPathOpen}
         onUploadWorkspace={uploadWorkspace}

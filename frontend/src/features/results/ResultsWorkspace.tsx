@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FeaturePageProps, Language } from '../../shared/workbench';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { FeaturePageProps, Language, WorkbenchContext } from '../../shared/workbench';
 import { ResultNodeDetails, type ResultInspectorSnapshot } from './controls/ResultNodeDetails';
+import { MapResultsChart } from './controls/MapResultsChart';
 import { ResultPicker } from './controls/ResultPicker';
-import { TimeSeriesPayloadChart, type ChartSettings } from './controls/TimeSeriesPayloadChart';
 import { TimeSeriesPayloadTable } from './controls/TimeSeriesPayloadTable';
+import type { ChartSettings } from './charting/chartTypes';
+import type {
+  ResultPlanAssociationsSnapshot,
+  ResultPlanContextSnapshot,
+  ResultPlanSettingsSaveReceipt,
+  ResultPlanSettingsSnapshot,
+} from './controls/resultDetailsTypes';
 import { readResultsDraft, writeResultsDraft, type ResultCellDrafts, type ResultsDraftSnapshot } from './ResultsDraftStore';
 import { downloadCsv, type ResultDataset, type ResultSeries } from './data';
 import './results.css';
@@ -41,6 +48,86 @@ interface ActiveProfileRequest {
   generation: number;
   requestKey: string;
   active: boolean;
+}
+
+interface ActiveDetailsRequest {
+  controller: AbortController;
+  generation: number;
+  owner: string;
+  active: boolean;
+}
+
+interface ActivePlanSave {
+  controller: AbortController;
+  generation: number;
+  owner: string;
+  active: boolean;
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f\d]{64}$/i.test(value);
+}
+
+function sameSha(left: string, right: string): boolean {
+  return left.toUpperCase() === right.toUpperCase();
+}
+
+function comparablePath(value: string): string {
+  const normalized = value.trim().replaceAll('\\', '/').replace(/\/+$/, '') || '/';
+  return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+function exactCoreLayerContext(context: WorkbenchContext, asset: NonNullable<WorkbenchContext['selectedAsset']>): Record<string, unknown> | undefined {
+  if (!asset.locator || typeof asset.locator !== 'object' || Array.isArray(asset.locator)) return undefined;
+  const locator = asset.locator as Record<string, unknown>;
+  const raw = locator.coreLayerContext ?? locator.CoreLayerContext;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const core = raw as Record<string, unknown>;
+  const session = core.projectSessionID ?? core.ProjectSessionID;
+  const projectPath = core.projectPath ?? core.ProjectPath;
+  const projectRevision = core.projectRevision ?? core.ProjectRevision;
+  const identityToken = core.identityToken ?? core.IdentityToken;
+  const references = core.references ?? core.References;
+  const sessionHdfReferences = core.sessionHdfReferences ?? core.SessionHdfReferences;
+  if (session !== context.projectSessionID || projectPath !== context.projectPath
+    || typeof identityToken !== 'string' || identityToken.trim() === ''
+    || !Array.isArray(references)
+    || (sessionHdfReferences !== undefined && !Array.isArray(sessionHdfReferences))
+    || (projectRevision !== undefined && projectRevision !== null && typeof projectRevision !== 'string')
+    || (typeof projectRevision === 'string' && context.projectRevision !== projectRevision)) return undefined;
+  return core;
+}
+
+function assertResultIdentity(value: { resultPath: string; revision: string }, expectedPath: string, expectedRevision: string): void {
+  if (comparablePath(value.resultPath) !== comparablePath(expectedPath) || !sameSha(value.revision, expectedRevision)) {
+    throw new Error('后端返回的结果路径或 SHA 与当前所选 Result 不一致。');
+  }
+}
+
+function assertPlanReadIdentity(
+  value: { projectPath: string; projectRevision: string; resultPath: string; revision: string },
+  context: WorkbenchContext,
+  resultPath: string,
+  resultRevision: string,
+): void {
+  if (comparablePath(value.projectPath) !== comparablePath(context.projectPath ?? '')
+    || (isSha256(context.projectRevision) && !sameSha(value.projectRevision, context.projectRevision))
+    || comparablePath(value.resultPath) !== comparablePath(resultPath)
+    || !sameSha(value.revision, resultRevision)) {
+    throw new Error('后端返回的工程 / Result 路径或修订与当前选择不一致。');
+  }
+}
+
+function sameEmbeddedImages(left: ResultPlanSettingsSnapshot['images'], right: ResultPlanSettingsSnapshot['images']): boolean {
+  if (left.length !== right.length) return false;
+  const rightByID = new Map(right.map((image) => [image.id, image]));
+  return left.every((image) => {
+    const other = rightByID.get(image.id);
+    return !!other && image.id === other.id && image.name === other.name
+      && image.description === other.description && image.dateLastModified === other.dateLastModified
+      && image.x === other.x && image.y === other.y && image.byteCount === other.byteCount
+      && image.data === other.data;
+  });
 }
 
 function isResultAsset(asset: FeaturePageProps['context']['selectedAsset']): boolean {
@@ -127,9 +214,21 @@ function applyCellDrafts(dataset: ResultDataset, drafts: ResultCellDrafts): Resu
   };
 }
 
-export default function ResultsWorkspace({ language, context, backend, backendRevision, onDirtyStateChange }: FeaturePageProps) {
+export default function ResultsWorkspace({ language, context, backend, backendRevision, onDirtyStateChange, onContextCommit, hasUnsavedDrafts, dirtyOwners }: FeaturePageProps) {
   const selectedAsset = context.selectedAsset;
   const resultAsset = isResultAsset(selectedAsset) ? selectedAsset : null;
+  const planDescriptionOwner = JSON.stringify([
+    context.projectSessionID,
+    context.projectPath,
+    resultAsset?.path ?? null,
+    resultAsset?.revision ?? null,
+    'result-plan-description',
+  ]);
+  const onDirtyStateChangeRef = useRef(onDirtyStateChange);
+  onDirtyStateChangeRef.current = onDirtyStateChange;
+  const reportDirtyOwner = useCallback((owner: string, dirty: boolean): void => {
+    onDirtyStateChangeRef.current?.(owner, dirty);
+  }, []);
   const userDraftKey = JSON.stringify([context.projectSessionID, context.projectPath ?? '', 'results-user-dataset']);
   const [draftState, setDraftState] = useState(() => ({ owner: userDraftKey, ...(readResultsDraft(userDraftKey) ?? emptyResultsDraft()) }));
   const draftForCurrentOwner = draftState.owner === userDraftKey ? draftState : { owner: userDraftKey, ...(readResultsDraft(userDraftKey) ?? emptyResultsDraft()) };
@@ -150,6 +249,18 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
   const [catalog, setCatalog] = useState<ResultProfileCatalog | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [planAssociations, setPlanAssociations] = useState<ResultPlanAssociationsSnapshot | null>(null);
+  const [planAssociationsLoading, setPlanAssociationsLoading] = useState(false);
+  const [planAssociationsError, setPlanAssociationsError] = useState<string | null>(null);
+  const [planContext, setPlanContext] = useState<ResultPlanContextSnapshot | null>(null);
+  const [planContextLoading, setPlanContextLoading] = useState(false);
+  const [planContextError, setPlanContextError] = useState<string | null>(null);
+  const [planSettings, setPlanSettings] = useState<ResultPlanSettingsSnapshot | null>(null);
+  const [planSettingsLoading, setPlanSettingsLoading] = useState(false);
+  const [planSettingsError, setPlanSettingsError] = useState<string | null>(null);
+  const [savingPlanSettings, setSavingPlanSettings] = useState(false);
+  const [planSettingsSaveError, setPlanSettingsSaveError] = useState<string | null>(null);
+  const [planSettingsSaveStatus, setPlanSettingsSaveStatus] = useState<string | null>(null);
   const [selectedBlockName, setSelectedBlockName] = useState('');
   const [selectedFlowArea, setSelectedFlowArea] = useState(0);
   const [selectedVariable, setSelectedVariable] = useState('');
@@ -165,6 +276,23 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
   const [tableVisible, setTableVisible] = useState(true);
   const draftOwnerMatches = draftState.owner === userDraftKey;
   const invalidCellDraftCount = invalidDraftCount(cellDrafts);
+  const resultCoreLayerContext = useMemo(
+    () => resultAsset ? exactCoreLayerContext(context, resultAsset) : undefined,
+    [context.projectSessionID, context.projectPath, context.projectRevision, resultAsset],
+  );
+  const resultCoreIdentity = resultCoreLayerContext?.identityToken ?? resultCoreLayerContext?.IdentityToken ?? '';
+  const detailsOwner = JSON.stringify([
+    context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml,
+    resultAsset?.path ?? null, resultAsset?.revision ?? null, resultCoreIdentity, 'result-details',
+  ]);
+  const detailsOwnerRef = useRef(detailsOwner);
+  detailsOwnerRef.current = detailsOwner;
+  const detailsGenerationRef = useRef(0);
+  const detailsRequestRef = useRef<ActiveDetailsRequest | null>(null);
+  const planSaveGenerationRef = useRef(0);
+  const planSaveRequestRef = useRef<ActivePlanSave | null>(null);
+  const onContextCommitRef = useRef(onContextCommit);
+  onContextCommitRef.current = onContextCommit;
 
   useEffect(() => {
     if (draftState.owner === userDraftKey) return;
@@ -192,6 +320,15 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
       setCatalog(null);
       setCatalogError(null);
       setCatalogLoading(false);
+      setPlanAssociations(null);
+      setPlanAssociationsLoading(false);
+      setPlanAssociationsError(null);
+      setPlanContext(null);
+      setPlanContextLoading(false);
+      setPlanContextError(null);
+      setPlanSettings(null);
+      setPlanSettingsLoading(false);
+      setPlanSettingsError(null);
       setBackendSeries([]);
       setBackendTimes([]);
       setSelectedBlockName('');
@@ -203,55 +340,210 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
     setBackendSeries([]);
     setBackendTimes([]);
     setCatalogError(null);
+    setPlanAssociations(null);
+    setPlanAssociationsError(null);
+    setPlanContext(null);
+    setPlanContextError(null);
+    setPlanSettings(null);
+    setPlanSettingsError(null);
+    setPlanSettingsSaveError(null);
+    setPlanSettingsSaveStatus(null);
     setCatalogLoading(true);
+    setPlanAssociationsLoading(backend.supports('result.planAssociations'));
+    setPlanContextLoading(backend.supports('result.planContext'));
+    setPlanSettingsLoading(backend.supports('result.planSettings'));
 
     const controller = new AbortController();
     let active = true;
+    const generation = ++detailsGenerationRef.current;
+    const requestOwner = detailsOwner;
+    const pending: ActiveDetailsRequest = { controller, generation, owner: requestOwner, active: true };
+    detailsRequestRef.current?.controller.abort();
+    if (detailsRequestRef.current) detailsRequestRef.current.active = false;
+    detailsRequestRef.current = pending;
+    const isCurrent = (): boolean => active && pending.active && !controller.signal.aborted
+      && detailsGenerationRef.current === generation && detailsRequestRef.current === pending
+      && detailsOwnerRef.current === requestOwner;
+    const projectUnavailable = !context.projectPath || !context.projectXml;
+    const unavailableText = projectUnavailable
+      ? text('请先打开已保存的工程，再选择其中的 HDF 结果文件。', 'Open a saved project and select one of its HDF result files.')
+      : '';
     const load = async (): Promise<void> => {
       if (!backend.supports('result.inspect')) {
         setCatalogError(text('当前 C# 后端未提供结果元数据读取能力。', 'The current C# backend does not provide result metadata inspection.'));
+        const message = text('结果元数据接口不可用，无法读取关联方案快照。', 'Result metadata is unavailable, so Plan association snapshots cannot be read.');
+        setPlanAssociationsError(message);
+        setPlanContextError(message);
+        setPlanSettingsError(message);
         setCatalogLoading(false);
+        setPlanAssociationsLoading(false);
+        setPlanContextLoading(false);
+        setPlanSettingsLoading(false);
         return;
       }
-      if (!context.projectPath || !context.projectXml) {
-        setCatalogError(text('请先打开已保存的工程，再选择其中的 HDF 结果文件。', 'Open a saved project and select one of its HDF result files.'));
+      if (projectUnavailable) {
+        setCatalogError(unavailableText);
         setCatalogLoading(false);
+        setPlanAssociationsError(unavailableText);
+        setPlanContextError(unavailableText);
+        setPlanSettingsError(unavailableText);
+        setPlanAssociationsLoading(false);
+        setPlanContextLoading(false);
+        setPlanSettingsLoading(false);
         return;
       }
       try {
-        const inspected = await backend.request<ResultInspectorSnapshot>('result.inspect', {
+        const inspectRequest: Record<string, unknown> = {
           projectPath: context.projectPath,
           projectXml: context.projectXml,
           resultPath: resultAsset.path,
+          ...(isSha256(resultAsset.revision) ? { revision: resultAsset.revision } : {}),
+          ...(resultCoreLayerContext ? { coreLayerContext: resultCoreLayerContext } : {}),
+        };
+        const inspected = await backend.request<ResultInspectorSnapshot>('result.inspect', {
+          ...inspectRequest,
         }, { signal: controller.signal });
-        if (!active) return;
-        setSnapshot(inspected);
-        if (!backend.supports('result.profileCatalog')) {
-          setCatalogError(text('结果元数据已读取，但当前 C# 后端未提供时间序列目录。', 'Result metadata was read, but the current C# backend does not expose the profile catalog.'));
-          setCatalogLoading(false);
-          return;
+        if (!isCurrent()) return;
+        if (!inspected || typeof inspected.resultPath !== 'string' || inspected.resultPath.trim() === ''
+          || !isSha256(inspected.revision) || typeof inspected.name !== 'string'
+          || !Array.isArray(inspected.outputBlocks) || !Array.isArray(inspected.layerErrors)) {
+          throw new Error('结果元数据接口未返回有效的 Result 路径和 SHA-256。');
         }
-        const profileCatalog = await backend.request<ResultProfileCatalog>('result.profileCatalog', {
-          resultPath: inspected.resultPath,
-          revision: inspected.revision,
-        }, { signal: controller.signal });
-        if (!active) return;
-        setCatalog(profileCatalog);
-        const firstBlock = profileCatalog.outputBlocks[0];
-        setSelectedBlockName(firstBlock?.name ?? '');
-        setSelectedFlowArea(profileCatalog.flowAreas[0]?.index ?? 0);
-        setSelectedVariable(firstBlock?.variables[0]?.name ?? '');
-        setCatalogError(null);
+        if (isSha256(resultAsset.revision) && !sameSha(inspected.revision, resultAsset.revision)) {
+          throw new Error('所选 Result 的 SHA 与元数据读取结果不一致，请重新选择结果。');
+        }
+        setSnapshot(inspected);
+
+        const catalogTask = (async (): Promise<void> => {
+          if (!backend.supports('result.profileCatalog')) {
+            if (isCurrent()) setCatalogError(text('结果元数据已读取，但当前 C# 后端未提供时间序列目录。', 'Result metadata was read, but the current C# backend does not expose the profile catalog.'));
+            return;
+          }
+          try {
+            const profileCatalog = await backend.request<ResultProfileCatalog>('result.profileCatalog', {
+              resultPath: inspected.resultPath,
+              revision: inspected.revision,
+            }, { signal: controller.signal });
+            if (!isCurrent()) return;
+            if (!Array.isArray(profileCatalog.outputBlocks) || !Array.isArray(profileCatalog.flowAreas)) {
+              throw new Error('结果目录接口未返回有效的输出块和流区列表。');
+            }
+            assertResultIdentity(profileCatalog, inspected.resultPath, inspected.revision);
+            setCatalog(profileCatalog);
+            const firstBlock = profileCatalog.outputBlocks[0];
+            setSelectedBlockName(firstBlock?.name ?? '');
+            setSelectedFlowArea(profileCatalog.flowAreas[0]?.index ?? 0);
+            setSelectedVariable(firstBlock?.variables[0]?.name ?? '');
+            setCatalogError(null);
+          } catch (error) {
+            if (isCurrent() && !controller.signal.aborted) setCatalogError(backendFailure('读取结果目录失败。', 'Failed to read the result catalog.', error));
+          } finally {
+            if (isCurrent()) setCatalogLoading(false);
+          }
+        })();
+
+        const associationTask = (async (): Promise<void> => {
+          if (!backend.supports('result.planAssociations')) {
+            if (isCurrent()) setPlanAssociationsError(text('当前 C# 后端未发布 result.planAssociations。', 'The current C# backend does not advertise result.planAssociations.'));
+            if (isCurrent()) setPlanAssociationsLoading(false);
+            return;
+          }
+          try {
+            const value = await backend.request<ResultPlanAssociationsSnapshot>('result.planAssociations', {
+              projectPath: context.projectPath,
+              projectXml: context.projectXml,
+              resultPath: inspected.resultPath,
+              revision: inspected.revision,
+            }, { signal: controller.signal });
+            if (!isCurrent()) return;
+            assertPlanReadIdentity(value, context, inspected.resultPath, inspected.revision);
+            setPlanAssociations(value);
+            setPlanAssociationsError(null);
+          } catch (error) {
+            if (isCurrent() && !controller.signal.aborted) setPlanAssociationsError(backendFailure('读取方案关联失败。', 'Failed to read Plan associations.', error));
+          } finally {
+            if (isCurrent()) setPlanAssociationsLoading(false);
+          }
+        })();
+
+        const planContextTask = (async (): Promise<void> => {
+          if (!backend.supports('result.planContext')) {
+            if (isCurrent()) setPlanContextError(text('当前 C# 后端未发布 result.planContext。', 'The current C# backend does not advertise result.planContext.'));
+            if (isCurrent()) setPlanContextLoading(false);
+            return;
+          }
+          try {
+            const value = await backend.request<ResultPlanContextSnapshot>('result.planContext', {
+              projectPath: context.projectPath,
+              projectXml: context.projectXml,
+              resultPath: inspected.resultPath,
+              revision: inspected.revision,
+              ...(resultCoreLayerContext ? { coreLayerContext: resultCoreLayerContext } : {}),
+            }, { signal: controller.signal });
+            if (!isCurrent()) return;
+            if (!Array.isArray(value.candidateGroups) || !Array.isArray(value.embeddedPlanGroups)) {
+              throw new Error('方案上下文接口未返回有效的候选组和内嵌字段。');
+            }
+            assertPlanReadIdentity(value, context, inspected.resultPath, inspected.revision);
+            setPlanContext(value);
+            setPlanContextError(null);
+          } catch (error) {
+            if (isCurrent() && !controller.signal.aborted) setPlanContextError(backendFailure('读取方案上下文失败。', 'Failed to read Plan context.', error));
+          } finally {
+            if (isCurrent()) setPlanContextLoading(false);
+          }
+        })();
+
+        const planSettingsTask = (async (): Promise<void> => {
+          if (!backend.supports('result.planSettings')) {
+            if (isCurrent()) setPlanSettingsError(text('当前 C# 后端未发布 result.planSettings。', 'The current C# backend does not advertise result.planSettings.'));
+            if (isCurrent()) setPlanSettingsLoading(false);
+            return;
+          }
+          try {
+            const value = await backend.request<ResultPlanSettingsSnapshot>('result.planSettings', {
+              projectPath: context.projectPath,
+              projectXml: context.projectXml,
+              resultPath: inspected.resultPath,
+              revision: inspected.revision,
+            }, { signal: controller.signal });
+            if (!isCurrent()) return;
+            if (!Array.isArray(value.images) || !Array.isArray(value.embeddedPlanGroups)) {
+              throw new Error('方案字段接口未返回有效的内嵌字段或图片列表。');
+            }
+            assertPlanReadIdentity(value, context, inspected.resultPath, inspected.revision);
+            setPlanSettings(value);
+            setPlanSettingsError(null);
+          } catch (error) {
+            if (isCurrent() && !controller.signal.aborted) setPlanSettingsError(backendFailure('读取方案字段失败。', 'Failed to read Plan fields.', error));
+          } finally {
+            if (isCurrent()) setPlanSettingsLoading(false);
+          }
+        })();
+
+        await Promise.all([catalogTask, associationTask, planContextTask, planSettingsTask]);
       } catch (error) {
-        if (!active || controller.signal.aborted) return;
+        if (!isCurrent() || controller.signal.aborted) return;
         setCatalogError(backendFailure('读取结果目录失败。', 'Failed to read the result catalog.', error));
+        const failure = backendFailure('读取结果元数据失败。', 'Failed to inspect the Result.', error);
+        setPlanAssociationsError(failure);
+        setPlanContextError(failure);
+        setPlanSettingsError(failure);
+        setPlanAssociationsLoading(false);
+        setPlanContextLoading(false);
+        setPlanSettingsLoading(false);
       } finally {
-        if (active) setCatalogLoading(false);
+        if (isCurrent()) setCatalogLoading(false);
       }
     };
     void load();
-    return () => { active = false; controller.abort(); };
-  }, [backend, backendRevision, context.projectPath, context.projectXml, resultAsset?.path]);
+    return () => {
+      active = false;
+      pending.active = false;
+      controller.abort();
+      if (detailsRequestRef.current === pending) detailsRequestRef.current = null;
+    };
+  }, [backend, backendRevision, context.projectPath, context.projectXml, context.projectRevision, context.projectSessionID, resultAsset, resultCoreLayerContext, detailsOwner]);
 
   useEffect(() => {
     if (!resultAsset && userDataset) setSource('user');
@@ -279,6 +571,22 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
     source === 'result' ? snapshot?.revision ?? resultAsset?.revision ?? '' : 'local-import',
     'results',
   ]);
+  const planSettingsIdentityMatches = !!resultAsset && !!snapshot && !!planSettings
+    && comparablePath(resultAsset.path) === comparablePath(snapshot.resultPath)
+    && comparablePath(planSettings.resultPath) === comparablePath(snapshot.resultPath)
+    && planSettings.revision === snapshot.revision
+    && comparablePath(planSettings.projectPath) === comparablePath(context.projectPath ?? '')
+    && isSha256(context.projectRevision) && sameSha(planSettings.projectRevision, context.projectRevision)
+    && planSettings.planName === snapshot.plan?.name;
+  const selectedAssetRevisionMatches = !!snapshot && (!resultAsset?.revision || (isSha256(resultAsset.revision) && sameSha(resultAsset.revision, snapshot.revision)));
+  const hasOtherUnsavedDrafts = dirtyOwners
+    ? [...dirtyOwners].some((draftOwner) => draftOwner !== planDescriptionOwner)
+    : hasUnsavedDrafts !== false;
+  const canEditPlanDescription = !!resultAsset && !!snapshot && !!planSettings
+    && backend.supports('result.planSettings.save') && !!onContextCommit
+    && !hasOtherUnsavedDrafts && isSha256(context.projectRevision) && isSha256(snapshot.revision)
+    && planSettingsIdentityMatches && planSettings.hasPlan && !!planSettings.planName
+    && selectedAssetRevisionMatches;
   const profileRequestKey = JSON.stringify([source, owner, resultAsset?.path ?? '', currentDataKey, elementIndexInput]);
   const profileRequestKeyRef = useRef(profileRequestKey);
   profileRequestKeyRef.current = profileRequestKey;
@@ -312,6 +620,18 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
     onDirtyStateChange?.(owner, draftOwnerMatches && userDirty && source === 'user');
     return () => onDirtyStateChange?.(owner, false);
   }, [onDirtyStateChange, owner, source, userDirty, draftOwnerMatches]);
+
+  useEffect(() => {
+    setSavingPlanSettings(false);
+    return () => {
+      const pending = planSaveRequestRef.current;
+      if (pending) {
+        pending.active = false;
+        pending.controller.abort();
+        planSaveRequestRef.current = null;
+      }
+    };
+  }, [detailsOwner]);
 
   const loadElementSeries = async (): Promise<void> => {
     setSeriesError(null);
@@ -412,6 +732,83 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
   const changeVariable = (name: string): void => { setSelectedVariable(name); resetBackendSeries(); };
   const changeArea = (index: number): void => { setSelectedFlowArea(index); resetBackendSeries(); };
 
+  const savePlanDescription = (description: string): void => {
+    if (!canEditPlanDescription || !snapshot || !planSettings || !resultAsset || !context.projectPath || !context.projectXml || !isSha256(context.projectRevision)) return;
+    const requestOwner = detailsOwner;
+    const sourceContext = context;
+    const sourceAsset = resultAsset;
+    const sourceSettings = planSettings;
+    const controller = new AbortController();
+    planSaveRequestRef.current?.controller.abort();
+    if (planSaveRequestRef.current) planSaveRequestRef.current.active = false;
+    const generation = ++planSaveGenerationRef.current;
+    const pending: ActivePlanSave = { controller, generation, owner: requestOwner, active: true };
+    planSaveRequestRef.current = pending;
+    const isCurrentSave = (): boolean => pending.active && !controller.signal.aborted
+      && planSaveGenerationRef.current === generation && planSaveRequestRef.current === pending
+      && detailsOwnerRef.current === requestOwner;
+    setSavingPlanSettings(true);
+    setPlanSettingsSaveError(null);
+    setPlanSettingsSaveStatus(null);
+
+    void (async (): Promise<void> => {
+      try {
+        const receipt = await backend.request<ResultPlanSettingsSaveReceipt>('result.planSettings.save', {
+          projectPath: sourceSettings.projectPath,
+          projectXml: sourceContext.projectXml,
+          projectRevision: sourceSettings.projectRevision,
+          resultPath: sourceSettings.resultPath,
+          revision: sourceSettings.revision,
+          planName: sourceSettings.planName,
+          planDescription: description,
+          images: sourceSettings.images.map(({ byteCount: _byteCount, ...image }) => image),
+        }, { signal: controller.signal });
+        if (!isCurrentSave()) return;
+        if (comparablePath(receipt.resultPath) !== comparablePath(sourceSettings.resultPath)
+          || !sameSha(receipt.previousRevision, sourceSettings.revision)
+          || !isSha256(receipt.revision) || receipt.planName !== sourceSettings.planName
+          || receipt.planDescription !== description || !receipt.snapshot
+          || !Array.isArray(receipt.snapshot.images) || !Array.isArray(receipt.snapshot.embeddedPlanGroups)) {
+          throw new Error('保存回执的 Result 路径、旧/新 SHA、方案身份或描述与请求不一致。');
+        }
+        assertPlanReadIdentity(receipt.snapshot, sourceContext, sourceSettings.resultPath, receipt.revision);
+        if (receipt.snapshot.resultName !== sourceSettings.resultName || !receipt.snapshot.hasPlan
+          || receipt.snapshot.planName !== sourceSettings.planName || receipt.snapshot.planDescription !== description
+          || !sameEmbeddedImages(sourceSettings.images, receipt.snapshot.images)) {
+          throw new Error('保存回执快照未确认方案描述，或内嵌图片与保存前内容不一致。');
+        }
+        if (!isCurrentSave()) return;
+
+        const commit = onContextCommitRef.current;
+        const committedContext: WorkbenchContext = {
+          ...sourceContext,
+          selectedAsset: { ...sourceAsset, revision: receipt.revision },
+        };
+        if (!commit) {
+          setPlanSettingsSaveStatus(text('HDF 已返回完整保存回执，但父级上下文提交回调已不可用；请重新选择此结果以同步新 SHA。', 'The HDF save returned a complete receipt, but the parent context commit callback is unavailable. Reselect this Result to adopt its new SHA.'));
+          setPlanSettings(receipt.snapshot);
+          return;
+        }
+        const accepted = commit(sourceContext, committedContext);
+        setPlanSettings(receipt.snapshot);
+        setPlanSettingsError(null);
+        if (!accepted) {
+          setPlanSettingsSaveStatus(text(`HDF 已保存（${receipt.revision.slice(0, 12)}…），但父级上下文拒绝接收新修订；请重新选择结果后继续。`, `The HDF was saved (${receipt.revision.slice(0, 12)}…), but the parent context rejected the new revision. Reselect the Result before continuing.`));
+          return;
+        }
+        setPlanSettingsSaveStatus(text('方案描述已写入 HDF；父级已接收新的 Result SHA。', 'The Plan description was written to HDF and the parent accepted the new Result SHA.'));
+      } catch (error) {
+        if (isCurrentSave()) setPlanSettingsSaveError(backendFailure('保存内嵌方案描述失败。', 'Failed to save the embedded Plan description.', error));
+      } finally {
+        if (planSaveRequestRef.current === pending && planSaveGenerationRef.current === generation) {
+          pending.active = false;
+          planSaveRequestRef.current = null;
+          if (detailsOwnerRef.current === requestOwner) setSavingPlanSettings(false);
+        }
+      }
+    })();
+  };
+
   const importUserDataset = (next: ResultDataset): boolean => {
     if ((userDirty || invalidCellDraftCount > 0) && !window.confirm(text(
       '当前导入数据有未导出的草稿。导入新文件会丢弃这些更改，是否继续？',
@@ -499,7 +896,28 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
 
     {importError && <div className="results-error-banner" role="alert"><span>!</span>{importError}<button type="button" onClick={() => setImportError(null)} aria-label={text('关闭', 'Dismiss')}>×</button></div>}
 
-    {source === 'result' && <ResultNodeDetails snapshot={snapshot} loading={catalogLoading} error={snapshot ? null : catalogError} language={language} />}
+    {source === 'result' && <ResultNodeDetails
+      snapshot={snapshot}
+      loading={catalogLoading}
+      error={snapshot ? null : catalogError}
+      language={language}
+      planAssociations={planAssociations}
+      planAssociationsLoading={planAssociationsLoading}
+      planAssociationsError={planAssociationsError}
+      planContext={planContext}
+      planContextLoading={planContextLoading}
+      planContextError={planContextError}
+      planSettings={planSettings}
+      planSettingsLoading={planSettingsLoading}
+      planSettingsError={planSettingsError}
+      canEditPlanDescription={canEditPlanDescription}
+      savingPlanSettings={savingPlanSettings}
+      planSettingsSaveError={planSettingsSaveError}
+      planSettingsSaveStatus={planSettingsSaveStatus}
+      descriptionOwner={planDescriptionOwner}
+      onDescriptionDirtyChange={reportDirtyOwner}
+      onSavePlanDescription={savePlanDescription}
+    />}
 
     {source === 'result' && resultAsset && <section className="results-selector-panel">
       <div className="results-selector-heading"><div><span className="results-section-index">01</span><h2>{text('结果数据选择', 'Result data selection')}</h2></div><span>{catalog?.resultName ?? snapshot?.name ?? resultAsset.name}</span></div>
@@ -556,7 +974,7 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
       </div>}
       {source === 'user' && !dataset && <div className="results-result-empty"><div className="results-empty-symbol"><span>⇧</span></div><strong>{text('导入你的 CSV / JSON 时间序列', 'Import your CSV / JSON time series')}</strong><p>{text('目前没有预置示例数据。导入后可查看、编辑草稿并导出 CSV。', 'There is no preset sample data. Import a file to view it, edit a local draft, and export CSV.')}</p></div>}
 
-      <TimeSeriesPayloadChart dataset={dataset} series={visibleSeries} selectedIndex={activeIndex} onSelectIndex={setSelectedIndex} range={range} onRangeChange={setRange} settings={settings} onSettingsChange={setSettings} language={language} />
+      <MapResultsChart dataset={dataset} series={visibleSeries} selectedIndex={activeIndex} onSelectIndex={setSelectedIndex} range={range} onRangeChange={setRange} settings={settings} onSettingsChange={setSettings} language={language} />
 
       {tableVisible && <div className="results-table-section">
         <div className="results-table-heading"><div><h3>{text('数据表', 'Data table')}</h3><span>{dataset ? dataset.times.length.toLocaleString(numberLocale) + ' ' + text('行', 'rows') : text('等待载入', 'Waiting for data')}</span></div><span className="results-table-readonly">{source === 'user' && dataset ? text('本地草稿可编辑', 'Local draft is editable') : text('结果源为只读', 'Result source is read-only')}</span></div>

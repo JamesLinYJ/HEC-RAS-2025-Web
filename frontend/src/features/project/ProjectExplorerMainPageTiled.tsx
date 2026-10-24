@@ -1,17 +1,28 @@
-import type { Language } from '../../shared/workbench';
+import { useState } from 'react';
+import type { BackendGateway, Language, WorkbenchContext } from '../../shared/workbench';
 import { text } from '../../shared/workbench';
 import type { RecentProjectRecord, SelectedProjectFile } from './ProjectTypes';
+import { FirstLaunchScreen } from './FirstLaunchScreen';
+import { RecentProjectsList } from './RecentProjectsList';
+import { ExampleAndSyntheticDatasetsPage } from './ExampleAndSyntheticDatasetsPage';
 
 interface ProjectExplorerMainPageTiledProps {
   language: Language;
+  backend: BackendGateway;
+  context: WorkbenchContext;
+  backendRevision?: number;
   currentProject: SelectedProjectFile | null;
   externalProjectPath?: string | null;
   recents: RecentProjectRecord[];
   busy?: boolean;
+  importBusy?: boolean;
+  importBlockedReason?: string;
   onOpen: () => void;
   onNew: () => void;
   onOpenRecent: (recent: RecentProjectRecord) => void;
   onClearRecents: () => void;
+  onImportBusyChange: (busy: boolean) => void;
+  onOpenLibraryProject: (projectPath: string, source: WorkbenchContext) => Promise<boolean>;
 }
 
 function formatSize(bytes: number, language: Language): string {
@@ -21,7 +32,43 @@ function formatSize(bytes: number, language: Language): string {
   return `${(bytes / divisor).toFixed(bytes < divisor * 10 ? 1 : 0)} ${unit}`;
 }
 
-export function ProjectExplorerMainPageTiled({ language, currentProject, externalProjectPath, recents, busy = false, onOpen, onNew, onOpenRecent, onClearRecents }: ProjectExplorerMainPageTiledProps) {
+export function ProjectExplorerMainPageTiled({
+  language,
+  backend,
+  context,
+  backendRevision,
+  currentProject,
+  externalProjectPath,
+  recents,
+  busy = false,
+  importBusy = false,
+  importBlockedReason,
+  onOpen,
+  onNew,
+  onOpenRecent,
+  onClearRecents,
+  onImportBusyChange,
+  onOpenLibraryProject,
+}: ProjectExplorerMainPageTiledProps) {
+  const [showProjectLibrary, setShowProjectLibrary] = useState(false);
+  if (showProjectLibrary) {
+    return <ExampleAndSyntheticDatasetsPage
+      language={language}
+      backend={backend}
+      context={context}
+      backendRevision={backendRevision}
+      busy={busy || importBusy}
+      importBlockedReason={importBlockedReason}
+      onBack={() => setShowProjectLibrary(false)}
+      onBusyChange={onImportBusyChange}
+      onOpenProjectPath={async (projectPath, source) => {
+        const opened = await onOpenLibraryProject(projectPath, source);
+        if (opened) setShowProjectLibrary(false);
+        return opened;
+      }}
+    />;
+  }
+
   if (currentProject || externalProjectPath) {
     const fileName = currentProject?.fileName ?? externalProjectPath?.split(/[\\/]/).pop() ?? '';
     return (
@@ -34,8 +81,9 @@ export function ProjectExplorerMainPageTiled({ language, currentProject, externa
             <p>{currentProject ? text(language, '由 C# 工程模型从服务器路径实际打开', 'Opened by C# Project from the server path') : text(language, '工程路径来自当前工作台会话', 'Project path from the current workbench session')}</p>
           </div>
           <div className="project-summary-actions">
-            <button type="button" className="project-button project-button-secondary" disabled={busy} onClick={onOpen}>{text(language, '切换工程', 'Switch project')}</button>
-            <button type="button" className="project-button project-button-primary" disabled={busy} onClick={onNew}>{text(language, '新建工程', 'New project')}</button>
+            {backend.supports('projectLibrary.catalog') && <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy} onClick={() => setShowProjectLibrary(true)}>{text(language, '示例工程', 'Examples')}</button>}
+            <button type="button" className="project-button project-button-secondary" disabled={busy || importBusy} onClick={onOpen}>{text(language, '切换工程', 'Switch project')}</button>
+            <button type="button" className="project-button project-button-primary" disabled={busy || importBusy} onClick={onNew}>{text(language, '新建工程', 'New project')}</button>
           </div>
         </div>
         {currentProject ? <>
@@ -58,45 +106,15 @@ export function ProjectExplorerMainPageTiled({ language, currentProject, externa
 
   return (
     <section className="project-explorer-home">
-      <header className="project-home-hero">
-        <div className="project-home-copy">
-          <div className="project-kicker">{text(language, 'HEC-RAS 2025 · 工程管理器', 'HEC-RAS 2025 · PROJECT EXPLORER')}</div>
-          <h1>{text(language, '工程管理器', 'Project Explorer')}</h1>
-          <p>{text(language, '打开已有工程或创建新工程。最近工程仅显示你实际打开过的文件。', 'Open an existing project or start a new one. Recent projects include only files you have opened.')}</p>
-        </div>
-        <div className="project-home-emblem" aria-hidden="true"><span>RAS</span><i /><i /><i /></div>
-      </header>
-      <div className="project-home-actions">
-        <button type="button" className="project-home-action" disabled={busy} onClick={onOpen}>
-          <span className="project-action-symbol">↗</span><strong>{text(language, '打开工程', 'Open project')}</strong><small>{text(language, '输入服务器路径，或上传 .ras / 完整目录', 'Enter a server path or upload a .ras / full directory')}</small>
-        </button>
-        <button type="button" className="project-home-action" disabled={busy} onClick={onNew}>
-          <span className="project-action-symbol">＋</span><strong>{text(language, '新建工程', 'New project')}</strong><small>{text(language, '设置标题、单位制和投影', 'Set title, units, and projection')}</small>
-        </button>
-      </div>
-
-      <section className="project-recent-section">
-        <div className="project-section-heading">
-          <div><div className="project-kicker">{text(language, '最近', 'Recent')}</div><h2>{text(language, '最近工程', 'Recent projects')}</h2></div>
-          {recents.length > 0 && <button type="button" className="project-text-button" onClick={onClearRecents}>{text(language, '清除列表', 'Clear list')}</button>}
-        </div>
-        {recents.length === 0 ? (
-          <div className="project-recent-empty"><span>◇</span><strong>{text(language, '暂无最近工程', 'No recent projects')}</strong><p>{text(language, '成功打开服务器工程后，它会出现在这里。', 'Projects appear here after they have been opened successfully from the server.')}</p></div>
-        ) : (
-          <ul className="project-recent-list">
-            {recents.map((recent) => (
-              <li key={recent.id}>
-                <button type="button" className="project-recent-item" disabled={busy} onClick={() => onOpenRecent(recent)}>
-                  <span className="project-recent-file-icon">RAS</span>
-                  <span className="project-recent-info"><strong>{recent.fileName}</strong><small title={recent.projectPath}>{recent.projectPath} · {new Date(recent.openedAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')}</small></span>
-                  <span className="project-recent-reselect">{text(language, '重新打开', 'Reopen')} ↗</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="project-recents-note">{text(language, '最近列表只保存实际成功打开过的服务器工程路径。', 'Recents contain only server project paths that were actually opened successfully.')}</p>
-      </section>
+      <FirstLaunchScreen
+        language={language}
+        busy={busy || importBusy}
+        canBrowseExamples={backend.supports('projectLibrary.catalog')}
+        onOpen={onOpen}
+        onNew={onNew}
+        onBrowseExamples={() => setShowProjectLibrary(true)}
+      />
+      <RecentProjectsList language={language} projects={recents} busy={busy || importBusy} onProjectClick={onOpenRecent} onClear={onClearRecents} />
     </section>
   );
 }

@@ -167,6 +167,12 @@ export interface ModelDraft {
   boundaryFieldGroups?: ModelSnapshot['fieldGroups'];
   /** Read-only dynamic fields from that projection, used when building later draft requests. */
   boundaryReadOnlyFields?: string[];
+  /** Current uncommitted terrain projection returned by model.terrainTransform. */
+  terrainView?: ModelSnapshot['terrain'];
+  /** Dynamic fields returned with the terrain draft projection. */
+  terrainReadOnlyFields?: string[];
+  /** Selection-scoped terrain values used to distinguish navigation from edits. */
+  terrainSelectionBaselineFields?: Record<string, string | null>;
   fields: Record<string, string>;
   images: Record<string, ModelImage[]>;
   rows: Record<string, ModelRow[]>;
@@ -177,6 +183,19 @@ export interface ModelDraft {
 
 export type SeriesTransformOperation = 'appendRow' | 'removeLastRow' | 'clear' | 'interpolate' | 'addStation';
 export type BoundaryPayloadTransformOperation = 'create' | 'remove';
+export type TerrainTransformOperation = 'add' | 'reorder' | 'remove' | 'selectInput' | 'addRow' | 'copyRows' | 'removeRows' | 'forceSetLeveeProperty' | 'selectRows';
+
+export interface TerrainTransformCommand {
+  operation: TerrainTransformOperation;
+  itemId?: string | null;
+  from?: number;
+  to?: number;
+  inputKind?: 'functionalSurface' | 'polygonVectorMod' | 'channelVectorMod' | 'simpleCutFill';
+  hintExtent?: { minX: number; maxX: number; minY: number; maxY: number };
+  tableId?: string;
+  rowIDs?: string[];
+  leveeForceSet?: { command: 'forceSetMode' | 'forceSetModType'; value: string; rowIDs: string[] };
+}
 
 export interface EditorPageProps {
   language: Language;
@@ -194,6 +213,7 @@ export interface EditorPageProps {
   canTransformSeries?: boolean;
   onSeriesTransform?: (pageID: string, operation: SeriesTransformOperation) => Promise<void>;
   onBoundaryTransform?: (lineID: string, operation: BoundaryPayloadTransformOperation, payloadID: string | null, fields: Record<string, string>) => Promise<boolean>;
+  onTerrainTransform?: (command: TerrainTransformCommand) => Promise<boolean>;
 }
 
 /** Include read-only metadata attached to a transformed boundary draft projection. */

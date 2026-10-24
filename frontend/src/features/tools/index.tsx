@@ -8,8 +8,9 @@ import { SelectProjectionPage } from './SelectProjectionPage';
 import { SourceManagerControl } from './SourceManagerControl';
 import { WilcockMainControl } from './hydraulics/WilcockMainControl';
 import { UnitCalculatorPage } from './hydraulics/UnitCalculatorPage';
+import { USGSTerrainImportControl } from './usgs/USGSTerrainImportControl';
 
-type ToolsPage = 'geoprocessing' | 'import-export' | 'raster-calculator' | 'projection' | 'sources' | 'wilcock' | 'unit-calculator';
+type ToolsPage = 'geoprocessing' | 'import-export' | 'raster-calculator' | 'projection' | 'sources' | 'wilcock' | 'unit-calculator' | 'usgs-terrain';
 
 const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
   { id: 'geoprocessing', zh: '地理处理', en: 'Geoprocessing', mark: '⌁' },
@@ -19,6 +20,7 @@ const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
   { id: 'sources', zh: '数据源', en: 'Data sources', mark: '▤' },
   { id: 'wilcock', zh: 'Wilcock 输沙', en: 'Wilcock transport', mark: '≈' },
   { id: 'unit-calculator', zh: '单位计算器', en: 'Unit calculator', mark: '↔' },
+  { id: 'usgs-terrain', zh: 'USGS 地形', en: 'USGS terrain', mark: '⌖' },
 ];
 
 /** Web and Electron entry point for the tools workspace. */
@@ -81,6 +83,9 @@ export default function ToolsPageView(props: FeaturePageProps) {
         </section>
         <section id="tools-panel-unit-calculator" role="tabpanel" aria-labelledby="tools-tab-unit-calculator" hidden={active !== 'unit-calculator'}>
           {mountedPages.has('unit-calculator') && <UnitCalculatorPage {...props} />}
+        </section>
+        <section id="tools-panel-usgs-terrain" role="tabpanel" aria-labelledby="tools-tab-usgs-terrain" hidden={active !== 'usgs-terrain'}>
+          {mountedPages.has('usgs-terrain') && <USGSTerrainImportControl {...props} />}
         </section>
       </div>
     </div>

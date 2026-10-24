@@ -240,6 +240,16 @@
   flex: none;
 }
 
+.map-new-document-control { margin-inline-start: auto; }
+.map-new-map-flyout { position: relative; }
+.map-new-map-flyout > summary { cursor: pointer; padding: 5px 7px; list-style: none; color: #627381; }
+.map-new-map-flyout > summary::-webkit-details-marker { display: none; }
+.map-new-map-menu { position: absolute; inset-inline-end: 0; top: 100%; z-index: 30; min-width: 150px;
+  display: grid; gap: 3px; padding: 7px; background: #fff; border: 1px solid #d6e0e6;
+  border-radius: 7px; box-shadow: 0 8px 22px #24394c26; }
+.map-new-map-menu button { padding: 8px 12px; text-align: start; border: 0; border-radius: 4px; background: #f2f6f9; }
+.map-new-map-menu button:not(:disabled):hover { background: #e4eff7; }
+
 .map-type-select select {
   width: 91px;
   height: 30px;

@@ -1,6 +1,6 @@
 import type { Language } from '../../shared/workbench';
 import type { GeometryField, GeometryRow, GeometryTable } from './geometryTypes';
-import { BarrelPropertiesDetailEditor } from './BarrelPropertiesDetailEditor';
+import { BarrelPropertiesEditor } from './BarrelPropertiesEditor';
 
 export interface GeometryCulvertDetailPageProps {
   language: Language;
@@ -11,10 +11,11 @@ export interface GeometryCulvertDetailPageProps {
   onChange: (row: GeometryRow, field: GeometryField, value: string, isLocal: boolean) => void;
   onDelete: (rows: GeometryRow[]) => void;
   onAdd: () => void;
+  onSelectionChange?: (rows: GeometryRow[], field: GeometryField, value: string) => void;
 }
 
-export function GeometryCulvertBarrelPropertiesPage({ language, table, localRows, canEdit, busy, onChange, onDelete, onAdd }: GeometryCulvertDetailPageProps) {
-  return <BarrelPropertiesDetailEditor language={language} table={table} localRows={localRows} canEdit={canEdit} busy={busy} onChange={onChange} onDelete={onDelete} onAdd={onAdd} />;
+export function GeometryCulvertBarrelPropertiesPage({ language, table, localRows, canEdit, busy, onChange, onDelete, onAdd, onSelectionChange }: GeometryCulvertDetailPageProps) {
+  return <BarrelPropertiesEditor language={language} table={table} localRows={localRows} canEdit={canEdit} busy={busy} onChange={onChange} onDelete={onDelete} onAdd={onAdd} onSelectionChange={onSelectionChange} />;
 }
 
 export default GeometryCulvertBarrelPropertiesPage;

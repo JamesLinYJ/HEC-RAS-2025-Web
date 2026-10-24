@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { Language } from '../../shared/workbench';
 import { GeometryFeatureTable } from './GeometryFeatureTable';
 import { GeometryDetailFields } from './GeometryDetailFields';
+import { FlowAreaInformation } from './FlowAreaInformation';
 import { gt } from './geometryText';
 import type { GeometryField, GeometryRow, GeometryTable } from './geometryTypes';
 
@@ -15,7 +16,7 @@ export interface FlowAreaEditorControlProps {
   children?: ReactNode;
 }
 
-const flowAreaFieldOrder = ['Name', 'TargetedCellSpacing', 'HasMesh', 'CellCount', 'FaceCount', 'NodeCount'];
+const flowAreaFieldOrder = ['Name', 'TargetedCellSpacing', 'HasMesh', 'FaceCount', 'NodeCount'];
 
 export function FlowAreaEditorControl({ language, table, canEdit, busy, onChange, headerActions, children }: FlowAreaEditorControlProps) {
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
@@ -37,15 +38,18 @@ export function FlowAreaEditorControl({ language, table, canEdit, busy, onChange
       <header className="geometry-panel-heading"><div><h2>{gt(language, 'flowAreas')}</h2><p>{rows.length} {gt(language, 'rows')}</p></div><div className="geometry-mesh-controls">{headerActions}</div></header>
       {children}
       <GeometryFeatureTable language={language} kind="flowArea" table={table} editable={canEdit} allowLocalAdd={false} busy={busy} onChange={onChange} onSelect={setSelectedIDs} />
-      <GeometryDetailFields
-        language={language}
-        title={`${gt(language, 'flowAreas')} · ${language === 'zh' ? '详细属性' : 'Details'}`}
-        rows={selectedRows}
-        fields={detailFields}
-        canEdit={canEdit}
-        busy={busy}
-        onChange={onChange}
-      />
+      <div className="geometry-grid geometry-detail-layout">
+        <GeometryDetailFields
+          language={language}
+          title={`${gt(language, 'flowAreas')} · ${language === 'zh' ? '详细属性' : 'Details'}`}
+          rows={selectedRows}
+          fields={detailFields}
+          canEdit={canEdit}
+          busy={busy}
+          onChange={onChange}
+        />
+        <FlowAreaInformation language={language} rows={selectedRows} />
+      </div>
     </section>
   );
 }

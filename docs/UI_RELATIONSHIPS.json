@@ -29,6 +29,178 @@
       "tools": "frontend/src/features/tools/index.tsx",
       "compute": "frontend/src/features/compute/ComputeProofPage.tsx"
     },
+    "uiMounts": [
+      {
+        "id": "project-home-and-create",
+        "mount": "ProjectExplorerControl → ProjectExplorerMainPageTiled → FirstLaunchScreen / ProjectOpenProjectDialog / NewProjectPage",
+        "source": [
+          "frontend/src/features/project/ProjectExplorerControl.tsx",
+          "frontend/src/features/project/FirstLaunchScreen.tsx",
+          "frontend/src/features/project/NewProjectPage.tsx",
+          "frontend/src/features/project/ProjectTypes.ts"
+        ],
+        "stateOwner": "RecentProjectRecord entries live in browser localStorage under hec-ras-web.project.recent.v1 and are added only after a successful open. NewProjectDraft, including createDirectory, is modal-local and resets with resetKey; its initial directory is empty.",
+        "readActions": [
+          "project.open",
+          "projection.evaluate",
+          "workspace upload when BackendGateway.uploadWorkspace is available"
+        ],
+        "writeBoundary": "project.create receives the user-entered absolute parent directory on the C# Host, not a browser-local directory. Its returned projectPath/projectXml/revision become the active context only if the original session/path/XML/revision still match. Directory selection is not persisted as a default start directory."
+      },
+      {
+        "id": "saved-map-document-create",
+        "mount": "MapFeaturePage → MapDocumentTabs → NewMapFlyout",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/MapDocumentTabs.tsx",
+          "frontend/src/features/map/NewMapFlyout.tsx",
+          "frontend/src/features/map/ProjectTreeListener.ts"
+        ],
+        "stateOwner": "The create request captures projectSessionID/projectPath/projectRevision/projectXml plus the saved visualizationRevision. Map kind, menu open state, busy state and request generation are local to the flyout.",
+        "readActions": [
+          "map.document.list",
+          "map.tree.load"
+        ],
+        "writeBoundary": "map.document.create writes a saved map document into .vis using projectXmlSHA and expectedVisualizationRevision. The UI validates map type/index/name and the previous/new visualization revisions before installing the tab; a tree refresh must match the saved revision. It does not save the .ras project."
+      },
+      {
+        "id": "vector-conditional-symbology-preview",
+        "mount": "MapFeaturePage → VectorSymbologyEditor, only for the selected validated persisted vector node",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/usePersistedVectorLayers.ts",
+          "frontend/src/features/map/vector-symbology/VectorSymbologyEditor.tsx",
+          "frontend/src/features/map/vector-symbology/vectorSymbologyWorkflow.ts"
+        ],
+        "stateOwner": "The owner key binds project session/path/revision, active map, exact tree node, canonical vector path and the validated source SHA. Feature-index selection and conditional rules are page-local drafts; evaluation receipts are accepted only for the same owner, revision and draft key.",
+        "readActions": [
+          "vector.symbology.inspect",
+          "vector.symbology.evaluate"
+        ],
+        "writeBoundary": "This is an inspection and C# evaluation preview. The UI explicitly does not write GeoJSON/Shapefile content or .map styles and does not persist/apply the preview to the map. Its dirty owner participates in draft switching checks, but no style-save receipt exists."
+      },
+      {
+        "id": "result-details-and-plan-description",
+        "mount": "ResultsWorkspace → ResultNodeDetails → DetailedResultHeader / ResultPlanAssociationsViewer / ResultTerrainAssociation / PlanNodeDetails",
+        "source": [
+          "frontend/src/features/results/ResultsWorkspace.tsx",
+          "frontend/src/features/results/controls/ResultNodeDetails.tsx",
+          "frontend/src/features/results/controls/DetailedResultHeader.tsx",
+          "frontend/src/features/results/controls/ResultPlanAssociationsViewer.tsx",
+          "frontend/src/features/results/controls/ResultTerrainAssociation.tsx",
+          "frontend/src/features/results/controls/PlanNodeDetails.tsx"
+        ],
+        "stateOwner": "Details bind to the selected Result path/revision and current project path/XML/revision. Async detail and save generations also bind to the active result owner. Result metadata, associations, candidates and embedded settings are server snapshots. PlanNodeDetails owns a local descriptionDraft under planDescriptionOwner (project session/path plus Result path/revision) and reports its dirty state. ResultsWorkspace keeps imported user-dataset edits under a separate project-scoped results-user-dataset key in the in-memory ResultsDraftStore; its dirty owner is reported only while that user dataset is active.",
+        "readActions": [
+          "result.inspect",
+          "result.planAssociations",
+          "result.planContext",
+          "result.planSettings"
+        ],
+        "writeBoundary": "Only an eligible embedded Plan description is writable through result.planSettings.save, when Result/HDF and project revisions match, a parent context commit callback exists, the Plan identity matches and there are no other dirty owners. The Plan description owner is excluded from the other-draft check so its own edit can be saved; any separate dirty owner, including an active imported user-dataset draft, blocks the save. Cancel/Discard in PlanNodeDetails restores the server-saved description. The imported user dataset Restore resets to its in-memory original import, while CSV export adopts the exported data as a new local baseline; neither writes the HDF. The Plan save receipt updates the selected Result revision and writes the Result HDF, not .ras. Result terrain associations, Plan associations, candidate lists, embedded fields and images remain read-only."
+      },
+      {
+        "id": "multiresult-comparison-controls",
+        "mount": "MapTimeAxis → MultiResultNodeDetails when the active map tree node is MultiResult",
+        "source": [
+          "frontend/src/features/map/MapTimeAxis.tsx",
+          "frontend/src/features/map/MultiResultNodeDetails.tsx",
+          "frontend/src/features/map/useMapResultFrames.ts"
+        ],
+        "stateOwner": "Comparison selection groups and their selected Result paths/revisions belong to the current useMapResultFrames map/workflow owner. The control is absent for non-MultiResult nodes.",
+        "readActions": [
+          "map result source/tree and frame reads through useMapResultFrames"
+        ],
+        "writeBoundary": "Add/remove changes only the current map-session comparison selection; the controller caps the set at 32 and revalidates sources. It does not write .vis or create a second result session."
+      },
+      {
+        "id": "date-time-text-controls",
+        "mount": "EditorWorkbench → SchemaFieldRenderer → InputDateTimePropertyItem / DateTimeInputBox / DateInputBox",
+        "source": [
+          "frontend/src/features/editors/SchemaFieldRenderer.tsx",
+          "frontend/src/controls/InputDateTimePropertyItem.tsx",
+          "frontend/src/controls/DateTimeInputBox.tsx",
+          "frontend/src/controls/DateInputBox.tsx",
+          "frontend/src/controls/dateTimeText.ts",
+          "frontend/src/features/results/controls/TimeSeriesPayloadDateTimeColumn.tsx"
+        ],
+        "stateOwner": "Schema date fields call the same EditorWorkbench onFieldChange path as other source fields. The controls keep the source text value; recognized wall-clock forms preserve their separator and zone suffix, and unrecognized forms stay visible as raw text. TimeSeriesPayloadDateTimeColumn is a read-only result-row label.",
+        "readActions": [
+          "model.load/schema snapshot; no date control request of its own"
+        ],
+        "writeBoundary": "Date text changes remain in the current model draft and reach HDF only through model.save after normal validation. The dedicated BoundaryConditionTimeWindow still uses datetime-local conversion and writes the grouped boundary-time values into the same draft; it is not the timezone-neutral text control."
+      },
+      {
+        "id": "boundary-condition-line-and-payload-editor",
+        "mount": "Editors → EditorWorkbench → BoundaryConditionLineEditorPage → BasicHydraulicBoundaryConditions → BoundaryConditionLineEditor / BoundaryConditionLinePayloadsList / NewPayloadDialog",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/BoundaryConditionLineEditorPage.tsx",
+          "frontend/src/features/editors/BasicHydraulicBoundaryConditions.tsx",
+          "frontend/src/features/editors/BoundaryConditionLineEditor.tsx",
+          "frontend/src/features/editors/BoundaryConditionLinePayloadsList.tsx",
+          "frontend/src/features/editors/NewPayloadDialog.tsx",
+          "frontend/src/features/editors/BoundaryConditionTimeWindow.tsx"
+        ],
+        "stateOwner": "The selected model session, source path/revision and ModelDraft own line fields, aliases, rows, samples, payload values and transform sourceState. Selecting another line is view-local and does not mutate the save baseline.",
+        "readActions": [
+          "model.load"
+        ],
+        "writeBoundary": "Payload create/remove uses model.boundaryTransform and accepts only a revision-matched draft projection with changed sourceState and stable payload IDs. Field, date/time, table and sample edits stay in the same ModelDraft; only the parent model.save commits them to the model HDF."
+      },
+      {
+        "id": "geometry-culvert-editor",
+        "mount": "GeometryEditor → GeometryCulvertsPage → CulvertsEditor → CulvertsTable / CulvertEditor / barrel and opening property pages",
+        "source": [
+          "frontend/src/features/geometry/GeometryEditor.tsx",
+          "frontend/src/features/geometry/GeometryCulvertsPage.tsx",
+          "frontend/src/features/geometry/CulvertsEditor.tsx",
+          "frontend/src/features/geometry/useGeometryWorkbench.ts"
+        ],
+        "stateOwner": "The Geometry workbench owns project/model identity, captured HDF revision, stable culvert row IDs, draftState and undo state. Selected rows and the active subpage are view state.",
+        "readActions": [
+          "geometry.culverts.load"
+        ],
+        "writeBoundary": "geometry.culverts.edit returns a revision-bound server draft for edits/add/remove/commands; it does not commit the HDF. The Geometry parent model.save includes geometryCulvertState and advances the selected asset only after its save response. Local-only rows/overrides remain unsaved and block parent persistence."
+      },
+      {
+        "id": "terrain-transform-draft",
+        "mount": "EditorWorkbench → TerrainLayersEditor and selected terrain-input detail/table editors",
+        "source": [
+          "frontend/src/features/editors/EditorWorkbench.tsx",
+          "frontend/src/features/editors/model.ts",
+          "frontend/src/features/editors/TerrainLayersEditor.tsx",
+          "frontend/src/features/editors/ChannelModEditor.tsx",
+          "frontend/src/features/editors/LeveeModDetailEditor.tsx"
+        ],
+        "stateOwner": "The current model owner and ModelDraft hold terrainView, rows, selections, validation state and sourceState. Transform requests carry the captured model revision and current field/row/sample edits; selected input is an explicit part of the transform request.",
+        "readActions": [
+          "model.load",
+          "model.terrainTransform"
+        ],
+        "writeBoundary": "model.terrainTransform returns a terrain draft projection at the captured model revision with a new non-empty sourceState; the workbench retains it as draft state. The transformation is not a file save. The parent model.save is the persistence boundary."
+      },
+      {
+        "id": "usgs-terrain-import",
+        "mount": "ToolsPageView → USGS terrain tab → USGSTerrainImportControl → USGSTerrainImportDialog / filter / index map / product summary",
+        "source": [
+          "frontend/src/features/tools/index.tsx",
+          "frontend/src/features/tools/usgs/USGSTerrainImportControl.tsx",
+          "frontend/src/features/tools/usgs/USGSTerrainImportDialog.tsx",
+          "frontend/src/features/tools/usgs/USGSFilterControl.tsx",
+          "frontend/src/features/tools/usgs/UsgsIndexMapControl.tsx",
+          "frontend/src/features/tools/usgs/USGSSummary.tsx"
+        ],
+        "stateOwner": "The workflow is bound to the active Terrain asset, project session/path/XML/revision and source owner. Product filters/selections, stitch choice and per-source inclusion/rounding settings are local to this import review; queries are invalidated when the terrain input changes.",
+        "readActions": [
+          "model.load",
+          "model.terrainUSGSQuery",
+          "model.terrainInputImportInspect",
+          "model.terrainInputImportStatus"
+        ],
+        "writeBoundary": "Download creates Host-owned temporary source files. A user-selected batch then uses model.terrainUSGSDownload, model.terrainInputAppend and status polling; model.save commits the accepted Terrain draft and its HDF revision. model.terrainUSGSCleanup is a separate action requiring a fresh saved-model check that no Terrain input references the temporary paths. Ordinary in-project Terrain sources use their project path/revision/sourceState; only present session-only external references require a captured reference context."
+      }
+    ],
     "stateInvariants": [
       "projectRevision identifies the .ras file independently of selectedAsset.revision.",
       "A tree refresh does not clear the active selected model.",

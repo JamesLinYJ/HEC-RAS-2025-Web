@@ -28,3 +28,4 @@
 .editor-text-property-copy{flex:none;padding:1px 5px;border:0;border-radius:3px;background:transparent;color:#61778a;font-size:10px;cursor:pointer}
 .editor-text-property-copy:hover{background:#eaf2f8}
 .editor-text-property-copy:disabled{display:none}
+.editor-date-time-input-box{display:grid;min-width:0;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;align-items:center;gap:6px}.editor-date-time-input-box>span{color:#687684}.editor-date-time-zone{font-size:11px}.editor-field-error-list{display:flex;flex-direction:column;gap:2px}.editor-double-click-validateable-text-value{display:inline-block;min-width:1em;min-height:1.2em;overflow-wrap:anywhere;white-space:pre-wrap}.editor-double-click-validateable-text-value[role=button]{cursor:text}.editor-double-click-validateable-text-value[role=button]:focus-visible{outline:2px solid #287db7;outline-offset:2px}

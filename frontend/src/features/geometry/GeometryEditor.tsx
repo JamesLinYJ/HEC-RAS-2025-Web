@@ -151,6 +151,9 @@ export default function GeometryPage(props: FeaturePageProps) {
         busy={busy}
         onChange={workspace.onCulvertChange}
         onCommand={workspace.onCulvertCommand}
+        onBarrelSelection={workspace.onCulvertSelection}
+        onSelectionChange={workspace.onCulvertSelectionChange}
+        onSelectionCommand={workspace.onCulvertSelectionCommand}
         onDelete={workspace.onCulvertDelete}
         onAddBarrel={workspace.addCulvertBarrel}
         onAddPropertySet={workspace.addCulvertPropertySet}

@@ -73,6 +73,8 @@ export interface FeaturePageProps {
   /** Changes when the server's advertised operation set is refreshed. */
   backendRevision?: number;
   hasUnsavedDrafts?: boolean;
+  /** Exact draft owners allow a save to exclude its own draft, while guarding other editors. */
+  dirtyOwners?: ReadonlySet<string>;
 }
 export class BackendOperationUnavailableError extends Error {
   readonly code = 'operationUnavailable';

@@ -132,7 +132,7 @@ export function RasMainWindow() {
     catch (error) { setRuntimeState('failed'); setRuntimeError(message(error)); }
   }, [backend]);
   useEffect(() => { void connect(); }, [connect]);
-  const props = { language, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0, onContextChange, onContextCommit, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
+  const props = { language, context, backend, backendRevision, hasUnsavedDrafts: dirtyOwners.size > 0, dirtyOwners, onContextChange, onContextCommit, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
   const title = context.selectedAsset?.name ?? context.projectPath?.split(/[\\/]/).at(-1) ?? t('尚未打开工程', 'No project open');
 
   return <main className="ras-main-window">

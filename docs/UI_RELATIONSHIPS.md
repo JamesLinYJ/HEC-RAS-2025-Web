@@ -61,6 +61,23 @@ HTTP 操作的受理 ID、传输状态、求解器进度与终态分别管理。
 
 `MapFeaturePage` 只把已确认连续栅格帧的精确 `rasterSource` 传给 `RasterSymbologyEditor`，直方图、颜色带与应用调用真实符号服务；`.vis` 提交回执必须匹配请求的上一修订和来源 SHA。只用于当前渲染、尚未持久化的 plot options 保持只读。水力工具页的 Wilcock 控件与单位计算器分别调用 `wilcock.load/evaluate` 和 `unitCalculator.load/convert`；数值运算留在 C#，前端只管理输入、工况、请求与真实结果显示。
 
+
+## 专用界面的挂载与数据边界
+
+| UI 挂载 | 状态所有者与读取 | 写入或只读边界 |
+| --- | --- | --- |
+| `ProjectExplorerControl → ProjectExplorerMainPageTiled → FirstLaunchScreen / NewProjectPage / ProjectOpenProjectDialog` | 首页动作由工程工作区持有；最近工程仅把成功打开的服务器路径存入浏览器 `localStorage`（最多 12 项）。新建表单的 `NewProjectDraft` 是弹窗草稿，父目录初始为空。 | `projection.evaluate` 只验证；`project.create` 需要用户输入 C# 服务主机上的绝对父目录，不接受浏览器本机路径。只有完整创建回执且原工程会话仍匹配时才切换上下文；没有持久化的默认起始目录。 |
+| `MapFeaturePage → MapDocumentTabs → NewMapFlyout` | 工作区工程会话/XML/修订与当前地图 `.vis` 修订是请求所有者；地图类型、菜单与请求代次是弹层本地状态。 | `map.document.create` 以工程 XML SHA 和预期 `.vis` 修订创建保存地图；地图类型、索引、名称及前后修订匹配并完成树读取后才安装新标签。写 `.vis`，不代替工程 `.ras` 保存。 |
+| `MapFeaturePage → VectorSymbologyEditor` | 仅从已验证持久化矢量捕获挂载，绑定活动地图节点、规范 GeoJSON 路径与来源 SHA；原始要素序号和条件规则是临时草稿。 | `vector.symbology.inspect/evaluate` 只检查属性及由 C# 求值预览。当前 UI 明确不写 GeoJSON/Shapefile 或 `.map` 样式，也不把预览应用到地图；草稿可参与切换提示，但没有样式保存回执。 |
+| `ResultsWorkspace → ResultNodeDetails → PlanNodeDetails` | 详情按当前 Result HDF 路径/修订及工程修订读取。`PlanNodeDetails` 持有局部描述草稿，按工程会话/路径和 Result 路径/修订注册独立 dirty owner。导入的用户数据草稿另按工程会话/路径存入内存 `ResultsDraftStore`；只有选择用户数据源时才向父级登记其 dirty 状态。地图 `MultiResultNodeDetails` 仅在活动树节点为 MultiResult 时出现，比较源属于当前地图结果会话。 | `result.planSettings.save` 仅允许精确匹配 Plan 描述在工程/HDF 修订一致、父提交可用且没有其它 dirty owner 时写入；检查会排除该描述自己的 dirty owner，因此可以保存自身草稿。取消更改恢复服务端描述；用户数据的“还原”恢复本次导入基线，CSV 导出则把导出数据设为新本地基线，均不写 HDF。Plan 保存回执更新选中 Result HDF 修订，不写 `.ras`；地形关联、关联列表、候选和内嵌字段/图片只读。地图比较源增删仅改当前会话，不写 `.vis`。 |
+| `SchemaFieldRenderer → InputDateTimePropertyItem / DateTimeInputBox / DateInputBox` | 普通模型日期字段使用受控文本值；识别的日期时间形式保留原分隔符和时区后缀，不能识别的原文仍按原样显示。 | 输入只通过 `onFieldChange` 更新 `EditorWorkbench` 的模型草稿，校验通过后由 `model.save` 写入。专用 `BoundaryConditionTimeWindow` 仍使用 `datetime-local` 转换；结果表的 `TimeSeriesPayloadDateTimeColumn` 只是只读时间标签。 |
+| `EditorWorkbench → BoundaryConditionLineEditorPage → BasicHydraulicBoundaryConditions → BoundaryConditionLineEditor / BoundaryConditionLinePayloadsList / NewPayloadDialog` | 当前模型快照、line/payload 身份、字段别名、表格/序列和 `ModelDraft.sourceState` 共用一个父编辑器所有者；切换边界线只改变局部选择。 | 新建/移除载荷经 `model.boundaryTransform` 得到修订绑定的草稿投影；字段、时段、表格与样本修改留在同一草稿中。只有父级 `model.save` 写入模型 HDF。 |
+| `GeometryEditor → GeometryCulvertsPage → CulvertsEditor → CulvertEditor` | `geometry.culverts.load` 返回的稳定行 ID、源修订、服务端 `draftState` 和撤销状态归 Geometry 工作区；选行及子页是视图状态。 | `geometry.culverts.edit` 修改的是服务端草稿；父级 `model.save` 才提交 HDF。服务端能力不可用时的本地添加/覆写会保持 local-only，不能冒充可保存几何。 |
+| `EditorWorkbench → TerrainLayersEditor → selected terrain-input detail/table editors` | `model.terrainTransform` 请求携带当前模型修订、`sourceState`、字段/行/样本和选中输入；返回的 terrain projection 与新 `sourceState` 留在 `ModelDraft`。 | 图层增删、排序、选择、行变换等是草稿转换，不直接写模型文件；校验通过后由同一 `model.save` 提交。 |
+| `ToolsPageView → USGS 地形 tab → USGSTerrainImportControl / USGSTerrainImportDialog` | 页面按需挂载并绑定活动 Terrain、工程会话及源修订。查询范围、产品筛选/选择、拼接和逐来源舍入选项由当前导入工作流持有。 | USGS 查询、下载、导入检查、追加暂存/状态查询分开执行；确认的 `model.save` 才提交 Terrain HDF。Host 临时下载文件的清理是独立操作，须重新确认已保存 Terrain 不引用这些路径。普通工程内 Terrain 使用其现有 path/revision/sourceState；只有实际存在的会话外部引用才需要额外捕获。 |
+
+这些挂载描述当前实际可见的数据关系；模块存在、来源契约或预览草稿都不代表存在持久化能力。矢量条件符号目前只到 Host 求值预览，不能写成地图样式保存已接通。
+
 ## 迁移参考契约范围
 
 从下节起保留既有 C#、SwiftUI 与后端的领域关系，作为后续逐文件迁移的参考要求。下文的 SwiftUI 类型、macOS 系统能力和进程实现描述属于来源实现，不代表当前 React 界面已实现它们。JSON 中 `domainRelations` 等既有集合具有相同参考范围；当前 React 边界单独放在 `currentImplementation` 中。

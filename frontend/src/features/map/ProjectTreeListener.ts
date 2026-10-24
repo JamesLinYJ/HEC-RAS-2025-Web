@@ -191,6 +191,14 @@ export async function createMapDocument(
     kind,
   };
   const receipt = await backend.request<MapDocumentReceipt>('map.document.create', request);
+  if (!receipt || !Number.isInteger(receipt.mapIndex) || receipt.mapIndex < 0 ||
+      typeof receipt.mapName !== 'string' || !receipt.mapName.trim() || receipt.mapType !== kind ||
+      typeof receipt.visualizationRevision !== 'string' || !/^[\da-f]{64}$/i.test(receipt.visualizationRevision) ||
+      (expectedVisualizationRevision === null ? receipt.previousVisualizationRevision !== null
+        : typeof receipt.previousVisualizationRevision !== 'string' ||
+          receipt.previousVisualizationRevision.toUpperCase() !== expectedVisualizationRevision.toUpperCase())) {
+    throw new Error('The new-map receipt does not match the requested map type and visualization revision. Reload the saved maps before retrying.');
+  }
   const mapID = mapDocumentTabID(context, { mapIndex: receipt.mapIndex, mapName: receipt.mapName, mapType: receipt.mapType });
   const tab: MapDocumentTab = {
     id: mapID,

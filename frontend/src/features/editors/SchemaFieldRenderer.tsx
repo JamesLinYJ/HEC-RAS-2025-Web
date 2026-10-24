@@ -5,6 +5,8 @@ import { schemaForPage } from './model';
 import { editorAssetKind, editorText } from './editorLocalization';
 import { ColorPickerPropertyItem } from '../../controls/ColorPickerPropertyItem';
 import { ComboBoxPropertyItem } from '../../controls/ComboBoxPropertyItem';
+import { DateTimeInputBox } from '../../controls/DateTimeInputBox';
+import { DoubleClickValidateableTextBox } from '../../controls/DoubleClickValidateableTextBox';
 import { BetterComboBox } from '../../controls/BetterComboBox';
 import { BetterComboBoxPropertyItem } from '../../controls/BetterComboBoxPropertyItem';
 import { InputDateTimePropertyItem } from '../../controls/InputDateTimePropertyItem';
@@ -17,6 +19,9 @@ import { SliderPropertyItem } from '../../controls/SliderPropertyItem';
 import { SliderTextPropertyItem } from '../../controls/SliderTextPropertyItem';
 import { TextPropertyItem } from '../../controls/TextPropertyItem';
 import { ToggleablePropertyItem } from '../../controls/ToggleablePropertyItem';
+import { ValidateableTextBox } from '../../controls/ValidateableTextBox';
+import { ValidationErrorList } from '../../controls/ValidationErrorList';
+import { isValidDateTimeText } from '../../controls/dateTimeText';
 import '../../controls/propertyItems.css';
 
 interface SchemaFieldRendererProps {
@@ -130,6 +135,18 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
     control = <ImageCollection fieldKey={fieldKey} images={imageList} disabled={disabled} onImagesChange={onImagesChange} language={language} />;
   } else if (field.kind === 'display') {
     control = <ParagraphPropertyItem id={generatedID} value={value} />;
+  } else if (/^doubleclickvalidateabletextbox\d*$/.test(sourceControl)) {
+    const error = disabled ? null : validateFieldValue(field, value, language);
+    control = <>
+      <DoubleClickValidateableTextBox id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
+      <ValidationErrorList errors={error ? [error] : []} />
+    </>;
+  } else if (/^validateabletextbox\d*$/.test(sourceControl)) {
+    const error = disabled ? null : validateFieldValue(field, value, language);
+    control = <>
+      <ValidateableTextBox id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} acceptsReturn={field.kind === 'multiline'} placeholder={field.placeholder ? editorText(language, field.placeholder) : undefined} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
+      <ValidationErrorList errors={error ? [error] : []} />
+    </>;
   } else if (/^textpropertyitem\d*$/.test(sourceControl)) {
     control = <TextPropertyItem value={value} language={language} />;
   } else if (radioTextControl && radioBinding) {
@@ -151,13 +168,15 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
         onTextChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)}
         onSelectionChange={(nextValue) => onFieldChange?.(selectionKey, nextValue)}
       />
-      {error && <small className="editor-field-error">{error}</small>}
+      <ValidationErrorList errors={error ? [error] : []} />
     </>;
-  } else if (field.kind === 'date' && sourceControl === 'inputdatetimepropertyitem') {
+  } else if (field.kind === 'date' && (/^dateinputbox\d*$/.test(sourceControl) || /^datetimeinputbox\d*$/.test(sourceControl) || sourceControl === 'inputdatetimepropertyitem')) {
     const error = disabled ? null : validateFieldValue(field, value, language);
     control = <>
-      <InputDateTimePropertyItem id={generatedID} mode="datetime-local" value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
-      {error && <small className="editor-field-error">{error}</small>}
+      {sourceControl === 'inputdatetimepropertyitem'
+        ? <InputDateTimePropertyItem id={generatedID} mode="datetime-local" value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
+        : <DateTimeInputBox id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} groupLabel={title} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />}
+      <ValidationErrorList errors={error ? [error] : []} />
     </>;
   } else if (field.kind === 'multiline') {
     control = <InputTextPropertyItem id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} acceptsReturn onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />;
@@ -166,36 +185,36 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
     if (/^slidertextpropertyitem\d*$/.test(sourceControl)) {
       control = <>
         <SliderTextPropertyItem id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} minValue={field.minimum ?? undefined} maxValue={field.maximum ?? undefined} step={field.sourceType === 'int' ? 1 : 'any'} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
-        {error && <small className="editor-field-error">{error}</small>}
+        <ValidationErrorList errors={error ? [error] : []} />
       </>;
     } else if (field.minimum != null && field.maximum != null) {
       control = <>
         <SliderPropertyItem id={generatedID} value={value} minValue={field.minimum} maxValue={field.maximum} step={field.sourceType === 'int' ? 1 : 'any'} disabled={disabled} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
-        {error && <small className="editor-field-error">{error}</small>}
+        <ValidationErrorList errors={error ? [error] : []} />
       </>;
     } else {
       control = <>
         <input id={generatedID} type="text" inputMode="decimal" value={value} readOnly={isReadOnly} disabled={disabled} placeholder={field.placeholder ? editorText(language, field.placeholder) : undefined} aria-invalid={error ? 'true' : undefined} onChange={(event) => onFieldChange?.(fieldKey, event.currentTarget.value)} />
-        {error && <small className="editor-field-error">{error}</small>}
+        <ValidationErrorList errors={error ? [error] : []} />
       </>;
     }
   } else if (field.kind === 'number' && /^slidertextpropertyitem\d*$/.test(sourceControl)) {
     const error = disabled ? null : validateFieldValue(field, value, language);
     control = <>
       <SliderTextPropertyItem id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} ariaInvalid={Boolean(error)} minValue={field.minimum ?? undefined} maxValue={field.maximum ?? undefined} step={field.sourceType === 'int' ? 1 : 'any'} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
-      {error && <small className="editor-field-error">{error}</small>}
+      <ValidationErrorList errors={error ? [error] : []} />
     </>;
   } else if (field.kind === 'number' && /^numericpropertyitem\d*$/.test(sourceControl)) {
     const error = disabled ? null : validateFieldValue(field, value, language);
     control = <>
       <NumericPropertyItem id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} inputMode={field.sourceType === 'int' ? 'numeric' : 'decimal'} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
-      {error && <small className="editor-field-error">{error}</small>}
+      <ValidationErrorList errors={error ? [error] : []} />
     </>;
   } else if (field.kind === 'number' && /^numberbox\d*$/.test(sourceControl)) {
     const error = disabled ? null : validateFieldValue(field, value, language);
     control = <>
       <NumberBox id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} inputMode={field.sourceType === 'int' ? 'numeric' : 'decimal'} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
-      {error && <small className="editor-field-error">{error}</small>}
+      <ValidationErrorList errors={error ? [error] : []} />
     </>;
   } else {
     const error = disabled ? null : validateFieldValue(field, value, language);
@@ -205,7 +224,7 @@ function FieldControl({ schema, field, snapshot, values, images, canEdit, previe
       {isTextField
         ? <InputTextPropertyItem id={generatedID} value={value} readOnly={isReadOnly} disabled={disabled} placeholder={field.placeholder ? editorText(language, field.placeholder) : undefined} ariaInvalid={Boolean(error)} onChange={(nextValue) => onFieldChange?.(fieldKey, nextValue)} />
         : <input id={generatedID} type="text" inputMode={inputMode} value={value} readOnly={isReadOnly} disabled={disabled} placeholder={field.placeholder ? editorText(language, field.placeholder) : undefined} aria-invalid={error ? 'true' : undefined} onChange={(event) => onFieldChange?.(fieldKey, event.currentTarget.value)} />}
-      {error && <small className="editor-field-error">{error}</small>}
+      <ValidationErrorList errors={error ? [error] : []} />
     </>;
   }
 
@@ -284,7 +303,7 @@ export function validateFieldValue(field: EditorFieldSchema, value: string, lang
     if (field.maximum != null && number > field.maximum) return isChinese(language) ? `值不能大于 ${field.maximum}。` : `Value must be at most ${field.maximum}.`;
     return null;
   }
-  if (field.kind === 'date') return value.trim() && Number.isFinite(Date.parse(value)) ? null : invalid;
+  if (field.kind === 'date') return value.trim() && isValidDateTimeText(value) ? null : invalid;
   if (field.kind === 'toggle') return value === 'true' || value === 'false' ? null : invalid;
   if (field.kind === 'choice' && field.choices?.length && !field.choices.some((choice) => choice.id === value)) return invalid;
   return null;
@@ -329,7 +348,7 @@ export function validateChangedTableCells(draft: EditorPageProps['draft'], snaps
         if (value === (originalRow?.values[column.id] ?? '') || column.readOnly) continue;
         const sourceType = column.sourceType.toLowerCase();
         if (sourceType === 'date' || sourceType === 'datetime') {
-          if (value.trim() === '' || !Number.isFinite(Date.parse(value))) errors.push({ fieldID: `${tableID}/${row.id}/${column.id}`, title: `${editorText(language, column.title)} · ${row.id}`, message: invalid });
+          if (value.trim() === '' || !isValidDateTimeText(value)) errors.push({ fieldID: `${tableID}/${row.id}/${column.id}`, title: `${editorText(language, column.title)} · ${row.id}`, message: invalid });
           continue;
         }
         if (!['int', 'double', 'float', 'number'].includes(sourceType)) continue;

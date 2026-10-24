@@ -7,6 +7,7 @@ import { MapDocumentTabs } from './MapDocumentTabs';
 import { MapLayerTree } from './MapLayerTree';
 import { MapSettingsPanel } from './MapSettingsPanel';
 import { RasterSymbologyEditor } from './symbology/RasterSymbologyEditor';
+import { VectorSymbologyEditor } from './vector-symbology/VectorSymbologyEditor';
 import { DEFAULT_MAP_DISPLAY_SETTINGS } from './MapSettings';
 import type { MapDisplaySettings } from './MapSettings';
 import { MapTimeAxis } from './MapTimeAxis';
@@ -23,7 +24,7 @@ import { useMapVelocityField } from './useMapVelocityField';
 import { usePersistedRasterLayers, mapRasterViewportFromCamera } from './usePersistedRasterLayers';
 import { useMapResultFrames } from './useMapResultFrames';
 import { useAssociatedMapLayers } from './useAssociatedMapLayers';
-import { mapCatalogMatchesDocument } from './associatedMapLayers';
+import { mapCatalogMatchesDocument, sameMapID } from './associatedMapLayers';
 import { useMapHoverIdentify } from './useMapHoverIdentify';
 import type { MapHoverPointer } from './useMapHoverIdentify';
 import { rgbaFrameImage } from './mapImages';
@@ -811,6 +812,19 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
     symbologySourceRef.current.nodeID === selectedBackend.nodeID &&
     symbologySourceRef.current.acceptedVisualizationRevision === activeDocument.visualizationRevision
     ? symbologySourceRef.current.source : undefined;
+  const selectedVectorCapture = selectedBackend && activeDocument
+    ? persistedVectors.captures.find(capture => capture.nodeID === selectedBackend.nodeID &&
+      capture.source.family.family === 'geojson' &&
+      capture.source.map.projectPath === context.projectPath &&
+      capture.source.map.projectRevision === context.projectRevision &&
+      capture.source.map.visualizationRevision === activeDocument.visualizationRevision &&
+      capture.source.map.mapID !== null && sameMapID(capture.source.map.mapID, activeDocument.mapID) &&
+      capture.source.map.mapIndex === activeDocument.mapIndex &&
+      capture.source.map.mapName === activeDocument.name && capture.source.map.mapType === activeDocument.mapType)
+    : undefined;
+  const selectedVectorFile = selectedVectorCapture?.source.family.files.find(file =>
+    file.role === 'source' && file.required && file.exists && file.revision &&
+    file.path === selectedVectorCapture.source.family.sourcePath);
   const layerCount = visibleLayers.length + mapImages.length;
   const featureCount = visibleLayers.reduce((sum, layer) => sum + layer.features.length, 0);
   const zoomPercent = Number.isFinite(viewport.scale) ? Math.round(viewport.scale * 100) : 100;
@@ -1102,6 +1116,13 @@ function MapPage({ language, context, backend, backendRevision, onDirtyStateChan
             }}
           />}
           <MapSettingsPanel settings={settings} onChange={setSettings} language={language} />
+          {selectedVectorFile?.revision && selectedBackend && activeDocument && <VectorSymbologyEditor
+            backend={backend} context={context} language={language}
+            vectorPath={selectedVectorFile.path} revision={selectedVectorFile.revision}
+            ownerID={JSON.stringify([projectContextKey, activeDocument.id,
+              activeDocument.visualizationRevision, selectedBackend.nodeID])}
+            onDirtyStateChange={onDirtyStateChange}
+          />}
           {settings.showVelocityArrows && <p className="map-velocity-status" role="status" data-testid="map-velocity-status">
             {velocityField.loading ? text(language, '正在读取当前时刻的速度场…', 'Reading velocity at the current output time…')
               : velocityField.capture ? text(language,

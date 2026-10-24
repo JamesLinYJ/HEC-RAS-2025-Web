@@ -1,12 +1,13 @@
 import type { EditorPageProps, EditorSchema, ModelRow, ModelTable } from './model';
 import { SchemaFieldRenderer } from './SchemaFieldRenderer';
 import { ModelDataTable } from './ModelDataTable';
+import { LeveeModsTable } from './LeveeModsTable';
 
 const featureTableID = 'ChannelModEditor/Features';
 const profileTableID = 'ChannelModEditor/Profile';
 const terrainProfileTableID = 'ChannelModEditor/TerrainProfile';
 
-export function ChannelModEditor({ language, snapshot, draft, onFieldChange, onImagesChange, onRowCellChange, schema }: EditorPageProps & { schema: EditorSchema }) {
+export function ChannelModEditor({ language, snapshot, draft, onFieldChange, onImagesChange, onRowCellChange, onTerrainTransform, schema }: EditorPageProps & { schema: EditorSchema }) {
   const featureTable = snapshot.terrain?.tables?.[featureTableID];
   const selectedRows = featureTable?.selectedRowIDs ?? featureTable?.requestedSelectionRowIDs ?? [];
   const selectedFeatureScope = selectedRows.length === 1 ? `TerrainSelection/${selectedRows[0]}/${schema.id}` : '';
@@ -22,21 +23,20 @@ export function ChannelModEditor({ language, snapshot, draft, onFieldChange, onI
     <section className="editor-terrain-card editor-channel-mod" aria-label={language === 'zh' ? '渠道修改编辑器' : 'Channel modification editor'}>
       <h4>{language === 'zh' ? '渠道修改线' : 'Channel modification lines'}</h4>
       {hasSelectedFeatureFields && <SchemaFieldRenderer schema={displaySchema} fieldKeyPrefix={selectedFeatureScope} snapshot={snapshot} values={draft.fields} images={draft.images} canEdit={snapshot.canEdit} onFieldChange={onFieldChange} onImagesChange={onImagesChange} language={language} />}
-      {featureTable && <TableCard tableID={featureTableID} title={language === 'zh' ? '渠道修改线' : 'Channel modification lines'} table={featureTable} rows={draft.rows[featureTableID] ?? snapshot.terrain?.rows?.[featureTableID] ?? []} props={{ snapshot, draft, language, onRowCellChange }} />}
-      {selectedRows.length === 1 && tables[profileTableID] && <TableCard tableID={profileTableID} title={language === 'zh' ? '渠道剖面' : 'Channel profile'} table={tables[profileTableID]} rows={profileRows} props={{ snapshot, draft, language, onRowCellChange }} />}
-      {selectedRows.length === 1 && tables[terrainProfileTableID] && <TableCard tableID={terrainProfileTableID} title={language === 'zh' ? '现状地形剖面' : 'Terrain profile'} table={tables[terrainProfileTableID]} rows={terrainRows} props={{ snapshot, draft, language, onRowCellChange }} />}
+      {featureTable && <LeveeModsTable tableID={featureTableID} title={language === 'zh' ? '渠道修改线' : 'Channel modification lines'} table={featureTable} rows={draft.rows[featureTableID] ?? snapshot.terrain?.rows?.[featureTableID] ?? []} language={language} canEdit={snapshot.canEdit} onCellChange={onRowCellChange} onTransform={onTerrainTransform} selectionMode="single" />}
+      {selectedRows.length === 1 && tables[profileTableID] && <ProfileTable tableID={profileTableID} title={language === 'zh' ? '渠道剖面' : 'Channel profile'} table={tables[profileTableID]} rows={profileRows} canEdit={snapshot.canEdit} language={language} onRowCellChange={onRowCellChange} onTerrainTransform={onTerrainTransform} />}
+      {selectedRows.length === 1 && tables[terrainProfileTableID] && <LeveeModsTable tableID={terrainProfileTableID} title={language === 'zh' ? '现状地形剖面' : 'Terrain profile'} table={tables[terrainProfileTableID]} rows={terrainRows} language={language} canEdit={snapshot.canEdit} onCellChange={onRowCellChange} onTransform={onTerrainTransform} />}
       {selectedRows.length === 1 && <ProfileChart language={language} profile={profileRows} terrain={terrainRows} />}
-      {featureTable && selectedRows.length === 0 && <small className="editor-field-muted">{language === 'zh' ? '原控件按选中的渠道线显示剖面；当前表格回显数据和单元格草稿，行选择需接入地形选择操作。' : 'The source editor shows a profile for the selected channel line; this table exposes returned rows and cell drafts, while row selection requires the terrain selection operation.'}</small>}
+      {featureTable && selectedRows.length === 0 && <small className="editor-field-muted">{language === 'zh' ? '请选择一条渠道修改线以查看并编辑其剖面。' : 'Select one channel modification line to view and edit its profiles.'}</small>}
     </section>
   );
 }
 
-function TableCard({ tableID, title, table, rows, props }: { tableID: string; title: string; table: ModelTable; rows: ModelRow[]; props: Pick<EditorPageProps, 'snapshot' | 'draft' | 'language' | 'onRowCellChange'> }) {
-  const { snapshot, language, onRowCellChange } = props;
+function ProfileTable({ tableID, title, table, rows, canEdit, language, onRowCellChange, onTerrainTransform }: { tableID: string; title: string; table: ModelTable; rows: ModelRow[]; canEdit: boolean; language: 'zh' | 'en'; onRowCellChange: EditorPageProps['onRowCellChange']; onTerrainTransform?: EditorPageProps['onTerrainTransform'] }) {
   return <div className="editor-table-card">
     <div className="editor-terrain-table-heading"><h5>{title}</h5><span>{rows.length} {language === 'zh' ? '行' : 'rows'}</span></div>
-    <ModelDataTable tableID={tableID} rows={rows} columns={table.columns} canEdit={snapshot.canEdit} onCellChange={onRowCellChange} language={language} />
-    {(table.canAddRows || table.canDeleteRows || table.canCopyRows) && <small className="editor-field-muted">{language === 'zh' ? '结构性行操作仍需对应的地形操作回调。' : 'Structural row operations still require the matching terrain operation callback.'}</small>}
+    <ModelDataTable tableID={tableID} rows={rows} columns={table.columns} canEdit={canEdit} onCellChange={onRowCellChange} language={language} />
+    {table.canAddRows && <button type="button" className="editor-button" disabled={!canEdit || !onTerrainTransform} onClick={() => void onTerrainTransform?.({ operation: 'addRow', tableId: tableID })}>{language === 'zh' ? '新增剖面点' : 'Add profile point'}</button>}
   </div>;
 }
 

@@ -106,6 +106,10 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
   const topologyQueue = useRef<Promise<void>>(Promise.resolve());
   const meshQueue = useRef<Promise<void>>(Promise.resolve());
   const culvertQueue = useRef<Promise<void>>(Promise.resolve());
+  const culvertSelectionRef = useRef<{ owner: string; ids: string[] }>({ owner: sourceOwner, ids: [] });
+  if (culvertSelectionRef.current.owner !== sourceOwner) {
+    culvertSelectionRef.current = { owner: sourceOwner, ids: [] };
+  }
   const generationRef = useRef(0);
   const previousLoad = useRef<{ identity: string; backend: typeof backend } | null>(null);
 
@@ -191,7 +195,8 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
       const culvertPromise = (async (): Promise<void> => {
         if (!backend.supports('geometry.culverts.load')) return;
         try {
-          const value = await backend.request<GeometryCulvertSnapshot>('geometry.culverts.load', { model, revision: asset.revision, draftState: null, selectedBarrelIDs: [] }, { signal: controller.signal });
+          const selectedBarrelIDs = culvertSelectionRef.current.owner === owner ? culvertSelectionRef.current.ids : [];
+          const value = await backend.request<GeometryCulvertSnapshot>('geometry.culverts.load', { model, revision: asset.revision, draftState: null, selectedBarrelIDs }, { signal: controller.signal });
           if (isCurrent()) { setCulvertEntry({ owner, value }); setError('culverts'); }
         } catch (error) { if (isCurrent()) setError('culverts', geometryDiagnosticMessage(error)); }
         finally { if (isCurrent()) setLoading((state) => ({ ...state, culverts: false })); }
@@ -553,17 +558,35 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     const snapshot = current.value;
     const result = await send<GeometryCulvertSnapshot>('geometry.culverts.edit', {
       model, revision: snapshot.revision, draftState: snapshot.draftState,
-      mutation, selectedBarrelIDs: [],
+      mutation, selectedBarrelIDs: culvertSelectionRef.current.owner === sourceOwner ? culvertSelectionRef.current.ids : [],
     }, sourceOwner);
     if (result.revision !== snapshot.revision) throw new Error('The culvert response revision does not match the captured source revision.');
     setCulverts(result); setError('culverts');
     return result;
   });
 
+  const onCulvertSelection = useCallback((ids: string[]): void => {
+    culvertSelectionRef.current = { owner: sourceOwner, ids: [...new Set(ids)] };
+  }, [sourceOwner]);
+
   const onCulvertChange = (kind: 'barrel' | 'barrelProperties' | 'openingProperties', row: GeometryRow, field: GeometryField, value: string, isLocal: boolean): void => {
     if (isLocal) { updateLocalRow(kind, row, field, value); return; }
     if (!culverts?.canEdit || !supports('geometry.culverts.edit')) { setOverride(kind, row, field, value); return; }
     void editCulvert({ operation: 'setField', featureKind: kind, featureIDs: [row.id], fieldID: field.id, value }).catch((error: unknown) => setError('culverts', geometryDiagnosticMessage(error)));
+  };
+
+  const onCulvertSelectionChange = (kind: 'barrel' | 'barrelProperties' | 'openingProperties', rows: GeometryRow[], field: GeometryField, value: string): void => {
+    const localIDs = new Set((draft?.rows[kind] ?? []).map((row) => row.id));
+    const local = rows.filter((row) => localIDs.has(row.id));
+    const source = rows.filter((row) => !localIDs.has(row.id));
+    for (const row of local) updateLocalRow(kind, row, field, value);
+    if (!source.length) return;
+    if (!culverts?.canEdit || !supports('geometry.culverts.edit')) {
+      for (const row of source) setOverride(kind, row, field, value);
+      return;
+    }
+    void editCulvert({ operation: 'setField', featureKind: kind, featureIDs: source.map((row) => row.id), fieldID: field.id, value })
+      .catch((error: unknown) => setError('culverts', geometryDiagnosticMessage(error)));
   };
 
   const onCulvertCommand = (kind: 'barrel' | 'barrelProperties' | 'openingProperties', row: GeometryRow, field: GeometryField, command: string, value?: string): void => {
@@ -574,6 +597,28 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     }
     if (command === 'forceSetOpeningType' && kind === 'openingProperties' && field.id === 'OpeningType' && value != null) {
       void editCulvert({ operation: command, featureKind: kind, featureIDs: [row.id], fieldID: field.id, value }).catch((error: unknown) => setError('culverts', geometryDiagnosticMessage(error)));
+    }
+  };
+
+  const onCulvertSelectionCommand = (kind: 'barrel' | 'barrelProperties' | 'openingProperties', rows: GeometryRow[], field: GeometryField, command: string, value?: string): void => {
+    const localIDs = new Set((draft?.rows[kind] ?? []).map((row) => row.id));
+    const local = rows.filter((row) => localIDs.has(row.id));
+    const source = rows.filter((row) => !localIDs.has(row.id));
+    const localValue = command === 'resetOpeningCoefficient' ? '' : value;
+    if (localValue != null) for (const row of local) updateLocalRow(kind, row, field, localValue);
+    if (!source.length) return;
+    if (!culverts?.canEdit || !supports('geometry.culverts.edit')) {
+      if (localValue != null) for (const row of source) setOverride(kind, row, field, localValue);
+      return;
+    }
+    if (command === 'resetOpeningCoefficient' && kind === 'openingProperties' && ['KIn', 'KOut'].includes(field.id)) {
+      void editCulvert({ operation: command, featureKind: kind, featureIDs: source.map((row) => row.id), fieldID: field.id })
+        .catch((error: unknown) => setError('culverts', geometryDiagnosticMessage(error)));
+      return;
+    }
+    if (command === 'forceSetOpeningType' && kind === 'openingProperties' && field.id === 'OpeningType' && value != null) {
+      void editCulvert({ operation: command, featureKind: kind, featureIDs: source.map((row) => row.id), fieldID: field.id, value })
+        .catch((error: unknown) => setError('culverts', geometryDiagnosticMessage(error)));
     }
   };
 
@@ -680,7 +725,7 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     supports, localRows, addLocalRow, onTopologyChange, onTopologyCommand, onTopologyDelete, undoTopology, redoTopology,
     loadArcPoints, loadRecipe, resizeTopology, editTopologyTag, createTopologyTag, editArcPointCoordinate, applyTopologyRecipe,
     onFlowAreaChange, onRegionSelection, prepareMesh, generateMesh, degreeScan, propertyTables, undoMesh, redoMesh,
-    onCulvertChange, onCulvertCommand, onCulvertDelete, addCulvertBarrel, addCulvertPropertySet, undoCulverts,
+    onCulvertChange, onCulvertCommand, onCulvertSelection, onCulvertSelectionChange, onCulvertSelectionCommand, onCulvertDelete, addCulvertBarrel, addCulvertPropertySet, undoCulverts,
     resetDrafts, save, wrappedTopologyTable, wrappedCulvertTable, wrappedMeshRegions,
     reload: () => setRefreshToken((value) => value + 1), setError,
     canLoadTopology: supports('topology.load'), canLoadArcPoints: supports('topology.arcPoints'), canLoadRecipe: supports('topology.recipe'),

@@ -22,11 +22,13 @@ export interface GeometryFeatureDetailEditorProps {
   onLocalAdd?: () => void;
   onCommand?: (row: GeometryRow, field: GeometryField, command: string, value?: string) => void;
   onSelectionChange?: (rows: GeometryRow[]) => void;
+  onSelectionFieldChange?: (rows: GeometryRow[], field: GeometryField, value: string) => void;
+  onSelectionFieldCommand?: (rows: GeometryRow[], field: GeometryField, command: string, value?: string) => void;
 }
 
 export function GeometryFeatureDetailEditor({
   language, kind, table, localRows = [], fieldOrder, readOnlyFieldIDs = [], clearCommands = {}, forceSetCommands = {}, editable, busy,
-  allowLocalAdd = false, onChange, onDelete, onLocalAdd, onCommand, onSelectionChange,
+  allowLocalAdd = false, onChange, onDelete, onLocalAdd, onCommand, onSelectionChange, onSelectionFieldChange, onSelectionFieldCommand,
 }: GeometryFeatureDetailEditorProps) {
   const [selectedIDs, setSelectedIDs] = useState<string[]>([]);
   const rows = useMemo(() => [...(table?.rows ?? []), ...localRows], [table?.rows, localRows]);
@@ -67,7 +69,7 @@ export function GeometryFeatureDetailEditor({
         allowLocalAdd={allowLocalAdd}
         busy={busy}
         onChange={onChange}
-        onDelete={onDelete}
+        onDelete={editable || localRows.length > 0 ? onDelete : undefined}
         onLocalAdd={onLocalAdd}
         onSelect={selectRows}
       />
@@ -81,6 +83,8 @@ export function GeometryFeatureDetailEditor({
         busy={busy}
         onChange={onChange}
         onCommand={onCommand}
+        onSelectionChange={onSelectionFieldChange}
+        onSelectionCommand={onSelectionFieldCommand}
       />
     </div>
   );

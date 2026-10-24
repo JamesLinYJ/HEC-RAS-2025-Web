@@ -1,6 +1,6 @@
 import type { Language } from '../../shared/workbench';
 import type { GeometryField, GeometryRow, GeometryTable } from './geometryTypes';
-import { OpeningPropertiesDetailEditor } from './OpeningPropertiesDetailEditor';
+import { OpeningPropertiesEditor } from './OpeningPropertiesEditor';
 
 export interface GeometryCulvertOpeningPropertiesPageProps {
   language: Language;
@@ -12,10 +12,12 @@ export interface GeometryCulvertOpeningPropertiesPageProps {
   onDelete: (rows: GeometryRow[]) => void;
   onAdd: () => void;
   onCommand?: (row: GeometryRow, field: GeometryField, command: string, value?: string) => void;
+  onSelectionChange?: (rows: GeometryRow[], field: GeometryField, value: string) => void;
+  onSelectionCommand?: (rows: GeometryRow[], field: GeometryField, command: string, value?: string) => void;
 }
 
-export function GeometryCulvertOpeningPropertiesPage({ language, table, localRows, canEdit, busy, onChange, onDelete, onAdd, onCommand }: GeometryCulvertOpeningPropertiesPageProps) {
-  return <OpeningPropertiesDetailEditor language={language} table={table} localRows={localRows} canEdit={canEdit} busy={busy} onChange={onChange} onDelete={onDelete} onAdd={onAdd} onCommand={onCommand} />;
+export function GeometryCulvertOpeningPropertiesPage({ language, table, localRows, canEdit, busy, onChange, onDelete, onAdd, onCommand, onSelectionChange, onSelectionCommand }: GeometryCulvertOpeningPropertiesPageProps) {
+  return <OpeningPropertiesEditor language={language} table={table} localRows={localRows} canEdit={canEdit} busy={busy} onChange={onChange} onDelete={onDelete} onAdd={onAdd} onCommand={onCommand} onSelectionChange={onSelectionChange} onSelectionCommand={onSelectionCommand} />;
 }
 
 export default GeometryCulvertOpeningPropertiesPage;

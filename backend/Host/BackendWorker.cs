@@ -580,5 +580,6 @@ public static class BackendWorker
     }
 
     private static ResultPlanContextSnapshot InspectResultPlanContext(ResultPlanContextRequest request) =>
-    ResultPlanContextService.Inspect(request.ProjectPath, request.ProjectXml, request.ResultPath, request.Revision);
+    ResultPlanContextService.Inspect(request.ProjectPath, request.ProjectXml, request.ResultPath, request.Revision,
+        request.CoreLayerContext);
 }

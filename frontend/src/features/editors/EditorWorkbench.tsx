@@ -5,7 +5,7 @@ import { BoundaryConditionEditor, BOUNDARY_EDITOR_PAGE_IDS } from './BoundaryCon
 import { ClassificationEditor } from './ClassificationEditor';
 import { EditorCatalogBrowser } from './EditorCatalogBrowser';
 import { NValueEditor } from './NValueEditor';
-import type { EditorPageProps, EditorSchema, EditorPageProps as PageProps, ModelDraft, ModelSnapshot, SeriesTransformOperation } from './model';
+import type { EditorPageProps, EditorSchema, EditorPageProps as PageProps, ModelDraft, ModelSnapshot, SeriesTransformOperation, TerrainTransformCommand } from './model';
 import { pageTitle, schemaForAsset, snapshotRows } from './model';
 import { changedModelCells, createModelDraft, isModelDraftDirty, updateModelSample, validateChangedSamples } from './modelDraft';
 import { validateChangedTableCells, validateModelDraft } from './SchemaFieldRenderer';
@@ -49,7 +49,18 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const loadedOwner = useRef<string | null>(null);
 
   const desiredSource = useMemo(() => sourceFor(props.context), [props.context]);
-  const dirty = useMemo(() => isModelDraftDirty(snapshot, draft ?? emptyDraft()), [snapshot, draft]);
+  const dirty = useMemo(() => {
+    const currentDraft = draft ?? emptyDraft();
+    if (!snapshot || !currentDraft.terrainSelectionBaselineFields) return isModelDraftDirty(snapshot, currentDraft);
+    const fields = { ...currentDraft.fields };
+    for (const [fieldID, baselineValue] of Object.entries(currentDraft.terrainSelectionBaselineFields)) {
+      const currentValue = Object.prototype.hasOwnProperty.call(fields, fieldID) ? fields[fieldID] : null;
+      if (currentValue !== baselineValue) continue;
+      if (Object.prototype.hasOwnProperty.call(snapshot.fields, fieldID)) fields[fieldID] = snapshot.fields[fieldID];
+      else delete fields[fieldID];
+    }
+    return isModelDraftDirty(snapshot, { ...currentDraft, fields });
+  }, [snapshot, draft]);
   const asset = source.context.selectedAsset;
 
   useEffect(() => {
@@ -157,9 +168,11 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       ...snapshot,
       boundary: draft.boundaryView,
       fieldGroups: draft.boundaryFieldGroups ?? snapshot.fieldGroups,
-      readOnlyFields: [...new Set([...(snapshot.readOnlyFields ?? []), ...(draft.boundaryReadOnlyFields ?? [])])],
+      readOnlyFields: [...new Set([...(snapshot.readOnlyFields ?? []), ...(draft.boundaryReadOnlyFields ?? []), ...(draft.terrainReadOnlyFields ?? [])])],
     }
-    : snapshot;
+    : snapshot && draft?.terrainReadOnlyFields
+      ? { ...snapshot, readOnlyFields: [...new Set([...(snapshot.readOnlyFields ?? []), ...draft.terrainReadOnlyFields])] }
+      : snapshot;
   const validations = snapshot && draft ? [
     ...validateModelDraft(draft, schemasForModel, validationSnapshot ?? snapshot, language),
     ...validateChangedTableCells(draft, validationSnapshot ?? snapshot, catalog.tables, language),
@@ -490,6 +503,191 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     }
   };
 
+  const onTerrainTransform: PageProps['onTerrainTransform'] = async (command: TerrainTransformCommand) => {
+    setSaveErrorDetails('');
+    if (activeSave.current || busy) return false;
+    const terrain = draft?.terrainView ?? snapshot?.terrain;
+    if (!snapshot || !draft || !asset || !source.context.projectPath || !snapshot.canEdit || !terrain) return false;
+    if (!backend.supports('model.terrainTransform') || !backend.supports('model.save')) {
+      setSaveMessage(text(language, 'C# 服务端尚未提供地形图层调整和保存能力。', 'The C# server has not advertised terrain layer editing and save capabilities.'));
+      return false;
+    }
+    if (validations.length) {
+      setSaveErrors(validations);
+      setSaveMessage(text(language, '当前草稿有无效值；修正后才能调整地形图层。', 'Correct invalid draft values before changing terrain layers.'));
+      return false;
+    }
+
+    const beforeInputIDs = terrain.inputs.map((input) => input.id);
+    const beforeRows = (tableID: string) => draft.rows[tableID] ?? terrain.rows?.[tableID] ?? [];
+    const requestState = { owner: source.owner, controller: new AbortController() };
+    const requestGeneration = generation.current;
+    activeSave.current = requestState;
+    const isCurrentRequest = () => activeSave.current === requestState
+      && activeOwner.current === requestState.owner
+      && generation.current === requestGeneration
+      && !requestState.controller.signal.aborted;
+    setBusy(true);
+    setSaveMessage('');
+    setSaveErrors([]);
+    const readOnlyFields = new Set([...(snapshot.readOnlyFields ?? []), ...(draft.terrainReadOnlyFields ?? []), ...(draft.boundaryReadOnlyFields ?? [])]);
+    const fields = Object.fromEntries(Object.entries(draft.fields).filter(([id, value]) => {
+      const navigationValue = draft.terrainSelectionBaselineFields?.[id];
+      if (Object.prototype.hasOwnProperty.call(draft.terrainSelectionBaselineFields ?? {}, id) && value === navigationValue) return false;
+      return value !== snapshot.fields[id] && !readOnlyFields.has(id);
+    }));
+    // TerrainEditor captures the selected input before applying table selections;
+    // unlike a persistent input field, this navigation field must be sent even
+    // when it still equals the saved snapshot value.
+    fields['TerrainLayersEditor/SelectedInputWithMap'] = terrain.selectedId ?? '';
+    const tableSelections = Object.fromEntries(Object.entries(terrain.tables ?? {}).flatMap(([id, table]) => {
+      const selection = table.selectedRowIDs ?? table.requestedSelectionRowIDs;
+      return selection ? [[id, selection]] : [];
+    }));
+    const model = {
+      ...modelRequest(source.context, asset),
+      revision: snapshot.revision,
+      fields,
+      images: {},
+      sourceState: draft.sourceState !== (snapshot.sourceState ?? null)
+        ? draft.sourceState
+        : snapshot.sourceState ?? sourceStateFor(asset) ?? null,
+      rows: draft.rows,
+      samples: samplesForBoundaryDraft(snapshot, draft),
+      tableSelections,
+      changedCells: changedModelCells(draft, snapshotRows(snapshot)),
+    };
+    try {
+      const result = await backend.request<ModelSnapshot>('model.terrainTransform', { model, ...command }, { signal: requestState.controller.signal });
+      if (!isCurrentRequest()) return false;
+      assertModelSnapshot(result);
+      if (result.revision !== snapshot.revision) throw new Error('The terrain transform returned a different source revision.');
+      if (!result.terrain || typeof result.sourceState !== 'string' || result.sourceState.length === 0) {
+        throw new Error('The backend did not return a revision-bound terrain draft projection.');
+      }
+
+      const afterInputIDs = result.terrain.inputs.map((input) => input.id);
+      if (new Set(afterInputIDs).size !== afterInputIDs.length || afterInputIDs.some((id) => !id))
+        throw new Error('The backend returned duplicate terrain input identities.');
+      for (const [tableID, rows] of Object.entries(result.terrain.rows ?? {})) {
+        const rowIDs = rows.map((row) => row.id);
+        if (rowIDs.some((id) => !id) || new Set(rowIDs).size !== rowIDs.length)
+          throw new Error(`The backend returned duplicate or empty terrain row identities for ${tableID}.`);
+      }
+      if (command.operation === 'add') {
+        if (afterInputIDs.length !== beforeInputIDs.length + 1
+          || beforeInputIDs.some((id, index) => afterInputIDs[index] !== id)
+          || afterInputIDs.slice(0, -1).includes(afterInputIDs[afterInputIDs.length - 1])
+          || result.terrain.selectedId !== afterInputIDs[afterInputIDs.length - 1])
+          throw new Error('The backend did not preserve existing terrain input identities while adding a layer.');
+      } else if (command.operation === 'remove') {
+        if (!command.itemId || afterInputIDs.length !== beforeInputIDs.length - 1
+          || beforeInputIDs.filter((id) => id !== command.itemId).some((id, index) => afterInputIDs[index] !== id))
+          throw new Error('The backend did not preserve remaining terrain input identities while removing a layer.');
+      } else if (command.operation === 'reorder') {
+        if (command.from === undefined || command.to === undefined || command.from < 0 || command.to < 0
+          || command.from >= beforeInputIDs.length || command.to >= beforeInputIDs.length)
+          throw new Error('The terrain input order request was invalid.');
+        const expected = beforeInputIDs.slice();
+        const [moved] = expected.splice(command.from, 1);
+        expected.splice(command.to, 0, moved);
+        if (afterInputIDs.some((id, index) => id !== expected[index]))
+          throw new Error('The backend did not return the requested terrain input order.');
+      } else if (command.operation === 'selectInput') {
+        if ((result.terrain.selectedId ?? null) !== (command.itemId ?? null))
+          throw new Error('The backend did not return the requested terrain input selection.');
+      }
+
+      if (command.operation === 'selectRows') {
+        if (!command.tableId || !result.terrain.tables?.[command.tableId] || !result.terrain.rows?.[command.tableId])
+          throw new Error('The backend did not return the selected terrain table.');
+        const selectedIDs = result.terrain.tables[command.tableId].selectedRowIDs ?? [];
+        const availableIDs = new Set(result.terrain.rows[command.tableId].map((row) => row.id));
+        if (selectedIDs.length !== (command.rowIDs ?? []).length || selectedIDs.some((id) => !availableIDs.has(id)))
+          throw new Error('The backend returned an incomplete or stale terrain row selection.');
+        if (command.tableId !== 'LeveeModPropertiesEditor/PropertySets'
+          && (selectedIDs.length !== (command.rowIDs ?? []).length
+            || selectedIDs.some((id) => !(command.rowIDs ?? []).includes(id))))
+          throw new Error('The backend changed a selected terrain feature identity.');
+      } else if (command.operation === 'addRow') {
+        if (!command.tableId || (result.terrain.rows?.[command.tableId]?.length ?? 0) !== beforeRows(command.tableId).length + 1)
+          throw new Error('The backend did not add exactly one terrain table row.');
+        if (command.tableId === 'ChannelModEditor/Profile' || command.tableId === 'LeveeModDetailEditor/Profile') {
+          const before = beforeRows(command.tableId);
+          const after = result.terrain.rows?.[command.tableId] ?? [];
+          const columns = terrain.tables?.[command.tableId]?.columns ?? [];
+          if (before.some((row, index) => columns.some((column) => !equivalentCellValue(
+            row.values[column.id] ?? '', after[index]?.values[column.id] ?? '', column.sourceType))))
+            throw new Error('The backend did not preserve existing terrain profile rows when adding a row.');
+        }
+      } else if (command.operation === 'removeRows') {
+        if (!command.tableId || (result.terrain.rows?.[command.tableId]?.length ?? 0) !== beforeRows(command.tableId).length - (command.rowIDs?.length ?? 0))
+          throw new Error('The backend did not remove the requested terrain table rows.');
+      } else if (command.operation === 'copyRows') {
+        const destinationRows = result.terrain.rows?.['ChannelModEditor/Profile'] ?? [];
+        if (!command.rowIDs || destinationRows.length !== command.rowIDs.length)
+          throw new Error('The backend did not copy the sampled terrain profile rows.');
+        const oldFeatureIDs = beforeRows('ChannelModEditor/Features').map((row) => row.id);
+        const newFeatureIDs = result.terrain.rows?.['ChannelModEditor/Features']?.map((row) => row.id) ?? [];
+        if (oldFeatureIDs.length !== newFeatureIDs.length || oldFeatureIDs.some((id, index) => id !== newFeatureIDs[index]))
+          throw new Error('The backend changed channel feature identities while copying the sampled profile.');
+      }
+
+      const transformedDraft = createModelDraft(result);
+      const previousSelectionBaseline = draft.terrainSelectionBaselineFields ?? {};
+      const selectionFieldIDs = new Set([
+        ...Object.keys(previousSelectionBaseline),
+        ...Object.keys(result.fields).filter((fieldID) => fieldID.startsWith('TerrainSelection/')),
+        'TerrainLayersEditor/SelectedInputWithMap',
+      ]);
+      const terrainSelectionBaselineFields: Record<string, string | null> = {};
+      for (const fieldID of selectionFieldIDs) {
+        const hasPreviousBaseline = Object.prototype.hasOwnProperty.call(previousSelectionBaseline, fieldID);
+        const currentValue = Object.prototype.hasOwnProperty.call(draft.fields, fieldID) ? draft.fields[fieldID] : null;
+        const expectedValue = hasPreviousBaseline
+          ? previousSelectionBaseline[fieldID]
+          : Object.prototype.hasOwnProperty.call(snapshot.fields, fieldID) ? snapshot.fields[fieldID] : null;
+        // A value changed by the user before this navigation command remains a
+        // real edit; only untouched selection-scoped values are normalized out.
+        if (currentValue !== expectedValue) continue;
+        terrainSelectionBaselineFields[fieldID] = Object.prototype.hasOwnProperty.call(result.fields, fieldID)
+          ? result.fields[fieldID]
+          : null;
+      }
+      setDraft((current) => {
+        if (!current || activeOwner.current !== requestState.owner || generation.current !== requestGeneration) return current;
+        const next = {
+          ...current,
+          sourceState: transformedDraft.sourceState,
+          fields: transformedDraft.fields,
+          rows: transformedDraft.rows,
+          samples: transformedDraft.samples,
+          sampleText: transformedDraft.sampleText,
+          terrainView: result.terrain,
+          terrainReadOnlyFields: result.readOnlyFields ?? [],
+          terrainSelectionBaselineFields,
+        };
+        return { ...next, changedCells: changedModelCells(next, snapshotRows(snapshot)) };
+      });
+      const draftOnly = command.operation !== 'selectRows' && command.operation !== 'selectInput';
+      setSaveMessage(draftOnly
+        ? text(language, '地形更改已进入草稿；点击“保存”后才会写入模型文件。', 'The terrain change is in the draft. Save to write it to the model file.')
+        : text(language, '地形选择已更新。', 'The terrain selection was updated.'));
+      return true;
+    } catch (error) {
+      if (isCurrentRequest()) {
+        setSaveMessage(text(language, '地形图层操作失败。', 'The terrain layer operation failed.'));
+        setSaveErrorDetails(message(error));
+      }
+      return false;
+    } finally {
+      if (activeSave.current === requestState) {
+        activeSave.current = null;
+        setBusy(false);
+      }
+    }
+  };
+
   const requestTransition = (next: Transition): void => {
     if (pending || busy) return;
     if (next.kind === 'page' && next.pageID === activePageID || next.kind === 'view' && next.view === view) return;
@@ -540,14 +738,16 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       const planIDs = planFields ? [planFields.mode, planFields.start, planFields.end] : [];
       // The source adapter accepts edits, not a replay of every loaded field.
       // Snapshots also contain read-only catalog fields and derived values.
-      const boundaryReadOnlyFields = new Set([...(snapshot.readOnlyFields ?? []), ...(draft.boundaryReadOnlyFields ?? [])]);
+      const boundaryReadOnlyFields = new Set([...(snapshot.readOnlyFields ?? []), ...(draft.boundaryReadOnlyFields ?? []), ...(draft.terrainReadOnlyFields ?? [])]);
       const fields = Object.fromEntries(Object.entries(draft.fields).filter(([id, value]) =>
         !planIDs.includes(id) && value !== snapshot.fields[id] && !boundaryReadOnlyFields.has(id)));
+      const terrainProjection = draft.terrainView ?? snapshot.terrain;
+      if (terrainProjection) fields['TerrainLayersEditor/SelectedInputWithMap'] = terrainProjection.selectedId ?? '';
       const planTimeWindowEdits = planFields ? planIDs.flatMap((fieldID) => {
         const value = draft.fields[fieldID];
         return value === undefined || value === snapshot.fields[fieldID] ? [] : [{ id: requestIdentity(), fieldID, value }];
       }) : undefined;
-      const tableSelections = Object.fromEntries(Object.entries(snapshot.terrain?.tables ?? {}).flatMap(([id, table]) => {
+      const tableSelections = Object.fromEntries(Object.entries(draft.terrainView?.tables ?? snapshot.terrain?.tables ?? {}).flatMap(([id, table]) => {
         const selections = table.requestedSelectionRowIDs ?? table.selectedRowIDs;
         return selections ? [[id, selections]] : [];
       }));
@@ -630,6 +830,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     canTransformSeries: snapshot.canEdit && !!source.context.projectPath && validations.length === 0,
     ...(backend.supports('model.seriesTransform') && backend.supports('model.save') ? { onSeriesTransform } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.boundaryTransform') && backend.supports('model.save') ? { onBoundaryTransform } : {}),
+    ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.terrainTransform') && backend.supports('model.save') ? { onTerrainTransform } : {}),
   } : null;
   const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy;
 
