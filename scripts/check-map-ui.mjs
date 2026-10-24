@@ -6,6 +6,7 @@ import { checkGdbVelocityUI } from './check-gdb-velocity-ui.mjs';
 import { checkGdbRasterUI } from './check-gdb-raster-ui.mjs';
 import { checkResultHoverUI } from './check-result-hover-ui.mjs';
 import { checkTerrainUI } from './check-terrain-ui.mjs';
+import { checkGeometryMapUI } from './check-geometry-map-ui.mjs';
 
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex').toUpperCase();
 
@@ -35,6 +36,11 @@ async function checkUploadValidation(fixture, report, serverUrl) {
 /** Real server files and browser controls; no in-memory map data injection. */
 export async function checkMapUI({ fixture, output, evaluate, waitFor, command, setFiles, navigate, report,
   serverUrl = process.env.HECRAS_VERIFY_SERVER_URL, gdbOutput, gdbRasterOutput }) {
+  if (process.env.HECRAS_VERIFY_GEOMETRY_TOPOLOGY_ONLY === '1') {
+    assert.equal(fixture?.schema, 'hecras-geometry-topology-map-http-e2e/v1',
+      'Geometry topology-only acceptance requires its dedicated source-backed manifest.');
+    return await checkGeometryMapUI({ manifest: fixture, output, evaluate, waitFor, command, navigate, report });
+  }
   const resultHoverOnly = process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1';
   const terrainOnly = process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1';
   if (!resultHoverOnly && !terrainOnly) await checkUploadValidation(fixture, report, serverUrl);

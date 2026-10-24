@@ -64,6 +64,10 @@ export interface WorkspaceUploadResult {
   projects: { path: string; name: string }[];
   fileCount: number;
 }
+export interface ContextChangeOptions {
+  /** Selecting a catalog row can retain the current page; opening it can name its target. */
+  navigation?: 'auto' | 'preserve' | FeatureId;
+}
 export interface FeaturePageProps {
   language: Language;
   /** User preference; system is resolved by the top-level window. */
@@ -71,7 +75,7 @@ export interface FeaturePageProps {
   onThemeModeChange?: (mode: ThemeMode) => void;
   context: WorkbenchContext;
   backend: BackendGateway;
-  onContextChange: (context: WorkbenchContext) => void;
+  onContextChange: (context: WorkbenchContext, options?: ContextChangeOptions) => void;
   /** Adopt an acknowledged save only while its source is still the active context. */
   onContextCommit?: (source: WorkbenchContext, committed: WorkbenchContext) => boolean;
   onNavigate: (feature: FeatureId) => void;

@@ -79,11 +79,13 @@ public static class MapTerrainElevationService
         context.EnsureUnchanged();
 
         AssociatedMapLayerDependency[] dependencies = ExpectedTerrainDependencies(terrain, capture);
+        float? noData = terrain.NoDataValue;
         return new MapTerrainElevationResult(context.Sources.ProjectPath, context.Sources.ProjectRevision,
             context.Sources.ProjectXmlSHA, context.Sources.VisualizationRevision, context.Sources.MapID,
             context.Sources.MapIndex, context.Sources.MapName, context.Sources.MapType,
             context.Sources.ContextToken, selectedLocator, capture.Path, capture.Revision,
-            dependencies, values.Select(value => float.IsFinite(value) ? (double?)value : null).ToArray());
+            dependencies, values.Select(value => float.IsFinite(value) &&
+                (!noData.HasValue || value != noData.Value) ? (double?)value : null).ToArray());
     }
 
     private static void ValidateRequest(MapTerrainElevationRequest request)

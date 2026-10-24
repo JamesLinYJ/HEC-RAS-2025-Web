@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { FeatureId, Language, ThemeMode, WorkbenchContext } from '../shared/workbench';
+import type { ContextChangeOptions, FeatureId, Language, ThemeMode, WorkbenchContext } from '../shared/workbench';
 import { assetKindLabel, message, text } from '../shared/workbench';
 import { ServerBackend } from '../platform/ServerBackend';
 import { sessionBackend } from '../platform/SessionBackend';
@@ -57,7 +57,7 @@ export function RasMainWindow() {
   const [backendRevision, setBackendRevision] = useState(0);
   const [dirtyOwners, setDirtyOwners] = useState<Set<string>>(() => new Set());
   const dirtyOwnersRef = useRef(dirtyOwners);
-  const [pendingContext, setPendingContext] = useState<{ target: WorkbenchContext; source: string } | null>(null);
+  const [pendingContext, setPendingContext] = useState<{ target: WorkbenchContext; source: string; options?: ContextChangeOptions } | null>(null);
   const [showInspector, setShowInspector] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [pendingProjectCommand, setPendingProjectCommand] = useState<PendingProjectCommand | null>(null);
@@ -112,25 +112,30 @@ export function RasMainWindow() {
     dirtyOwnersRef.current = next;
     setDirtyOwners(next);
   }, []);
-  const commitContext = useCallback((next: WorkbenchContext) => {
+  const commitContext = useCallback((next: WorkbenchContext, options?: ContextChangeOptions) => {
     contextRef.current = next;
     setContext(next);
+    if (options?.navigation === 'preserve') return;
+    if (options?.navigation && options.navigation !== 'auto') {
+      onNavigate(options.navigation);
+      return;
+    }
     const kind = next.selectedAsset?.kind.toLowerCase();
     if (!kind || kind === 'project' || kind === 'projectfile') return;
     if (kind.includes('geometry')) onNavigate('geometry');
     else if (kind.includes('result')) onNavigate('results');
     else onNavigate('editors');
   }, [onNavigate]);
-  const onContextChange = useCallback((incoming: WorkbenchContext) => {
+  const onContextChange = useCallback((incoming: WorkbenchContext, options?: ContextChangeOptions) => {
     if (referenceWriteLease.current) return;
     let next: WorkbenchContext;
     try { next = mergeSessionReferenceContext(incoming, contextRef.current); }
     catch (error) { setRuntimeError(message(error)); return; }
     if (identity(next) !== identity(contextRef.current) && dirtyOwnersRef.current.size > 0) {
-      setPendingContext({ target: next, source: identity(contextRef.current) });
+      setPendingContext({ target: next, source: identity(contextRef.current), options });
       return;
     }
-    commitContext(next);
+    commitContext(next, options);
   }, [commitContext]);
   const onContextCommit = useCallback((source: WorkbenchContext, committed: WorkbenchContext): boolean => {
     const current = contextRef.current;
@@ -210,7 +215,7 @@ export function RasMainWindow() {
       onCancel={() => setPendingContext(null)}
       onContinue={() => {
         if (!pendingContext || pendingContext.source !== identity(contextRef.current)) { setPendingContext(null); return; }
-        dirtyOwnersRef.current = new Set(); setDirtyOwners(dirtyOwnersRef.current); commitContext(pendingContext.target); setPendingContext(null);
+        dirtyOwnersRef.current = new Set(); setDirtyOwners(dirtyOwnersRef.current); commitContext(pendingContext.target, pendingContext.options); setPendingContext(null);
       }}
     />
     <FramedContentDialog open={showHelp} title="HEC-RAS 2025" onCancel={() => setShowHelp(false)}><p>{t('在工程页选择工程文件，在模型、几何、地图和结果页编辑与查看数据。界面在浏览器与桌面使用同一套 React 组件。', 'Select a project in Project, then use the model, geometry, map and result pages. Browser and desktop share the same React interface.')}</p><p>{t('需要计算能力的操作会根据当前可用功能启用，工程数据编辑与计算会通过关联服务处理。', 'Operations that need compute are enabled according to available capabilities. Project-data editing and computation are handled by the connected service.')}</p><div className="ras-dialog-actions"><button autoFocus onClick={() => setShowHelp(false)}>{t('关闭', 'Close')}</button></div></FramedContentDialog>

@@ -10,6 +10,17 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-geometry-smart-connect-http", string smartConnectBaseUrl, string smartConnectManifest, string smartConnectOutput])
+            {
+                TextWriter protocol = Console.Out;
+                GeometrySmartConnectAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunGeometrySmartConnectAsync(
+                    new Uri(EnsureTrailingSlash(smartConnectBaseUrl)), smartConnectManifest, smartConnectOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-culvert-result-http", string culvertBaseUrl, string culvertOutput])
             {
                 TextWriter protocol = Console.Out;
@@ -317,6 +328,7 @@ internal static class Program
             }
 
             Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-smart-connect-http <loopback-base-url> <arc-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-culvert-result-http <loopback-base-url> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-arc-map-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-map-line-hash-vectors");

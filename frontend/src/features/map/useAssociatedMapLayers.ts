@@ -16,6 +16,9 @@ export interface AssociatedMapImage extends MapImageLayer {
   treeNodeID: string;
   sourcePath: string;
   sourceRevision: string;
+  /** Catalog scope captured before association rendering; distinct from the returned frame token. */
+  catalogContextToken: string;
+  /** Host association-frame scope for this rendered image. */
   associationContextToken: string;
   width: number;
   height: number;
@@ -175,7 +178,8 @@ export function useAssociatedMapLayers({ backend, context, document, viewport, c
             const frameID = JSON.stringify([document.mapID, key, contextToken, revision, width, height]);
             layers.push({ id: 'associated:' + frameID, treeNodeID: candidate.node.id, name: candidate.node.name,
               imageSrc: rgbaFrameImage(required(layer.rgba), width, height), sourceKind: kind, sourcePath,
-              sourceRevision: revision, associationContextToken: contextToken, width, height,
+              sourceRevision: revision, catalogContextToken: captured.catalog.contextToken,
+              associationContextToken: contextToken, width, height,
               extent: worldViewport, sourceExtent, sampling: kind === 'classification' ? 'nearest' : undefined,
               hoverCapture: { ...resolvedOwners, treeNodeID: candidate.node.id, frameID, node: locator, kind,
                 sourcePath, sourceRevision: revision, dependencies } });

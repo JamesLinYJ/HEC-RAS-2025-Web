@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { startStaticServer } from '../desktop/static-server.mjs';
 import { checkMapUI } from './check-map-ui.mjs';
+import { geometryMapFetchObserverSource } from './check-geometry-map-ui.mjs';
 import { resultHoverFetchObserverSource } from './result-hover-fetch-observer.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,7 +22,8 @@ const editorProject = process.env.HECRAS_VERIFY_EDITOR_PROJECT;
 const mapFixturePath = process.env.HECRAS_VERIFY_MAP_FIXTURE;
 const resultHoverOnly = process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1';
 const terrainOnly = process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1';
-const targetedMapOnly = resultHoverOnly || terrainOnly;
+const geometryTopologyOnly = process.env.HECRAS_VERIFY_GEOMETRY_TOPOLOGY_ONLY === '1';
+const targetedMapOnly = resultHoverOnly || terrainOnly || geometryTopologyOnly;
 await access(chrome);
 let browser;
 let socket;
@@ -454,15 +456,23 @@ try {
   await command('Runtime.enable'); await command('Page.enable'); await command('Network.enable');
   await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   if (targetedMapOnly) {
-    assert.ok(serverUrl && mapFixturePath && path.isAbsolute((terrainOnly
-      ? process.env.HECRAS_VERIFY_TERRAIN_FIXTURE : process.env.HECRAS_VERIFY_RESULT_HOVER_FIXTURE) ?? ''),
-      'Result hover-only UI verification requires the real server, map fixture and an absolute result-hover manifest.');
-    await command('Page.addScriptToEvaluateOnNewDocument', { source: resultHoverFetchObserverSource });
+    const targetedManifestPath = geometryTopologyOnly
+      ? mapFixturePath
+      : terrainOnly ? process.env.HECRAS_VERIFY_TERRAIN_FIXTURE : process.env.HECRAS_VERIFY_RESULT_HOVER_FIXTURE;
+    assert.ok(serverUrl && mapFixturePath && path.isAbsolute(targetedManifestPath ?? ''),
+      'Targeted map verification requires the real server, map fixture and an absolute acceptance manifest.');
+    await command('Page.addScriptToEvaluateOnNewDocument', {
+      source: geometryTopologyOnly ? geometryMapFetchObserverSource : resultHoverFetchObserverSource,
+    });
   }
   await command('Page.navigate', { url: server.url });
   await waitFor("document.querySelectorAll('.ras-feature-nav button').length>=8", 'React workspace');
   if (targetedMapOnly) {
-    report.checks.push('read-only Result-hover fetch observer installed before first page navigation');
+    if (geometryTopologyOnly) {
+      report.checks.push('geometry-only acceptance uses a scoped observer for real accepted and terminal operations');
+    } else {
+      report.checks.push('read-only Result-hover fetch observer installed before first page navigation');
+    }
     await checkMapUI({ fixture: JSON.parse(await readFile(mapFixturePath, 'utf8')), output,
       evaluate, waitFor, command, setFiles, navigate, report, serverUrl });
     assert.deepEqual(exceptions, [], 'Uncaught browser errors');

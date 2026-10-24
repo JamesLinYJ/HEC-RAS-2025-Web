@@ -1,8 +1,11 @@
+import { useEffect } from 'react';
 import type { Language } from '../../shared/workbench';
 import { GeometryError } from './GeometryError';
 import { GeometryTopologyCanvas } from './GeometryTopologyCanvas';
 import type { GeometryTopologyMapWorkspace } from './useGeometryTopologyMap';
 import { TopologyMapArcTools } from './TopologyMapArcTools';
+import { TopologySmartAddControls } from './TopologySmartAddControls';
+import { TopologyDeepConnectControls } from './TopologyDeepConnectControls';
 
 export interface GeometryTopologyMapPanelProps {
   language: Language;
@@ -11,6 +14,11 @@ export interface GeometryTopologyMapPanelProps {
 }
 
 export function GeometryTopologyMapPanel({ language, workspace, showArcTools = false }: GeometryTopologyMapPanelProps) {
+  useEffect(() => {
+    if (!showArcTools && workspace.activeTool !== 'select') workspace.onCancelDeepConnect();
+  }, [showArcTools, workspace.activeTool, workspace.onCancelDeepConnect]);
+
+  const canvasTool = showArcTools ? workspace.activeTool : 'select';
   const text = language === 'zh'
     ? {
       title: '拓扑地图', subtitle: '空间选集和地图编辑使用当前几何拓扑草稿；地图来源必须与所选几何文件精确匹配。',
@@ -63,12 +71,22 @@ export function GeometryTopologyMapPanel({ language, workspace, showArcTools = f
       </div>
       {showArcTools && <TopologyMapArcTools language={language} mapCaptureReady={workspace.canvasProps.mapCaptureReady}
         canSelect={workspace.canvasProps.canSelect} canEdit={workspace.canvasProps.canMoveNodes} busy={workspace.canvasProps.busy}
+        canSmartAdd={workspace.canSmartAdd}
         draftReady={workspace.draftReady} draftDirty={workspace.draftDirty}
         mapCellSize={workspace.mapCellSize} activeTool={workspace.activeTool}
         onActiveToolChange={workspace.onActiveToolChange} selectedArcFIDs={workspace.selectedArcFIDs}
         splitMode={workspace.splitMode} onSplitModeChange={workspace.onSplitModeChange}
         onRunArcCommand={(command) => { void workspace.onMapCommand(command).catch(() => undefined); }} />}
-      <GeometryTopologyCanvas language={language} {...workspace.canvasProps} />
+      {showArcTools && workspace.activeTool === 'smartAdd' && <TopologySmartAddControls language={language}
+        canApply={workspace.canSmartAdd && workspace.draftReady} busy={workspace.interactionBusy}
+        terrainCapture={workspace.terrainCapture} measuredWindow={workspace.measuredWindow}
+        mapCellSize={workspace.mapCellSize} initialOptions={workspace.smartAddOptions}
+        onApply={workspace.onApplySmartAddOptions} />}
+      {showArcTools && workspace.activeTool === 'deepConnect' && <TopologyDeepConnectControls language={language}
+        canApply={workspace.draftReady && workspace.canvasProps.mapCaptureReady} busy={workspace.interactionBusy}
+        sourceFID={workspace.deepConnectSourceFID} anchorCount={workspace.deepConnectAnchorCount}
+        onCancel={workspace.onCancelDeepConnect} />}
+      <GeometryTopologyCanvas language={language} {...workspace.canvasProps} tool={canvasTool} />
     </div>
   </section>;
 }

@@ -9,12 +9,16 @@ import { mapCatalogMatchesDocument, sameMapLocator, sameMapRevision, stableMapVa
 export interface TerrainElevationCapture {
   key: string;
   map: Record<string, unknown>;
-  contextToken: string;
+  /** Map Result catalog scope used by measurement request/receipt. */
+  catalogContextToken: string;
+  /** Association frame scope from map.associations.load. */
+  associationContextToken: string;
   projectRevision: string;
   terrainNode: CatalogTreeNodeLocator;
   terrainName: string;
   terrainPath: string;
-  terrainRevision: string;
+  /** SHA-256 of the persisted Terrain HDF itself (not the Host's composite dependency revision). */
+  sourceHdfRevision: string;
   /** Host MapTerrainElevationRequest only accepts source-hdf and terrain-input-raster. */
   dependencies: MapAssociationDependency[];
   /** Keep the complete validated association snapshot in the identity key, including plan-hdf owners. */
@@ -96,7 +100,8 @@ export function captureVisibleTerrainForMeasurement(args: {
     return { capture: null, reason: '当前地图或图层树尚未形成可核验的工程快照；仍可使用平面测距。', terrainName: null };
   }
   const terrains = args.layers.filter(layer => layer.sourceKind === 'terrain' &&
-    layer.associationContextToken === catalog.contextToken && validTerrainCapture(layer.hoverCapture, catalog));
+    layer.catalogContextToken === catalog.contextToken && Boolean(layer.associationContextToken) &&
+    validTerrainCapture(layer.hoverCapture, catalog));
   if (terrains.length === 0) {
     return { capture: null, reason: '当前没有已勾选且可见、来源与依赖修订均已捕获的 Terrain 地形层；仍可使用平面测距。', terrainName: null };
   }
@@ -109,13 +114,15 @@ export function captureVisibleTerrainForMeasurement(args: {
   const hoverCapture = layer.hoverCapture;
   const terrainDependencies = hoverCapture.dependencies.filter(item =>
     item.role === 'source-hdf' || item.role === 'terrain-input-raster');
+  const catalogContextToken = catalog.contextToken;
+  const associationContextToken = layer.associationContextToken;
   const identity = {
     map: mapRequest,
-    contextToken: catalog.contextToken,
+    catalogContextToken,
     projectRevision: catalog.projectRevision,
     terrainNode: hoverCapture.node,
     terrainPath: hoverCapture.sourcePath,
-    terrainRevision: hoverCapture.sourceRevision.toUpperCase(),
+    sourceHdfRevision: hoverCapture.sourceRevision.toUpperCase(),
     terrainDependencies: terrainDependencies.map(item => ({ ...item, revision: item.revision.toUpperCase() })),
     associationDependencies: hoverCapture.dependencies.map(item => ({ ...item, revision: item.revision.toUpperCase() })),
     resultOwners: hoverCapture.resultOwners,
@@ -124,12 +131,13 @@ export function captureVisibleTerrainForMeasurement(args: {
     capture: {
       key: JSON.stringify(stableMapValue(identity)),
       map: mapRequest,
-      contextToken: catalog.contextToken,
+      catalogContextToken,
+      associationContextToken,
       projectRevision: catalog.projectRevision,
       terrainNode: hoverCapture.node,
       terrainName: layer.name,
       terrainPath: hoverCapture.sourcePath,
-      terrainRevision: hoverCapture.sourceRevision,
+      sourceHdfRevision: hoverCapture.sourceRevision,
       dependencies: terrainDependencies,
       associationDependencies: hoverCapture.dependencies,
       resultOwners: hoverCapture.resultOwners,

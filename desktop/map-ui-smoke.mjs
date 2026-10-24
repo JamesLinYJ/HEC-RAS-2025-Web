@@ -25,6 +25,16 @@ async function resolveFixture(fixturePath) {
   assert.ok(path.isAbsolute(fixturePath), 'HECRAS_VERIFY_MAP_FIXTURE must be an absolute path.');
   const manifestPath = await realpath(fixturePath);
   const fixture = JSON.parse(await readFile(manifestPath, 'utf8'));
+  if (fixture.schema === 'hecras-geometry-topology-map-http-e2e/v1') {
+    assert.equal(typeof fixture.fixtureDirectory, 'string');
+    const fixtureRoot = await realpath(fixture.fixtureDirectory);
+    for (const key of ['projectPath', 'geometryPath']) {
+      assert.equal(typeof fixture[key], 'string', `Geometry map fixture is missing ${key}.`);
+      const filePath = await realpath(fixture[key]);
+      assertWithin(fixtureRoot, filePath, `Geometry map fixture ${key}`);
+    }
+    return fixture;
+  }
   assert.equal(fixture.schema, 'hecras-plan-compute-e2e/v1', 'Use a ServerChecks map fixture.');
   assert.equal(fixture.cellCount, 16, 'The map acceptance requires the 4 × 4 fixture.');
   assert.equal(typeof fixture.rootPath, 'string');
@@ -82,12 +92,20 @@ export async function runElectronMapUISmoke({ window, fixturePath, serverUrl }) 
       await waitFor(`(() => {const page=document.querySelector('[data-feature="${feature}"]');return Boolean(page && !page.hidden && page.getClientRects().length);})()`, `visible ${feature} page`);
     };
     const command = async (method, params = {}) => {
-      assert.equal(method, 'Page.captureScreenshot', `Unsupported Electron map smoke command: ${method}`);
-      assert.equal(params.format ?? 'png', 'png', 'Electron map screenshots must use PNG.');
-      // Keep the smoke page hidden while capturing, matching the owned
-      // BrowserWindow's visibility contract throughout the acceptance run.
-      const image = await window.capturePage(undefined, { stayHidden: true });
-      return { data: image.toPNG().toString('base64') };
+      if (method === 'Page.captureScreenshot') {
+        assert.equal(params.format ?? 'png', 'png', 'Electron map screenshots must use PNG.');
+        // Keep the smoke page hidden while capturing, matching the owned
+        // BrowserWindow's visibility contract throughout the acceptance run.
+        const image = await window.capturePage(undefined, { stayHidden: true });
+        return { data: image.toPNG().toString('base64') };
+      }
+      assert.equal(method, 'Input.dispatchMouseEvent', `Unsupported Electron map smoke command: ${method}`);
+      const debuggerClient = webContents.debugger;
+      if (!debuggerClient.isAttached()) {
+        debuggerClient.attach('1.3');
+        debuggerAttachedHere = true;
+      }
+      return await debuggerClient.sendCommand(method, params);
     };
     const setFiles = async (selector, files) => {
       const debuggerClient = webContents.debugger;
@@ -110,6 +128,7 @@ export async function runElectronMapUISmoke({ window, fixturePath, serverUrl }) 
     result.mapResult = checkReport.mapResult;
     result.resultHover = checkReport.resultHover;
     result.terrain = checkReport.terrain;
+    result.geometryTopology = checkReport.geometryTopology;
     result.modelCopies = checkReport.modelCopies;
     result.savedMapLayout = checkReport.savedMapLayout;
     result.gdbVelocity = checkReport.gdbVelocity;
@@ -123,6 +142,7 @@ export async function runElectronMapUISmoke({ window, fixturePath, serverUrl }) 
     result.mapResult = checkReport.mapResult;
     result.resultHover = checkReport.resultHover;
     result.terrain = checkReport.terrain;
+    result.geometryTopology = checkReport.geometryTopology;
     result.modelCopies = checkReport.modelCopies;
     result.savedMapLayout = checkReport.savedMapLayout;
     result.gdbVelocity = checkReport.gdbVelocity;

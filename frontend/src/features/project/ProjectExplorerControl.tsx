@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { FeatureId, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
+import type { ContextChangeOptions, FeatureId, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { errorDiagnostics, message, text } from '../../shared/workbench';
 import { validateSessionReferenceContext, withSessionReferenceContext } from '../../shared/sessionReferences';
 import type { WorkspaceUploadResult } from '../../shared/workbench';
@@ -193,7 +193,7 @@ function featureForNode(node: CatalogTreeNode): FeatureId {
 }
 
 export function ProjectExplorerControl(props: ProjectExplorerProps) {
-  const { language, context, backend, onNavigate, onContextChange } = props;
+  const { language, context, backend, onContextChange } = props;
   const [recentProjects, setRecentProjects] = useState<RecentProjectRecord[]>(readRecentProjects);
   const [currentFile, setCurrentFile] = useState<SelectedProjectFile | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
@@ -300,13 +300,13 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     }
   }, [context.projectPath, context.selectedAsset, currentFile]);
 
-  const publishSelectedAsset = useCallback((selectedAsset: WorkbenchContext['selectedAsset']): void => {
-    onContextChange({ ...contextRef.current, selectedAsset });
+  const publishSelectedAsset = useCallback((selectedAsset: WorkbenchContext['selectedAsset'], options: ContextChangeOptions = { navigation: 'preserve' }): void => {
+    onContextChange({ ...contextRef.current, selectedAsset }, options);
   }, [onContextChange]);
 
-  const selectNode = useCallback((node: CatalogTreeNode | null): void => {
+  const selectNode = useCallback((node: CatalogTreeNode | null, options?: ContextChangeOptions): void => {
     if (!node?.assetID) {
-      publishSelectedAsset(null);
+      publishSelectedAsset(null, options);
       return;
     }
     publishSelectedAsset({
@@ -314,7 +314,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
       kind: catalogAssetKind(node),
       name: node.name,
       locator: node.locator ?? undefined,
-    });
+    }, options);
   }, [publishSelectedAsset]);
 
   const commitOpenServerProject = useCallback(async (requestedPath: string): Promise<boolean> => {
@@ -834,8 +834,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   };
 
   const openNode = (node: CatalogTreeNode): void => {
-    selectNode(node);
-    onNavigate(featureForNode(node));
+    selectNode(node, { navigation: featureForNode(node) });
   };
 
   const performTreeAction = async (action: ProjectTreeAction, node: CatalogTreeNode): Promise<void> => {

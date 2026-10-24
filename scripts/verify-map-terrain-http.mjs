@@ -127,6 +127,26 @@ try {
       resultOwners: initialLayer.resultOwners } };
   report.checks.push('A real map.associations.load rendered the selected Terrain source as RGBA above 8 MiB, preserving exact source, revision and owner identities.');
 
+  const measurementRequest = {
+    map: mapRequestAt(visualizationRevision),
+    terrainNode: initialLayer.locator,
+    expectedTerrainPath: initialLayer.assetPath,
+    expectedTerrainRevision: initialLayer.revision,
+    expectedDependencies: initialLayer.dependencies.filter(dependency =>
+      ['source-hdf', 'terrain-input-raster'].includes(dependency.role)),
+    endpoints: [manifest.knownWorldPoint, manifest.noDataWorldPoint],
+    resultOwners: initialLayer.resultOwners,
+  };
+  const measurement = await operation('map.measureTerrainElevations', measurementRequest);
+  assert.equal(measurement.contextToken, manifest.contextToken);
+  assert.deepEqual(measurement.sourceDependencies, measurementRequest.expectedDependencies);
+  assert.ok(Math.abs(measurement.elevations[0] - manifest.expectedTerrainValue) <= manifest.terrainTolerance);
+  assert.equal(measurement.elevations[1], null, 'Finite Terrain NoData must not become an elevation or slope.');
+  await operation('map.measureTerrainElevations', { ...measurementRequest,
+    expectedTerrainRevision: '0'.repeat(64) }, 'sourceChanged');
+  report.terrainMeasurement = measurement;
+  report.checks.push('Terrain measurement matches the direct source sample, returns null for the actual NoData point, and rejects an expired source revision.');
+
   const point = manifest.knownWorldPoint;
   const hoverBase = {
     map: mapRequestAt(visualizationRevision),

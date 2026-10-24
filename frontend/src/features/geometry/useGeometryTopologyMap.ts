@@ -5,14 +5,18 @@ import { loadMapDocumentCatalog, projectXmlSha } from '../map/ProjectTreeListene
 import { sameSourcePath } from '../tools/attributes/attributeTableTypes';
 import type {
   GeometryModelRequest, GeometryRow, GeometryTopologyArcPointsSnapshot, GeometryTopologyMapCommand,
-  GeometryTopologyMapRequestContext, GeometryTopologyMapTool,
+  GeometryTopologyDeepConnectAnchor, GeometryTopologyMapRequestContext, GeometryTopologyMapTool,
   GeometryTopologySelectionMode, GeometryTopologySelectionScope, GeometryTopologyMarqueeHitMode,
+  GeometryTopologySmartAddOptions, GeometryTopologySmartAddTerrainCapture, GeometryTopologySmartAddWindow,
   GeometryTopologySnapshot, GeometryTopologySpatialSelectionResult,
 } from './geometryTypes';
 import type {
-  GeometryTopologyCanvasProps, GeometryTopologyNodeMove, GeometryTopologySpatialSelection,
+  GeometryTopologyCanvasProps, GeometryTopologyDeepConnectGesture, GeometryTopologyDeepConnectProgress,
+  GeometryTopologyNodeMove, GeometryTopologySmartAddGesture, GeometryTopologySpatialSelection,
   GeometryTopologyViewportCapture,
 } from './GeometryTopologyCanvas';
+import { TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS } from './TopologySmartAddControls';
+import { createTopologyDeepConnectCommand } from './geometryDeepConnect';
 
 interface MapTarget {
   key: string;
@@ -70,6 +74,14 @@ export interface GeometryTopologyMapWorkspace {
   selectedArcFIDs: number[];
   arcPoints: GeometryTopologyArcPointsSnapshot | null;
   mapCellSize: number | null;
+  terrainCapture: GeometryTopologySmartAddTerrainCapture | null;
+  measuredWindow: GeometryTopologySmartAddWindow | null;
+  smartAddOptions: GeometryTopologySmartAddOptions;
+  canSmartAdd: boolean;
+  onApplySmartAddOptions: (options: GeometryTopologySmartAddOptions) => void;
+  deepConnectSourceFID: number | null;
+  deepConnectAnchorCount: 0 | 1;
+  onCancelDeepConnect: () => void;
   draftReady: boolean;
   draftDirty: boolean;
   onTableSelectionChange: (kind: 'node' | 'arc', rows: GeometryRow[]) => void;
@@ -114,6 +126,11 @@ function requestID(): string {
 
 function sameRevision(left: string | null | undefined, right: string | null | undefined): boolean {
   return !!left && !!right && left.toUpperCase() === right.toUpperCase();
+}
+
+function optionalContextString(value: Record<string, unknown> | null | undefined, key: string): string | null {
+  const candidate = value?.[key];
+  return typeof candidate === 'string' ? candidate : null;
 }
 
 function stableJSON(value: unknown): string {
@@ -218,6 +235,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const [selectedTargetKey, setSelectedTargetKey] = useState('');
   const [captureEntry, setCaptureEntry] = useState<OwnerValue<MapGeometryCapture> | null>(null);
   const [viewportCapture, setViewportCapture] = useState<GeometryTopologyViewportCapture | null>(null);
+  const [measuredViewportCapture, setMeasuredViewportCapture] = useState<GeometryTopologyViewportCapture | null>(null);
   const [selectionEntry, setSelectionEntry] = useState<OwnerValue<GeometryMapSelection> | null>(null);
   const [arcPointsEntry, setArcPointsEntry] = useState<ArcPointsCapture | null>(null);
   const [arcPointsLoading, setArcPointsLoading] = useState(false);
@@ -231,6 +249,8 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const [marqueeHitMode, setMarqueeHitMode] = useState<GeometryTopologyMarqueeHitMode>('Intersects');
   const [activeTool, setActiveTool] = useState<GeometryTopologyMapTool>('select');
   const [splitMode, setSplitMode] = useState<'Anywhere' | 'AtVertex'>('Anywhere');
+  const [smartAddOptions, setSmartAddOptions] = useState<GeometryTopologySmartAddOptions>(TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS);
+  const [deepConnectProgressEntry, setDeepConnectProgressEntry] = useState<OwnerValue<GeometryTopologyDeepConnectProgress | null> | null>(null);
   const [mapCellSize, setMapCellSize] = useState<number | null>(null);
   const catalogGenerationRef = useRef(0);
   const mapCaptureGenerationRef = useRef(0);
@@ -245,6 +265,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const targetKeyRef = useRef(selectedTargetKey); targetKeyRef.current = selectedTargetKey;
   const selectionRef = useRef(selectionEntry); selectionRef.current = selectionEntry;
   const ownerRef = useRef(owner); ownerRef.current = owner;
+  const measuredViewportRef = useRef<GeometryTopologyViewportCapture | null>(null);
 
   useEffect(() => {
     if (!topology) return;
@@ -282,12 +303,27 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
 
   const targets = targetsEntry?.owner === ownerContextKey ? targetsEntry.value : [];
   const selectedTarget = targets.find((target) => target.key === selectedTargetKey) ?? targets[0];
+  const mapSourceKey = JSON.stringify([owner, selectedTarget?.key ?? null]);
   const capture = captureEntry?.owner === ownerContextKey && captureEntry.value.targetKey === selectedTarget?.key
     ? captureEntry.value : undefined;
   const selection = selectionEntry?.owner === owner ? selectionEntry.value : emptySelection();
   const draftIdentity = topology?.completion?.draftIdentity;
   const mapCaptureReady = !!active && !!capture && !!topology && !!draftIdentity &&
     topology.revision === capture.geometryRevision && sameRevision(topology.completion?.sourceRevision, topology.revision);
+  const currentMeasuredViewport = measuredViewportCapture?.sourceKey === mapSourceKey ? measuredViewportCapture : null;
+  const measuredWindow: GeometryTopologySmartAddWindow | null = currentMeasuredViewport
+    ? { extent: currentMeasuredViewport.viewport, rows: currentMeasuredViewport.rows, columns: currentMeasuredViewport.columns }
+    : null;
+  const terrainCapture = topology?.smartAddTerrainCapture ?? null;
+  const smartAddCaptureReady = !!terrainCapture && !!model && !!topology && !!capture && !!draftIdentity &&
+    typeof terrainCapture.geometryAssetPath === 'string' && typeof terrainCapture.geometryRevision === 'string' &&
+    typeof terrainCapture.projectPath === 'string' && typeof terrainCapture.canonicalTerrainPath === 'string' &&
+    typeof terrainCapture.terrainName === 'string' && typeof terrainCapture.sourceRevision === 'string' &&
+    sameSourcePath(terrainCapture.geometryAssetPath, model.assetPath) && sameRevision(terrainCapture.geometryRevision, topology.revision) &&
+    typeof model.projectPath === 'string' && sameSourcePath(terrainCapture.projectPath, model.projectPath) &&
+    (terrainCapture.projectSessionID ?? null) === optionalContextString(model.coreLayerContext, 'projectSessionID') &&
+    (terrainCapture.coreLayerContextIdentityToken ?? null) === optionalContextString(model.coreLayerContext, 'identityToken') &&
+    !!terrainCapture.canonicalTerrainPath.trim() && !!terrainCapture.terrainName.trim() && !!terrainCapture.sourceRevision.trim();
   const selectedArcFIDs = selection.arc;
   const selectedArcFID = selectedArcFIDs.length === 1 ? selectedArcFIDs[0] : null;
   const arcPoints = arcPointsEntry && topology && draftIdentity &&
@@ -296,7 +332,12 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     arcPointsEntry.draftIdentity === draftIdentity
       ? arcPointsEntry.snapshot : null;
   const draftReady = mapCaptureReady && canEdit && !busy && !loading && !capturing && !spatialBusy &&
-    !moveBusy && !arcPointsLoading && mapCellSize != null && Number.isFinite(mapCellSize) && mapCellSize > 0;
+    !moveBusy && !arcPointsLoading && mapCellSize != null && Number.isFinite(mapCellSize) && mapCellSize > 0 &&
+    !!currentMeasuredViewport && currentMeasuredViewport.mapCellSize === mapCellSize;
+  const canSmartAdd = draftReady && smartAddCaptureReady && !!measuredWindow && backend.supports('topology.edit');
+  const progressKey = JSON.stringify([owner, selectedTarget?.key ?? null, topology?.revision ?? null,
+    topology?.draftState ?? null, draftIdentity ?? null]);
+  const deepConnectProgress = deepConnectProgressEntry?.owner === progressKey ? deepConnectProgressEntry.value : null;
 
   useEffect(() => {
     spatialGenerationRef.current += 1;
@@ -360,11 +401,15 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     setTargetsEntry(null);
     setCaptureEntry(null);
     setViewportCapture(null);
+    setMeasuredViewportCapture(null);
+    measuredViewportRef.current = null;
     setMapCellSize(null);
     setArcPointsEntry(null);
     setArcPointsLoading(false);
     setActiveTool('select');
     setSelectedTargetKey('');
+    setSmartAddOptions(TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS);
+    setDeepConnectProgressEntry(null);
     setSelectionEntry((current) => current?.owner === owner ? current : { owner, value: emptySelection() });
     if (!model || !context.projectPath || !context.projectRevision) {
       setLoading(false);
@@ -389,7 +434,13 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   }, [active, backend, backendRevision, context.projectPath, context.projectRevision, mapContext, model?.assetPath, owner, ownerContextKey]);
 
   useEffect(() => {
-    if (!active || !selectedTarget || !model || !context.projectPath || !viewportCapture || !topology || !draftIdentity) return;
+    if (active) return;
+    setDeepConnectProgressEntry(null);
+    setActiveTool('select');
+  }, [active]);
+
+  useEffect(() => {
+    if (!active || !selectedTarget || !model || !context.projectPath || !viewportCapture || viewportCapture.sourceKey !== mapSourceKey || !topology || !draftIdentity) return;
     if (capture && capture.targetKey === selectedTarget.key && sameRevision(capture.geometryRevision, topology.revision)) return;
     if (!backend.supports('map.geometry.load')) {
       setError('当前 C# 服务未发布地图几何读取操作。');
@@ -466,14 +517,33 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     return () => { controller.abort(); if (mapCaptureGenerationRef.current === generation) mapCaptureGenerationRef.current += 1; };
   }, [active, backend, context.coreLayerContext, context.projectPath, context.projectRevision, context.projectSessionID,
     context.projectXml, context.selectedAsset?.revision, mapContext.coreLayerContext, capture, draftIdentity, model, owner, ownerContextKey,
-    selectedTarget, topology, viewportCapture]);
+    selectedTarget, topology, viewportCapture, mapSourceKey]);
 
   const onViewportReady = useCallback((next: GeometryTopologyViewportCapture): void => {
-    if (!Number.isFinite(next.mapCellSize) || next.mapCellSize <= 0) return;
+    if (next.sourceKey !== mapSourceKey || !Number.isFinite(next.mapCellSize) || next.mapCellSize <= 0 ||
+        !Number.isSafeInteger(next.rows) || !Number.isSafeInteger(next.columns) || next.rows < 2 || next.columns < 2 ||
+        next.rows * next.columns > 8_000_000) return;
+    measuredViewportRef.current = next;
+    setMeasuredViewportCapture((current) => current?.sourceKey === next.sourceKey && stableJSON(current) === stableJSON(next) ? current : next);
     setMapCellSize((current) => current === next.mapCellSize ? current : next.mapCellSize);
-    if (captureRef.current?.owner === ownerContextKey && captureRef.current.value.targetKey === targetKeyRef.current) return;
-    setViewportCapture(next);
-  }, [ownerContextKey]);
+    const currentMapCapture = captureRef.current;
+    if (currentMapCapture?.owner === ownerContextKey && currentMapCapture.value.targetKey === selectedTarget?.key) return;
+    setViewportCapture((current) => current?.sourceKey === next.sourceKey && stableJSON(current) === stableJSON(next) ? current : next);
+  }, [mapSourceKey, ownerContextKey, selectedTarget?.key]);
+
+  const onApplySmartAddOptions = useCallback((options: GeometryTopologySmartAddOptions): void => {
+    setSmartAddOptions(options);
+    setActiveTool('smartAdd');
+  }, []);
+
+  const onDeepConnectProgress = useCallback((progress: GeometryTopologyDeepConnectProgress | null): void => {
+    setDeepConnectProgressEntry({ owner: progressKey, value: progress });
+  }, [progressKey]);
+
+  const onCancelDeepConnect = useCallback((): void => {
+    setDeepConnectProgressEntry({ owner: progressKey, value: null });
+    setActiveTool('select');
+  }, [progressKey]);
 
   const onTableSelectionChange = useCallback((kind: 'node' | 'arc', rows: GeometryRow[]): void => {
     const fids = [...new Set(rows.flatMap((row) => Number.isInteger(row.fid) && row.fid! >= 0 ? [row.fid!] : []))];
@@ -574,6 +644,13 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
       const matches = nodeFeatures(fid);
       return matches.length === 1 ? matches[0] : undefined;
     };
+    const nodePoint = (fid: number) => {
+      const feature = nodeFeature(fid);
+      const path = feature?.paths.length === 1 ? feature.paths[0] : undefined;
+      const point = path?.length === 1 ? path[0] : undefined;
+      return feature?.geometryType === 'point' && point && Number.isFinite(point.x) && Number.isFinite(point.y)
+        ? point : undefined;
+    };
     const validArc = (fid: number): boolean => Number.isSafeInteger(fid) && fid >= 0 && !!arcFeature(fid) &&
       current.arcs.rows.some((row) => row.fid === fid);
     const validNode = (fid: number): boolean => Number.isSafeInteger(fid) && fid >= 0 && !!nodeFeature(fid) &&
@@ -584,6 +661,10 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
       return !!path && path.length >= 2 && Number.isInteger(segment) && segment >= 0 && segment < path.length - 1;
     };
     const validCoordinate = (point: { x: number; y: number }): boolean => Number.isFinite(point.x) && Number.isFinite(point.y);
+    const currentViewport = measuredViewportRef.current?.sourceKey === mapSourceKey ? measuredViewportRef.current : null;
+    const sameCapturedMapScale = !!currentViewport && command.mapCellSize === currentViewport.mapCellSize;
+    const sameCoordinate = (left: { x: number; y: number }, right: { x: number; y: number }): boolean =>
+      left.x === right.x && left.y === right.y;
     const currentArcPointsCapture = (fid: number): boolean => !!arcPoints &&
       arcPointsEntry?.owner === owner && arcPointsEntry.arcFID === fid && arcPointsEntry.revision === current.revision &&
       arcPointsEntry.draftState === current.draftState && arcPointsEntry.draftIdentity === currentDraftIdentity &&
@@ -604,6 +685,68 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
             !validSegment(command.startArcTarget.arcFID, command.startArcTarget.sourceSegmentIndex) ||
             !validCoordinate(command.startArcTarget.point)))) {
         throw new DOMException('绘制弧段的节点、源弧段或坐标已不在当前地图快照中。', 'AbortError');
+      }
+    } else if (command.action === 'smartAdd') {
+      const source = command.smartAddSource;
+      const currentTerrain = current.smartAddTerrainCapture;
+      const window = source?.window;
+      if (!sameCapturedMapScale || !canSmartAdd || !currentViewport || !source || !currentTerrain ||
+          stableJSON(source.terrainCapture) !== stableJSON(currentTerrain) ||
+          stableJSON(window) !== stableJSON({ extent: currentViewport.viewport, rows: currentViewport.rows, columns: currentViewport.columns }) ||
+          command.coordinates.length !== 2 || command.coordinates.some((point) => !validCoordinate(point)) ||
+          sameCoordinate(command.coordinates[0], command.coordinates[1]) ||
+          (command.startNodeFID != null && (!validNode(command.startNodeFID) || !nodePoint(command.startNodeFID) ||
+            !sameCoordinate(command.coordinates[0], nodePoint(command.startNodeFID)!))) ||
+          (command.startArcTarget != null && (!validArc(command.startArcTarget.arcFID) ||
+            !validSegment(command.startArcTarget.arcFID, command.startArcTarget.sourceSegmentIndex) ||
+            !validCoordinate(command.startArcTarget.point) ||
+            !sameCoordinate(command.coordinates[0], command.startArcTarget.point) || command.splitMode !== 'Anywhere'))) {
+        throw new DOMException('SmartAdd 的地形捕获、实测窗口、起点或地图比例已过期。', 'AbortError');
+      }
+    } else if (command.action === 'deepConnect') {
+      const source = command.deepConnectSource;
+      const sourceOwner = source?.topologySource;
+      const mapOwner = currentCapture;
+      const sourcePath = source?.featureFID != null ? arcFeature(source.featureFID)?.paths[0] : undefined;
+      const startAnchor = source ? { segmentIndex: source.startSegmentIndex, fraction: source.startSegmentFraction } : null;
+      const endAnchor = source ? { segmentIndex: source.endSegmentIndex, fraction: source.endSegmentFraction } : null;
+      const validAnchor = (anchor: GeometryTopologyDeepConnectAnchor | null): anchor is GeometryTopologyDeepConnectAnchor => !!anchor &&
+        Number.isInteger(anchor.segmentIndex) && anchor.segmentIndex >= 0 &&
+        !!sourcePath && anchor.segmentIndex < sourcePath.length - 1 &&
+        Number.isFinite(anchor.fraction) && anchor.fraction >= 0 && anchor.fraction <= 1;
+      const mapRequest = sourceOwner?.mapRequestContext;
+      let startCoordinate: { x: number; y: number } | null = null;
+      if (validAnchor(startAnchor) && sourcePath) {
+        const first = sourcePath[startAnchor.segmentIndex];
+        const second = sourcePath[startAnchor.segmentIndex + 1];
+        if (first && second) startCoordinate = {
+          x: first.x + (second.x - first.x) * startAnchor.fraction,
+          y: first.y + (second.y - first.y) * startAnchor.fraction,
+        };
+      }
+      if (!sameCapturedMapScale || !source || !mapOwner || source.sourceKind !== 'topology' || source.vectorSource != null ||
+          !sourceOwner || stableJSON(sourceOwner.model) !== stableJSON(model) || sourceOwner.featureKind !== 'arc' ||
+          sourceOwner.revision !== current.revision || sourceOwner.draftState !== current.draftState ||
+          sourceOwner.draftIdentity !== currentDraftIdentity || sourceOwner.featureID !== `arc:${source.featureFID}` ||
+          !mapRequest || mapRequest.mapID !== mapOwner.mapID || mapRequest.contextToken !== mapOwner.contextToken ||
+          mapRequest.geometryRevision !== mapOwner.geometryRevision || mapRequest.expectedDraftIdentity !== currentDraftIdentity ||
+          source.sourceLocator !== `arc:${source.featureFID}` || source.sourceRevision !== current.revision ||
+          source.pathIndex !== 0 || source.componentIdentity !== `arc:${source.featureFID}:path:0` ||
+          !validArc(source.featureFID) || !Array.isArray(source.points) || !sourcePath || sourcePath.length !== source.points.length ||
+          sourcePath.some((point, index) => !sameCoordinate(point, source.points[index]!)) ||
+          !validAnchor(startAnchor) || !validAnchor(endAnchor) || command.coordinates !== null ||
+          (command.startNodeFID != null && (!validNode(command.startNodeFID) || !nodePoint(command.startNodeFID) ||
+            !startCoordinate || !sameCoordinate(startCoordinate, nodePoint(command.startNodeFID)!))) ||
+          (command.startNodeFID == null && command.startArcTarget == null) ||
+          (command.startArcTarget != null && (!validArc(command.startArcTarget.arcFID) ||
+            command.startArcTarget.arcFID !== source.featureFID ||
+            command.startArcTarget.sourceSegmentIndex !== startAnchor.segmentIndex || !startCoordinate ||
+            !validSegment(command.startArcTarget.arcFID, command.startArcTarget.sourceSegmentIndex) ||
+            !validCoordinate(command.startArcTarget.point) || !sameCoordinate(startCoordinate, command.startArcTarget.point) ||
+            command.splitMode !== 'Anywhere')) ||
+          (command.startNodeFID != null && command.startArcTarget != null) ||
+          (command.startNodeFID != null && command.splitMode != null)) {
+        throw new DOMException('DeepConnect 的源弧段、锚点或地图草稿捕获已过期。', 'AbortError');
       }
     }
     if (command.action === 'moveArcPoint' || command.action === 'deleteArcPoint') {
@@ -640,7 +783,12 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     setMoveBusy(true);
     setError(undefined);
     try {
-      await editMapCommand(expected, mapOwner, command);
+      const result = await editMapCommand(expected, mapOwner, command);
+      if ((command.action === 'smartAdd' || command.action === 'deepConnect') && result.draftState === expected.draftState) {
+        throw new Error(command.action === 'smartAdd'
+          ? 'Host 未在拓扑草稿中确认 SmartAdd 路径；输入预览仍保留。'
+          : 'Host 未在拓扑草稿中确认 DeepConnect 结果；锚点仍保留。');
+      }
     } catch (caught) {
       if (generation === moveGenerationRef.current && !(caught instanceof DOMException && caught.name === 'AbortError')) {
         setError(caught instanceof Error ? caught.message : String(caught));
@@ -650,7 +798,61 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
       mapCommandInFlightRef.current = false;
       if (generation === moveGenerationRef.current) setMoveBusy(false);
     }
-  }, [active, arcPoints, arcPointsEntry, busy, canEdit, editMapCommand, moveBusy, owner, ownerContextKey, spatialBusy]);
+  }, [active, arcPoints, arcPointsEntry, busy, canEdit, canSmartAdd, editMapCommand, mapSourceKey,
+    model, moveBusy, owner, ownerContextKey, spatialBusy]);
+
+  const onSmartAdd = useCallback(async (event: GeometryTopologySmartAddGesture): Promise<void> => {
+    const current = topologyRef.current;
+    const capturedWindow = measuredViewportRef.current?.sourceKey === mapSourceKey
+      ? measuredViewportRef.current : null;
+    const currentTerrain = current?.smartAddTerrainCapture;
+    if (!active || !current || !currentTerrain || !capturedWindow || !canSmartAdd ||
+        event.mapCellSize !== capturedWindow.mapCellSize ||
+        stableJSON(event.window) !== stableJSON({ extent: capturedWindow.viewport, rows: capturedWindow.rows, columns: capturedWindow.columns }) ||
+        stableJSON(event.window) !== stableJSON(measuredWindow)) {
+      throw new DOMException('SmartAdd 必须使用本次点击时的真实地图相机范围与地形捕获。', 'AbortError');
+    }
+    const command: GeometryTopologyMapCommand = {
+      action: 'smartAdd',
+      featureKind: 'arc',
+      featureIDs: [],
+      coordinates: event.coordinates,
+      mapCellSize: event.mapCellSize,
+      smartAddSource: { terrainCapture: currentTerrain, window: event.window, options: smartAddOptions },
+      ...(event.startNodeFID != null ? { startNodeFID: event.startNodeFID } : {}),
+      ...(event.startArcTarget ? { startArcTarget: event.startArcTarget, splitMode: 'Anywhere' as const } : {}),
+    };
+    await runMapCommand(command);
+  }, [active, canSmartAdd, mapSourceKey, measuredWindow, runMapCommand, smartAddOptions]);
+
+  const onDeepConnect = useCallback(async (event: GeometryTopologyDeepConnectGesture): Promise<void> => {
+    const current = topologyRef.current;
+    const currentCapture = captureRef.current?.owner === ownerContextKey &&
+      captureRef.current.value.targetKey === targetKeyRef.current ? captureRef.current.value : undefined;
+    const currentDraftIdentity = current?.completion?.draftIdentity;
+    const currentViewport = measuredViewportRef.current?.sourceKey === mapSourceKey ? measuredViewportRef.current : null;
+    if (!active || !model || !current || !currentCapture || !currentDraftIdentity || !currentViewport ||
+        !canEdit || !sameRevision(current.revision, currentCapture.geometryRevision) ||
+        !sameRevision(current.completion?.sourceRevision, current.revision) || event.mapCellSize !== currentViewport.mapCellSize) {
+      throw new DOMException('DeepConnect 当前地图捕获或拓扑草稿已过期。', 'AbortError');
+    }
+    const command = createTopologyDeepConnectCommand({
+      model,
+      topology: current,
+      mapRequestContext: {
+        requestID: requestID(),
+        mapID: currentCapture.mapID,
+        contextToken: currentCapture.contextToken,
+        geometryRevision: currentCapture.geometryRevision,
+        expectedDraftIdentity: currentDraftIdentity,
+      },
+      mapCellSize: event.mapCellSize,
+      arcFID: event.arcFID,
+      startAnchor: event.startAnchor,
+      endAnchor: event.endAnchor,
+    });
+    await runMapCommand(command);
+  }, [active, canEdit, mapSourceKey, model, ownerContextKey, runMapCommand]);
 
   const onMoveNode = useCallback((event: GeometryTopologyNodeMove): void => {
     const currentSelection = selectionRef.current?.owner === owner ? selectionRef.current.value : emptySelection();
@@ -672,6 +874,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     selectedFIDByKind: selection,
     canSelect: backend.supports('topology.spatialSelect'),
     canMoveNodes: canEdit && mapCaptureReady,
+    canSmartAdd,
     busy: busy || loading || capturing || spatialBusy || moveBusy || arcPointsLoading,
     mapCaptureReady,
     selectionScope,
@@ -681,9 +884,13 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     onSpatialSelect,
     onMoveNode,
     onMapCommand: runMapCommand,
+    onSmartAdd,
+    onDeepConnect,
+    onDeepConnectProgress,
   }), [activeTool, arcPoints, arcPointsLoading, backend, canEdit, capturing, draftIdentity, loading, splitMode,
-    mapCaptureReady, marqueeHitMode, moveBusy, onMoveNode, onViewportReady, onSpatialSelect, owner, runMapCommand,
-    selection, selectionMode, selectionScope, selectedTarget?.key, spatialBusy, topology?.map, busy]);
+    canSmartAdd, mapCaptureReady, marqueeHitMode, moveBusy, onDeepConnect, onDeepConnectProgress, onMoveNode,
+    onSmartAdd, onViewportReady, onSpatialSelect, owner, runMapCommand, selection, selectionMode, selectionScope,
+    selectedTarget?.key, spatialBusy, topology?.map, busy]);
 
   return {
     targets: targets.map(({ key, label }) => ({ key, label })),
@@ -706,6 +913,14 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     selectedArcFIDs,
     arcPoints,
     mapCellSize,
+    terrainCapture,
+    measuredWindow,
+    smartAddOptions,
+    canSmartAdd,
+    onApplySmartAddOptions,
+    deepConnectSourceFID: deepConnectProgress?.arcFID ?? null,
+    deepConnectAnchorCount: deepConnectProgress?.anchorCount ?? 0,
+    onCancelDeepConnect,
     draftReady,
     draftDirty: !!topology?.isDirty,
     onTableSelectionChange,

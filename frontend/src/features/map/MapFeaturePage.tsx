@@ -33,7 +33,7 @@ import { useMapVelocityField } from './useMapVelocityField';
 import { usePersistedRasterLayers, mapRasterViewportFromCamera } from './usePersistedRasterLayers';
 import { useMapResultFrames } from './useMapResultFrames';
 import { useAssociatedMapLayers } from './useAssociatedMapLayers';
-import { mapCatalogMatchesDocument, sameMapID, sameMapLocator } from './associatedMapLayers';
+import { mapCatalogMatchesDocument, sameMapID, sameMapLocator, stableMapValue } from './associatedMapLayers';
 import { useMapHoverIdentify } from './useMapHoverIdentify';
 import type { MapHoverPointer } from './useMapHoverIdentify';
 import { mapResultSelectionOverridesFromCatalog } from './useMapResultFrames';
@@ -59,7 +59,7 @@ import { RasMapPositionIndicator } from './RasMapPositionIndicator';
 import { RasMapUndoRedo } from './RasMapUndoRedo';
 import { ZoomToPointDialog } from './ZoomToPointDialog';
 import { navigationViewport } from './mapNavigation';
-import type { GeoFeature, GeoGeometry, GeoJsonLayer, MapDocumentTab, MapImageLayer, XY } from './mapTypes';
+import type { CatalogTreeNode, GeoFeature, GeoGeometry, GeoJsonLayer, MapDocumentTab, MapImageLayer, XY } from './mapTypes';
 import type { MapFeaturePageProps } from './mapTypes';
 import { RasLayerPropertiesPane } from './RasLayerPropertiesPane';
 import { RasContextualActionsBar } from './RasContextualActionsBar';
@@ -86,6 +86,14 @@ interface FeatureContextMenu {
   y: number;
   layer: GeoJsonLayer;
   feature: GeoFeature;
+}
+
+function catalogHasNodeType(nodes: readonly CatalogTreeNode[], nodeID: string, nodeType: string): boolean {
+  for (const node of nodes) {
+    if (node.id === nodeID) return node.locator?.nodeType === nodeType;
+    if (node.children?.length && catalogHasNodeType(node.children, nodeID, nodeType)) return true;
+  }
+  return false;
 }
 
 interface MapEditSnapshot {
@@ -274,10 +282,23 @@ function MapPage(props: MapFeaturePageProps) {
     acceptedVisualizationRevision: string; source: Record<string, unknown>;
   } | null>(null);
   const owner = activeDocument?.id ?? ('local:' + context.projectSessionID);
+  const cameraOwnerScope = JSON.stringify([context.projectSessionID, context.projectPath, owner]);
+  const manuallyControlledCameraOwnerRef = useRef<string | null>(null);
+  const noteManualCameraControl = () => { manuallyControlledCameraOwnerRef.current = cameraOwnerScope; };
+  const setUserViewport = (next: Parameters<typeof setViewport>[0]) => {
+    noteManualCameraControl();
+    setViewport(next);
+  };
+  useEffect(() => {
+    // A different project or saved map gets its own initial fit opportunity.
+    manuallyControlledCameraOwnerRef.current = null;
+  }, [cameraOwnerScope]);
   useEffect(() => setLocationDialog(null), [owner]);
   const ownerState = mapStateByOwner[owner] ?? EMPTY_MAP_OWNER_STATE;
   const activeLayers = ownerState.layers;
   const draftPoints = ownerState.points;
+  const isMeasurementTool = activeTool === 'measureLength' || activeTool === 'measureArea';
+  const hasPersistentDraftPoints = draftPoints.length > 0 && !isMeasurementTool;
   const backgroundSettings = backgroundSettingsByOwner[owner] ?? DEFAULT_BACKGROUND_MAPS_VM_STATE;
   const backgroundDraftDirty = isBackgroundMapDraftDirty(backgroundSettings);
   const persistedVectors = usePersistedVectorLayers({ backend, context, document: activeDocument, language });
@@ -325,6 +346,41 @@ function MapPage(props: MapFeaturePageProps) {
   const resultFrames = useMapResultFrames({ backend, context, document: activeDocument, language, viewport: resultViewport, backendRevision });
   const associatedLayers = useAssociatedMapLayers({ backend, context, document: activeDocument,
     viewport: resultViewport, controller: resultFrames, language, backendRevision });
+  const selectedBackendNodeID = selectedBackendNode?.owner === owner ? selectedBackendNode.nodeID : null;
+  const selectedTerrainNodeID = useMemo(() => selectedBackendNodeID && resultFrames.sources &&
+    catalogHasNodeType(resultFrames.sources.treeRoots, selectedBackendNodeID, 'Terrain') ? selectedBackendNodeID : null,
+  [resultFrames.sources, selectedBackendNodeID]);
+  const selectedResultOwners = useMemo(() => resultFrames.sources?.activeNodes.map(active => {
+    const slotZero = active.selections.find(selection => selection.selectionIndex === 0);
+    const result = slotZero?.selectedResult;
+    return {
+      node: active.node,
+      selectionIndex: 0,
+      selectionMode: slotZero?.selectionMode ?? null,
+      resultPath: result?.resultPath ?? null,
+      resultRevision: result?.revision ?? null,
+      isComputing: result?.isComputing ?? null,
+    };
+  }) ?? null, [resultFrames.sources?.activeNodes]);
+  const terrainMeasurementScopeKey = useMemo(() => JSON.stringify(stableMapValue({
+      owner,
+      projectPath: context.projectPath,
+      projectRevision: context.projectRevision,
+      projectSessionID: context.projectSessionID,
+      mapRequest: resultFrames.mapRequest,
+      catalog: resultFrames.sources ? {
+        contextToken: resultFrames.sources.contextToken,
+        projectRevision: resultFrames.sources.projectRevision,
+        projectXmlSHA: resultFrames.sources.projectXmlSHA,
+        visualizationRevision: resultFrames.sources.visualizationRevision,
+        treeSelectionOverrides: resultFrames.sources.treeSelectionOverrides,
+        selectedResultOwners,
+      } : null,
+      selectedTerrainNodeID,
+      coreLayerContextIdentity: context.coreLayerContext?.identityToken ?? null,
+    })), [context.coreLayerContext?.identityToken, context.projectPath, context.projectRevision,
+    context.projectSessionID, owner, resultFrames.mapRequest, resultFrames.sources, selectedResultOwners,
+    selectedTerrainNodeID]);
   const terrainMeasurementCaptureState = useMemo(() => captureVisibleTerrainForMeasurement({
     backend,
     context,
@@ -332,10 +388,11 @@ function MapPage(props: MapFeaturePageProps) {
     document: activeDocument,
     map: resultFrames.mapRequest,
     layers: associatedLayers.layers,
-    selectedNodeID: selectedBackendNode?.owner === owner ? selectedBackendNode.nodeID : null,
+    selectedNodeID: selectedTerrainNodeID,
   }), [activeDocument, associatedLayers.layers, backend, context, owner, resultFrames.mapRequest, resultFrames.sources,
-    selectedBackendNode?.nodeID, selectedBackendNode?.owner, backendRevision]);
-  const terrainElevationMeasurement = useTerrainElevationMeasurement(backend, terrainMeasurementCaptureState.capture);
+    selectedTerrainNodeID, backendRevision]);
+  const terrainElevationMeasurement = useTerrainElevationMeasurement(backend, terrainMeasurementCaptureState.capture,
+    terrainMeasurementScopeKey);
   const clearMeasurement = () => {
     setMeasurementResult(null);
     setMeasurementResultOwner(null);
@@ -556,6 +613,9 @@ function MapPage(props: MapFeaturePageProps) {
   const selectedLocalLayerID = selectedFeature?.owner === owner ? selectedFeature.layerID : null;
   useEffect(() => {
     if (!activeDocument || persistedVectors.loading || persistedGdb.loading || persistedRasters.status === 'loading' || resultFrames.status === 'loading' || associatedLayers.status === 'loading') return;
+    // Late Result/source readiness must not replace a camera the user already
+    // positioned for this exact project and saved map.
+    if (manuallyControlledCameraOwnerRef.current === cameraOwnerScope) return;
     const key = JSON.stringify([owner, activeDocument.visualizationRevision, resultFrames.activeNodeKey,
       resultFrames.selectedSource?.resultPath, resultFrames.selectedSource?.revision]);
     if (fittedSourceKey.current === key) return;
@@ -567,7 +627,7 @@ function MapPage(props: MapFeaturePageProps) {
     setViewport(fitExtent(extent, size, 72));
   }, [activeDocument, owner, persistedVectors.layers, persistedVectors.loading, persistedGdb.layers, persistedGdb.loading, persistedRasters.layers,
     persistedRasters.status, resultFrames.activeNodeKey, resultFrames.selectedSource, resultFrames.resultExtent, resultFrames.status,
-    associatedLayers.status, associatedLayers.sourceExtents, size]);
+    associatedLayers.status, associatedLayers.sourceExtents, size, cameraOwnerScope]);
 
   useEffect(() => {
     sourceImportRef.current?.abort();
@@ -592,9 +652,9 @@ function MapPage(props: MapFeaturePageProps) {
   useEffect(() => {
     if (!onDirtyStateChange) return;
     const dirtyOwner = 'map:' + owner;
-    onDirtyStateChange(dirtyOwner, activeLayers.length > 0 || draftPoints.length > 0 || backgroundDraftDirty || sourceImportBusy);
+    onDirtyStateChange(dirtyOwner, activeLayers.length > 0 || hasPersistentDraftPoints || backgroundDraftDirty || sourceImportBusy);
     return () => onDirtyStateChange(dirtyOwner, false);
-  }, [activeLayers.length, backgroundDraftDirty, draftPoints.length, onDirtyStateChange, owner, sourceImportBusy]);
+  }, [activeLayers.length, backgroundDraftDirty, hasPersistentDraftPoints, onDirtyStateChange, owner, sourceImportBusy]);
 
   useEffect(() => {
     if (activeOwnerRef.current === null) {
@@ -738,18 +798,23 @@ function MapPage(props: MapFeaturePageProps) {
 
   const zoomToLoadedLayer = (nodeID: string) => {
     const extent = loadedLayerExtent(nodeID);
-    if (extent) setViewport(fitExtent(extent, size, 72));
+    if (extent) setUserViewport(fitExtent(extent, size, 72));
   };
 
   const visibleExtent = (() => {
     const top = visibleLayers[visibleLayers.length - 1];
     const key = (layer: GeoJsonLayer) => layer.coordinateSpace === 'project' ? 'project' : 'source:' + layer.crs;
     const fitLayers = top ? visibleLayers.filter((layer) => key(layer) === key(top)) : visibleLayers;
+    // Backend image bounds describe a rendered camera frame, not the source dataset.
+    // Fitting those bounds would repeatedly fit the current view to itself.
+    const sourceImageExtents = [...persistedRasters.layers.map((layer) => layer.extent),
+      ...associatedLayers.sourceExtents,
+      ...(resultImages.layers.length && resultFrames.resultExtent ? [resultFrames.resultExtent] : [])];
     return unionExtents([...fitLayers.map((layer) => layer.extent),
-      ...(!top || top.coordinateSpace === 'project' ? mapImages.map((image) => image.extent) : [])]);
+      ...(!top || top.coordinateSpace === 'project' ? sourceImageExtents : [])]);
   })();
   const fitVisibleLayers = () => {
-    if (visibleExtent) setViewport(fitExtent(visibleExtent, size, 72));
+    if (visibleExtent) setUserViewport(fitExtent(visibleExtent, size, 72));
   };
 
   const handleSourceImport = async (files: File[], options?: { directory?: boolean }) => {
@@ -829,7 +894,7 @@ function MapPage(props: MapFeaturePageProps) {
       updateActiveLayers((current) => [...current, layer]);
       setSelectedFeature(null);
       setSelectedBackendNode(null);
-      setViewport(fittedViewport);
+      setUserViewport(fittedViewport);
       setStatusMessage(text(language, '已读取 ' + layer.features.length + ' 个要素；当前为本地预览。', 'Read ' + layer.features.length + ' features; this is a local preview.'));
     } catch (error) {
       if (requestOwner === activeOwnerRef.current && requestGeneration === requestGenerationRef.current) setImportError(mapError(language, error));
@@ -950,6 +1015,7 @@ function MapPage(props: MapFeaturePageProps) {
     }
     if (activeTool === 'pan') return;
     const coordinate = toWorld(event);
+    noteManualCameraControl();
     if (activeTool === 'drawPoint') {
       appendDrawnGeometry({ type: 'Point', coordinates: coordinate });
       return;
@@ -961,6 +1027,7 @@ function MapPage(props: MapFeaturePageProps) {
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     setHoverPointer(null);
     if (event.button === 1 || activeTool === 'pan' || (event.button === 0 && event.altKey)) {
+      noteManualCameraControl();
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       dragRef.current = { pointerID: event.pointerId, x: event.clientX, y: event.clientY };
@@ -976,7 +1043,7 @@ function MapPage(props: MapFeaturePageProps) {
       const dx = event.clientX - drag.x;
       const dy = event.clientY - drag.y;
       dragRef.current = { ...drag, x: event.clientX, y: event.clientY };
-      setViewport((current) => panViewport(current, [dx, dy]));
+      if (dx !== 0 || dy !== 0) setUserViewport((current) => panViewport(current, [dx, dy]));
       return;
     }
     const project = screenToWorld(screen, viewport);
@@ -997,7 +1064,7 @@ function MapPage(props: MapFeaturePageProps) {
     event.preventDefault();
     setHoverPointer(null);
     const factor = Math.exp(-event.deltaY * 0.0015);
-    setViewport((current) => zoomAt(current, pointFromEvent(event), factor));
+    setUserViewport((current) => zoomAt(current, pointFromEvent(event), factor));
   };
 
   const handleCanvasKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1054,7 +1121,7 @@ function MapPage(props: MapFeaturePageProps) {
 
   const zoomToContextFeature = () => {
     const extent = extentOfFeatures([contextMenu!.feature]);
-    if (extent) setViewport(fitExtent(extent, size, 110));
+    if (extent) setUserViewport(fitExtent(extent, size, 110));
     setContextMenu(null);
   };
 
@@ -1102,7 +1169,7 @@ function MapPage(props: MapFeaturePageProps) {
   const fitFeature = (layer: GeoJsonLayer, feature: GeoFeature) => {
     if (!visibleLayers.some((item) => item.id === layer.id)) return;
     const extent = extentOfFeatures([feature]);
-    if (extent) setViewport(fitExtent(extent, size, 100));
+    if (extent) setUserViewport(fitExtent(extent, size, 100));
   };
 
   const selectedBackend = selectedBackendNode?.owner === owner ? selectedBackendNode : null;
@@ -1208,7 +1275,9 @@ function MapPage(props: MapFeaturePageProps) {
       saveUnavailable: 'Local previews and drawings are unsaved. Source files can be saved separately using Import project layers.',
     },
   }[language];
-  const isLocalDirty = activeLayers.length > 0 || draftPoints.length > 0 || backgroundDraftDirty;
+  // Measurement vertices are transient input, not an unsaved map artifact. Use the
+  // same classification for the notice and the parent workbench dirty owner.
+  const isLocalDirty = activeLayers.length > 0 || hasPersistentDraftPoints || backgroundDraftDirty;
 
   return (
     <div className="map-feature-page" onKeyDown={handleCanvasKey}>
@@ -1261,11 +1330,11 @@ function MapPage(props: MapFeaturePageProps) {
         <MapToolsToolbar
           activeTool={activeTool}
           onToolChange={handleToolChange}
-          onZoomIn={() => setViewport((current) => zoomAt(current, [size.width / 2, size.height / 2], 1.5))}
-          onZoomOut={() => setViewport((current) => zoomAt(current, [size.width / 2, size.height / 2], 1 / 1.5))}
+          onZoomIn={() => setUserViewport((current) => zoomAt(current, [size.width / 2, size.height / 2], 1.5))}
+          onZoomOut={() => setUserViewport((current) => zoomAt(current, [size.width / 2, size.height / 2], 1 / 1.5))}
           onFit={fitVisibleLayers}
           onZoomToPoint={() => setLocationDialog({ owner, initialPoint: screenToWorld([size.width / 2, size.height / 2], viewport) })}
-          canFit={visibleLayers.length > 0 || mapImages.length > 0}
+          canFit={Boolean(visibleExtent)}
           language={language}
         />
         <RasMapUndoRedo
@@ -1280,20 +1349,22 @@ function MapPage(props: MapFeaturePageProps) {
 
       {locationDialog?.owner === owner && <ZoomToPointDialog
         initialPoint={locationDialog.initialPoint} language={language} onClose={() => setLocationDialog(null)}
-        onNavigate={target => { setViewport(navigationViewport(target, size, visibleExtent)); setLocationDialog(null); }} />}
+        onNavigate={target => { setUserViewport(navigationViewport(target, size, visibleExtent)); setLocationDialog(null); }} />}
 
-      {draftPoints.length > 0 && (
-        <div className="map-draft-actions">
+      {(draftPoints.length > 0 || activeTool === 'measureLength' || activeTool === 'measureArea') && (
+        <div className="map-draft-actions" style={draftPoints.length === 0 ? { visibility: 'hidden' } : undefined}
+          aria-hidden={draftPoints.length === 0 ? 'true' : undefined}>
           <strong>{copy.draw}</strong>
           <span>{draftPoints.length} {text(language, '个顶点', 'vertices')}</span>
           {(activeTool === 'drawLine' || activeTool === 'drawPolygon' || activeTool === 'measureLength' || activeTool === 'measureArea') && <button type="button" onClick={finishSketch}>{copy.finish}</button>}
-          <button type="button" onClick={() => updateDraftPoints(() => [])}>{copy.cancel}</button>
+          <button type="button" disabled={draftPoints.length === 0} onClick={() => updateDraftPoints(() => [])}>{copy.cancel}</button>
         </div>
       )}
       {measurementResult && measurementResultOwner === owner && <div className="map-measurement-result" role="status">{measurementResult}</div>}
       <TerrainMeasurementReadout
         language={language}
         visible={activeTool === 'measureLength' || (measurementResultOwner === owner && measurementResultKind === 'length')}
+        scopeKey={terrainMeasurementScopeKey}
         captureState={terrainMeasurementCaptureState}
         state={terrainElevationMeasurement.state}
       />
@@ -1317,7 +1388,7 @@ function MapPage(props: MapFeaturePageProps) {
             setSelectedFeature(null);
             setSelectedBackendNode(null);
             const layer = activeLayers.find((item) => item.id === id);
-            if (layer) setViewport(fitExtent(layer.extent, size, 72));
+            if (layer) setUserViewport(fitExtent(layer.extent, size, 72));
           }}
           onSelectBackendNode={(node) => {
             setSelectedFeature(null);
@@ -1349,7 +1420,7 @@ function MapPage(props: MapFeaturePageProps) {
               vectorFrames={vectorRendering.frames}
               velocityField={velocityField}
               viewport={viewport}
-              onViewportChange={setViewport}
+              onViewportChange={setUserViewport}
               size={size}
               activeTool={activeTool}
               selectedFeature={selectedFeatureDetails ? { layerID: selectedFeatureDetails.layer.id, featureID: selectedFeatureDetails.feature.id } : null}
@@ -1404,7 +1475,7 @@ function MapPage(props: MapFeaturePageProps) {
             onCommitStateChange={setViewCommitBusy}
             currentExtent={activeDocument ? resultViewport : null} shortcutScopeRef={viewportRef}
             hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || vectorCommitBusy)}
-            onNavigateToExtent={extent => setViewport(fitExtent(extent, size, 0))}
+            onNavigateToExtent={extent => setUserViewport(fitExtent(extent, size, 0))}
             onVisualizationCommit={(source, receipt) => {
               if (projectContextKeyRef.current !== projectContextKey || source.projectPath !== context.projectPath ||
                   source.projectRevision !== context.projectRevision || source.projectSessionID !== context.projectSessionID ||

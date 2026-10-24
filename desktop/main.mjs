@@ -6,6 +6,7 @@ import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
 import { connectBackend, getServerHealth, getServerRuntime } from './server-runtime.mjs';
 import { startStaticServer } from './static-server.mjs';
 import { runElectronMapUISmoke } from './map-ui-smoke.mjs';
+import { geometryMapFetchObserverSource } from '../scripts/check-geometry-map-ui.mjs';
 import { resultHoverFetchObserverSource } from '../scripts/result-hover-fetch-observer.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -140,8 +141,10 @@ async function createMainWindow() {
     if (mainWindow === window) mainWindow = undefined;
   });
 
-  let resultHoverObserverAttachedHere = false;
-  if (serverSmokeMode && (process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1' || process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1')) {
+  let fetchObserverAttachedHere = false;
+  const geometryTopologyOnly = process.env.HECRAS_VERIFY_GEOMETRY_TOPOLOGY_ONLY === '1';
+  if (serverSmokeMode && (geometryTopologyOnly || process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1' ||
+      process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1')) {
     // A new hidden BrowserWindow may not have a renderer yet. Create one on a
     // blank document before sending Page commands; awaiting Page.enable first
     // can otherwise wait forever for the renderer that loadURL would create.
@@ -149,10 +152,11 @@ async function createMainWindow() {
     await window.loadURL('about:blank');
     const debuggerClient = window.webContents.debugger;
     debuggerClient.attach('1.3');
-    resultHoverObserverAttachedHere = true;
+    fetchObserverAttachedHere = true;
     for (const [method, parameters] of [
       ['Page.enable', {}],
-      ['Page.addScriptToEvaluateOnNewDocument', { source: resultHoverFetchObserverSource }],
+      ['Page.addScriptToEvaluateOnNewDocument', { source: geometryTopologyOnly
+        ? geometryMapFetchObserverSource : resultHoverFetchObserverSource }],
     ]) {
       let timer;
       try {
@@ -171,7 +175,7 @@ async function createMainWindow() {
   if (smokeMode) window.webContents.setAudioMuted(true);
   if (serverSmokeMode) {
     const result = await runServerSmoke(window, backendConnection.baseUrl);
-    if (resultHoverObserverAttachedHere && window.webContents.debugger.isAttached()) {
+    if (fetchObserverAttachedHere && window.webContents.debugger.isAttached()) {
       try {
         window.webContents.debugger.detach();
       } catch (error) {
@@ -199,9 +203,11 @@ async function runServerSmoke(window, baseUrl) {
   let mapUi;
   let mapPassed = true;
   try {
-    const resultHoverOnly = process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1' || process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1';
-    if (resultHoverOnly && !process.env.HECRAS_VERIFY_MAP_FIXTURE?.trim()) {
-      throw new Error('Result hover-only Electron acceptance requires HECRAS_VERIFY_MAP_FIXTURE.');
+    const geometryTopologyOnly = process.env.HECRAS_VERIFY_GEOMETRY_TOPOLOGY_ONLY === '1';
+    const targetedMapOnly = geometryTopologyOnly || process.env.HECRAS_VERIFY_RESULT_HOVER_ONLY === '1' ||
+      process.env.HECRAS_VERIFY_TERRAIN_ONLY === '1';
+    if (targetedMapOnly && !process.env.HECRAS_VERIFY_MAP_FIXTURE?.trim()) {
+      throw new Error('Targeted Electron map acceptance requires HECRAS_VERIFY_MAP_FIXTURE.');
     }
     const health = await getServerHealth(baseUrl);
     const runtime = await getServerRuntime(baseUrl);
@@ -218,7 +224,7 @@ async function runServerSmoke(window, baseUrl) {
         !Array.isArray(pageTransport.runtime.operations)) {
       throw new Error('The React page received an unexpected same-origin server response.');
     }
-    const ui = resultHoverOnly
+    const ui = targetedMapOnly
       ? { passed: true, backendExecuted: false, computeExecuted: false, navigationItems: [], renderBoundaryErrors: [] }
       : await runUiSmoke(window);
     if (process.env.HECRAS_VERIFY_MAP_FIXTURE?.trim()) {
@@ -234,7 +240,7 @@ async function runServerSmoke(window, baseUrl) {
         mapPassed = mapUi.passed === true;
       }
     }
-    if (process.env.HECRAS_VERIFY_CANCEL_PROJECT !== undefined) {
+    if (!geometryTopologyOnly && process.env.HECRAS_VERIFY_CANCEL_PROJECT !== undefined) {
       const cancelProjectPath = process.env.HECRAS_VERIFY_CANCEL_PROJECT.trim();
       if (!path.isAbsolute(cancelProjectPath) || path.extname(cancelProjectPath).toLowerCase() !== '.ras') {
         cancellationUi = {
@@ -261,7 +267,7 @@ async function runServerSmoke(window, baseUrl) {
         cancellationPassed = cancellationResult.passed === true;
       }
     }
-    if (process.env.HECRAS_VERIFY_PROJECT !== undefined) {
+    if (!geometryTopologyOnly && process.env.HECRAS_VERIFY_PROJECT !== undefined) {
       const projectPath = process.env.HECRAS_VERIFY_PROJECT.trim();
       if (!path.isAbsolute(projectPath) || path.extname(projectPath).toLowerCase() !== '.ras') {
         hydraulicUi = {

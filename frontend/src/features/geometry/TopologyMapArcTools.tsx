@@ -7,6 +7,7 @@ export interface TopologyMapArcToolsProps {
   mapCaptureReady: boolean;
   canSelect: boolean;
   canEdit: boolean;
+  canSmartAdd: boolean;
   busy: boolean;
   draftReady: boolean;
   draftDirty: boolean;
@@ -47,6 +48,7 @@ export function TopologyMapArcTools({
   mapCaptureReady,
   canSelect,
   canEdit,
+  canSmartAdd,
   busy,
   draftReady,
   draftDirty,
@@ -76,6 +78,8 @@ export function TopologyMapArcTools({
   const tools: Array<{ id: GeometryTopologyMapTool; label: string; edit: boolean }> = [
     { id: 'select', label: text ? '选择' : 'Select', edit: false },
     { id: 'addArc', label: text ? '绘制弧段' : 'Draw arc', edit: true },
+    { id: 'smartAdd', label: text ? '智能追加' : 'Smart add', edit: true },
+    { id: 'deepConnect', label: text ? '深度连接' : 'Deep connect', edit: true },
     { id: 'moveArcPoint', label: text ? '移动内点' : 'Move point', edit: true },
     { id: 'insertArcPoint', label: text ? '插入点' : 'Insert point', edit: true },
     { id: 'deleteArcPoint', label: text ? '删除点' : 'Delete point', edit: true },
@@ -100,10 +104,13 @@ export function TopologyMapArcTools({
       <div className="topology-map-arc-tools__row topology-map-arc-tools__map-tools">
         <div className="topology-map-arc-tools__tool-list" role="group" aria-label={text ? '地图工具' : 'Map tools'}>
           {tools.map((tool) => {
-            const enabled = tool.edit ? canConfigureEditTool : canConfigureSelection;
+            const enabled = tool.id === 'smartAdd'
+              ? canConfigureEditTool && canSmartAdd
+              : tool.edit ? canConfigureEditTool : canConfigureSelection;
             return (
               <button
                 key={tool.id}
+                data-testid={`geometry-map-tool-${tool.id}`}
                 type="button"
                 className="topology-map-arc-tools__tool"
                 aria-pressed={activeTool === tool.id}

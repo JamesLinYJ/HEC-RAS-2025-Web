@@ -62,6 +62,7 @@ export interface GeometryTopologySnapshot {
   recentRegionTags?: Array<{ name: string; type: string; value: string }>;
   map?: GeometryTopologyMap | null;
   mapRequestContext?: GeometryTopologyMapRequestContext | null;
+  smartAddTerrainCapture?: GeometryTopologySmartAddTerrainCapture | null;
   completion?: {
     sourceRevision: string;
     draftIdentity: string;
@@ -77,11 +78,91 @@ export interface GeometryTopologyCoordinate {
   y: number;
 }
 
+export interface GeometryTopologyArcSnapTarget {
+  arcFID: number;
+  sourceSegmentIndex: number;
+  point: GeometryTopologyCoordinate;
+}
+
 export interface GeometryTopologyExtent {
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
+}
+
+/** Exact current Geometry-to-Terrain sampler identity returned by the Host. */
+export interface GeometryTopologySmartAddTerrainCapture {
+  geometryAssetPath: string;
+  geometryRevision: string;
+  projectPath: string;
+  projectSessionID?: string | null;
+  coreLayerContextIdentityToken?: string | null;
+  canonicalTerrainPath: string;
+  terrainName: string;
+  sourceRevision: string;
+}
+
+/** The measured camera raster window used by one SmartAdd map gesture. */
+export interface GeometryTopologySmartAddWindow {
+  extent: GeometryTopologyExtent;
+  rows: number;
+  columns: number;
+}
+
+/** Options retained from SmartAppendLineFeaturePointHandler in the source UI. */
+export interface GeometryTopologySmartAddOptions {
+  algorithm: 'HessianRidgeness' | 'HighGround';
+  dpTolerancePixels: number;
+  maxSegmentPixels: number;
+  previewThrottlePixels: number;
+  highGroundAlpha: number;
+  highGroundBailRatio: number;
+  highGroundSnapRadiusCells: number;
+  hessianFrangiBeta: number;
+  hessianFeaturePenaltyKappa: number;
+  hessianOffFeatureBailMultiplier: number;
+  hessianMinExpansionsBudget: number;
+  hessianExpansionsPerEuclidPx: number;
+  hessianMaxEuclidCells: number;
+}
+
+export interface GeometryTopologySmartAddSource {
+  terrainCapture: GeometryTopologySmartAddTerrainCapture;
+  window: GeometryTopologySmartAddWindow;
+  options?: GeometryTopologySmartAddOptions | null;
+}
+
+export interface GeometryTopologyDeepConnectAnchor {
+  segmentIndex: number;
+  fraction: number;
+}
+
+export interface GeometryTopologyDeepConnectTopologySource {
+  model: GeometryModelRequest;
+  revision: string;
+  draftState: string;
+  draftIdentity: string;
+  mapRequestContext: GeometryTopologyMapRequestContext;
+  featureKind: 'arc';
+  featureID: string;
+}
+
+/** Full persisted line capture used by the Host to verify a DeepConnect source. */
+export interface GeometryTopologyDeepConnectSource {
+  sourceKind: 'topology' | 'vector';
+  sourceLocator: string;
+  sourceRevision: string;
+  featureFID: number;
+  pathIndex: number;
+  componentIdentity: string;
+  points: GeometryTopologyCoordinate[];
+  startSegmentIndex: number;
+  startSegmentFraction: number;
+  endSegmentIndex: number;
+  endSegmentFraction: number;
+  topologySource?: GeometryTopologyDeepConnectTopologySource | null;
+  vectorSource?: unknown;
 }
 
 export interface GeometryTopologyMapFeature {
@@ -132,6 +213,8 @@ export interface GeometryTopologySpatialSelectionResult {
 export type GeometryTopologyMapTool =
   | 'select'
   | 'addArc'
+  | 'smartAdd'
+  | 'deepConnect'
   | 'moveArcPoint'
   | 'insertArcPoint'
   | 'deleteArcPoint'
@@ -154,9 +237,31 @@ export type GeometryTopologyMapCommand =
       featureIDs: [];
       coordinates: GeometryTopologyCoordinate[];
       mapCellSize: number;
-      startArcTarget?: { arcFID: number; sourceSegmentIndex: number; point: GeometryTopologyCoordinate };
+      startArcTarget?: GeometryTopologyArcSnapTarget;
       startNodeFID?: number;
       splitMode?: 'Anywhere' | 'AtVertex';
+    }
+  | {
+      action: 'smartAdd';
+      featureKind: 'arc';
+      featureIDs: [];
+      coordinates: [GeometryTopologyCoordinate, GeometryTopologyCoordinate];
+      mapCellSize: number;
+      smartAddSource: GeometryTopologySmartAddSource;
+      startArcTarget?: GeometryTopologyArcSnapTarget;
+      startNodeFID?: number;
+      splitMode?: 'Anywhere';
+    }
+  | {
+      action: 'deepConnect';
+      featureKind: 'arc';
+      featureIDs: [];
+      coordinates?: null;
+      mapCellSize: number;
+      deepConnectSource: GeometryTopologyDeepConnectSource;
+      startArcTarget?: GeometryTopologyArcSnapTarget;
+      startNodeFID?: number;
+      splitMode?: 'Anywhere';
     }
   | {
       action: 'moveArcPoint';
