@@ -10,6 +10,33 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-map-line-hash-vectors"])
+            {
+                Console.WriteLine(JsonSerializer.Serialize(ServerAcceptance.CoordinateHashVectors(), JsonOptions));
+                return 0;
+            }
+            if (args is ["--run-map-analysis-http", string analysisBaseUrl, string analysisManifest, string analysisOutput])
+            {
+                TextWriter protocol = Console.Out;
+                MapAnalysisAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunMapAnalysisAsync(
+                    new Uri(EnsureTrailingSlash(analysisBaseUrl)), analysisManifest, analysisOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--run-geometry-topology-map-http", string topologyMapBaseUrl, string topologyMapProject, string topologyMapOutput])
+            {
+                TextWriter protocol = Console.Out;
+                GeometryTopologyMapAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunGeometryTopologyMapAsync(
+                    new Uri(EnsureTrailingSlash(topologyMapBaseUrl)), topologyMapProject, topologyMapOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-classification-manning-http", string classificationBaseUrl, string classificationOutput])
             {
                 TextWriter protocol = Console.Out;
@@ -268,6 +295,9 @@ internal static class Program
             }
 
             Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-map-line-hash-vectors");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-map-analysis-http <loopback-base-url> <result-hover-manifest.json> <new-output-directory>");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-topology-map-http <loopback-base-url> <saved-project.ras> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-raster-formats <new-output-directory-outside-repository>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-gdb-tree-cache <actual-raster-gdb-directory> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --create-fixture <new-directory>");

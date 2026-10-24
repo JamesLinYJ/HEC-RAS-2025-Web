@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent as ReactChangeEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { text } from '../../shared/workbench';
 import { DEFAULT_BACKGROUND_MAPS_VM_STATE, isBackgroundMapDraftDirty } from './BackgroundMapsVM';
@@ -33,9 +33,21 @@ import { useMapVelocityField } from './useMapVelocityField';
 import { usePersistedRasterLayers, mapRasterViewportFromCamera } from './usePersistedRasterLayers';
 import { useMapResultFrames } from './useMapResultFrames';
 import { useAssociatedMapLayers } from './useAssociatedMapLayers';
-import { mapCatalogMatchesDocument, sameMapID } from './associatedMapLayers';
+import { mapCatalogMatchesDocument, sameMapID, sameMapLocator } from './associatedMapLayers';
 import { useMapHoverIdentify } from './useMapHoverIdentify';
 import type { MapHoverPointer } from './useMapHoverIdentify';
+import { mapResultSelectionOverridesFromCatalog } from './useMapResultFrames';
+import type {
+  MapAnalysisActiveNode,
+  MapAnalysisPanelProps,
+  MapAnalysisResultChoice,
+  MapAnalysisResultSelection,
+  MapMeshElementHit,
+  MapResultAnalysisCapture,
+  MapSampleLinePart,
+  MapSampleLineSource,
+} from './analysis/mapAnalysisTypes';
+import { useMapResultMeshHoverCapture } from './analysis/useMapResultMeshHoverCapture';
 import { rgbaFrameImage } from './mapImages';
 import { importMapSources } from './importMapSources';
 import { MapSourceImportControl } from './MapSourceImportControl';
@@ -50,6 +62,13 @@ import { RasLayerPropertiesPane } from './RasLayerPropertiesPane';
 import { RasContextualActionsBar } from './RasContextualActionsBar';
 import { mapCRS, mapDocumentKind, mapError } from './mapText';
 import './map.css';
+
+const MapMeshTimeSeriesPanel = lazy(() => import('./analysis/MapMeshTimeSeriesPanel')
+  .then(module => ({ default: module.MapMeshTimeSeriesPanel })));
+const MapCulvertAnalysisPanel = lazy(() => import('./analysis/MapCulvertAnalysisPanel')
+  .then(module => ({ default: module.MapCulvertAnalysisPanel })));
+const MapSampleLineAnalysisPanel = lazy(() => import('./analysis/MapSampleLineAnalysisPanel')
+  .then(module => ({ default: module.MapSampleLineAnalysisPanel })));
 
 type SelectedFeature = { owner: string; layerID: string; featureID: string } | null;
 
@@ -145,6 +164,32 @@ function measurement(points: readonly XY[], area: boolean): number {
   return length;
 }
 
+function findVisibleMapNode(
+  nodes: import('./mapTypes').CatalogTreeNode[],
+  locator: import('./mapTypes').CatalogTreeNodeLocator,
+  ancestorsVisible = true,
+): import('./mapTypes').CatalogTreeNode | null {
+  for (const node of nodes) {
+    const visible = ancestorsVisible && node.checked !== 'unchecked';
+    if (!visible) continue;
+    if (node.locator && sameMapLocator(node.locator, locator)) return node;
+    const child = node.children?.length ? findVisibleMapNode(node.children, locator, visible) : null;
+    if (child) return child;
+  }
+  return null;
+}
+
+function resultChoiceForAnalysis(choice: NonNullable<import('./useMapResultFrames').MapResultSelectionState['selectedResult']>): MapAnalysisResultChoice {
+  return {
+    resultPath: choice.resultPath,
+    revision: choice.revision,
+    resultName: choice.resultName,
+    planName: choice.planName,
+    endTime: choice.endTime,
+    isComputing: choice.isComputing,
+  };
+}
+
 function mapToolHelp(tool: MapToolID, language: 'zh' | 'en'): string {
   const zh: Record<MapToolID, string> = {
     select: '点击要素可查看属性；右键打开要素操作。',
@@ -190,6 +235,10 @@ function MapPage(props: MapFeaturePageProps) {
   const legendScopeRef = useRef('');
   const [selectedFeature, setSelectedFeature] = useState<SelectedFeature>(null);
   const [selectedBackendNode, setSelectedBackendNode] = useState<{ owner: string; node: GeoFeature | null; nodeID: string; name: string; sourceClass: string; diagnostic?: string } | null>(null);
+  const [selectedMeshHit, setSelectedMeshHit] = useState<MapMeshElementHit | null>(null);
+  const [meshAnalysisOpen, setMeshAnalysisOpen] = useState(false);
+  const [culvertAnalysisOpen, setCulvertAnalysisOpen] = useState(false);
+  const [sampleLineAnalysisOpen, setSampleLineAnalysisOpen] = useState(false);
   const [cursorScreen, setCursorScreen] = useState<XY | null>(null);
   const [hoverPointer, setHoverPointer] = useState<MapHoverPointer | null>(null);
   const [contextMenu, setContextMenu] = useState<FeatureContextMenu | null>(null);
@@ -277,6 +326,165 @@ function MapPage(props: MapFeaturePageProps) {
   const velocityField = useMapVelocityField({ backend, context, document: activeDocument, controller: resultFrames,
     viewport: resultViewport, enabled: settings.IsMapOverlayVisible && settings.showVelocityArrows, language });
   const allMapLayers = useMemo(() => [...persistedVectors.layers, ...persistedGdb.layers, ...activeLayers], [persistedVectors.layers, persistedGdb.layers, activeLayers]);
+  const selectedFeatureDetails = useMemo(() => {
+    if (!selectedFeature || selectedFeature.owner !== owner) return null;
+    const layer = allMapLayers.find((item) => item.id === selectedFeature.layerID);
+    const feature = layer?.features.find((item) => item.id === selectedFeature.featureID);
+    return layer && feature ? { layer, feature } : null;
+  }, [allMapLayers, owner, selectedFeature]);
+  const analysisCapture = useMemo<MapResultAnalysisCapture | null>(() => {
+    const catalog = resultFrames.sources;
+    const map = resultFrames.mapRequest;
+    const activeNode = resultFrames.activeNode;
+    if (!catalog || !map || !activeNode || !mapCatalogMatchesDocument(catalog, context, activeDocument) ||
+        !catalog.contextToken || !context.projectPath || !context.projectRevision || !context.projectXml ||
+        map.projectPath !== context.projectPath || map.projectXml !== context.projectXml ||
+        map.projectXmlSHA.toUpperCase() !== catalog.projectXmlSHA.toUpperCase() ||
+        map.projectSessionID !== context.projectSessionID ||
+        (map.coreLayerContext?.identityToken ?? null) !== (context.coreLayerContext?.identityToken ?? null) ||
+        !sameMapID(map.mapID, activeDocument!.mapID) || map.mapIndex !== activeDocument!.mapIndex ||
+        map.mapName !== activeDocument!.name || map.mapType !== activeDocument!.mapType ||
+        map.expectedVisualizationRevision !== activeDocument!.visualizationRevision ||
+        activeNode.nodeKind !== activeNode.node.nodeType ||
+        !['Result', 'MultiResult'].includes(activeNode.node.nodeType) ||
+        !findVisibleMapNode(catalog.treeRoots, activeNode.node)) return null;
+
+    const catalogNode = catalog.activeNodes.find(node => sameMapLocator(node.node, activeNode.node));
+    const slotZero = activeNode.selections.find(selection => selection.selectionIndex === 0);
+    const catalogSlotZero = catalogNode?.selections.find(selection => selection.selectionIndex === 0);
+    if (!catalogNode || !slotZero?.selectedResult || !catalogSlotZero?.selectedResult ||
+        slotZero.selectionMode !== catalogSlotZero.selectionMode ||
+        slotZero.selectedResult.resultPath !== catalogSlotZero.selectedResult.resultPath ||
+        slotZero.selectedResult.revision.toUpperCase() !== catalogSlotZero.selectedResult.revision.toUpperCase() ||
+        slotZero.selectedResult.isComputing || catalogNode.selectedMapType !== activeNode.selectedMapType ||
+        activeNode.selections.length !== catalogNode.selections.length ||
+        activeNode.selections.some(selection => {
+          const source = catalogNode.selections.find(candidate => candidate.selectionIndex === selection.selectionIndex);
+          return !source || source.selectionMode !== selection.selectionMode ||
+            source.selectedResult?.resultPath !== selection.selectedResult?.resultPath ||
+            source.selectedResult?.revision.toUpperCase() !== selection.selectedResult?.revision.toUpperCase();
+        })) return null;
+
+    const sourceSelection = (selection: NonNullable<typeof slotZero>): MapAnalysisResultSelection => ({
+      selectionIndex: selection.selectionIndex,
+      selectionMode: selection.selectionMode,
+      selectedResult: selection.selectedResult ? resultChoiceForAnalysis(selection.selectedResult) : null,
+    });
+    const selections = activeNode.selections.map(sourceSelection);
+    const snapshot = resultFrames.renderSnapshot;
+    const selectedProfileIndex = resultFrames.selectedProfileIndex;
+    const frameMatches = resultFrames.status === 'ready' && snapshot !== null && selectedProfileIndex !== null &&
+      snapshot.contextToken === catalog.contextToken && snapshot.selectedProfileIndex === selectedProfileIndex &&
+      resultFrames.layers.length === snapshot.layers.length && snapshot.layers.length > 0 &&
+      resultFrames.layers.every((frame, index) => {
+        const saved = snapshot.layers[index];
+        return Boolean(saved && frame.id === saved.id && frame.sourceID === saved.sourceID &&
+          frame.sourceMapID === saved.sourceMapID && frame.resultPath === saved.resultPath &&
+          frame.revision.toUpperCase() === saved.revision.toUpperCase() && frame.mapType === saved.mapType &&
+          frame.profileIndex === saved.profileIndex && JSON.stringify(frame.selectionIndices) === JSON.stringify(saved.selectionIndices));
+      });
+    const profileIndex = frameMatches ? selectedProfileIndex : null;
+    const profileTime = frameMatches ? resultFrames.selectedProfileTime : null;
+    const renderCapture = frameMatches && snapshot ? {
+      contextToken: snapshot.contextToken,
+      selectedProfileIndex: snapshot.selectedProfileIndex,
+      selectedProfileTime: snapshot.selectedProfileTime,
+      sourceID: snapshot.sourceID,
+    } : null;
+    const selectionOverrides = mapResultSelectionOverridesFromCatalog(catalog);
+    const ownerKey = JSON.stringify([
+      context.projectSessionID, context.projectPath, context.projectRevision, map.projectXmlSHA,
+      map.mapID, map.mapIndex, map.mapName, map.mapType, map.coreLayerContext?.identityToken ?? null,
+      catalog.visualizationRevision, catalog.contextToken,
+    ]);
+    const captureKey = JSON.stringify([
+      ownerKey, activeNode.node, activeNode.selectedMapType,
+      selections.map(selection => [selection.selectionIndex, selection.selectionMode,
+        selection.selectedResult?.resultPath ?? null, selection.selectedResult?.revision.toUpperCase() ?? null]),
+      profileIndex, profileTime, snapshot?.sourceID ?? null,
+    ]);
+    const mappedActiveNode: MapAnalysisActiveNode = {
+      node: activeNode.node,
+      nodeKind: activeNode.nodeKind,
+      name: activeNode.name,
+      selections,
+      selectedMapType: activeNode.selectedMapType,
+      profileIndex,
+    };
+    return {
+      ownerKey,
+      map,
+      projectRevision: catalog.projectRevision,
+      projectXmlSHA: catalog.projectXmlSHA,
+      visualizationRevision: catalog.visualizationRevision,
+      contextToken: catalog.contextToken,
+      selectionOverrides,
+      activeNode: mappedActiveNode,
+      treeRoots: catalog.treeRoots,
+      slotZero: sourceSelection(slotZero),
+      profileIndex,
+      profileTime,
+      renderSnapshot: renderCapture,
+      captureKey,
+    };
+  }, [activeDocument, context.projectPath, context.projectRevision, context.projectSessionID, context.projectXml,
+    resultFrames.activeNode, resultFrames.layers, resultFrames.mapRequest, resultFrames.renderSnapshot,
+    resultFrames.selectedProfileIndex, resultFrames.selectedProfileTime, resultFrames.sources, resultFrames.status]);
+  const resultMeshHover = useMapResultMeshHoverCapture(backend, analysisCapture);
+  const currentMeshHit = selectedMeshHit && analysisCapture &&
+    selectedMeshHit.ownerKey === analysisCapture.ownerKey && selectedMeshHit.captureKey === analysisCapture.captureKey
+    ? selectedMeshHit : null;
+  const sampleLineSource = useMemo<MapSampleLineSource | null>(() => {
+    const capture = analysisCapture;
+    const selected = selectedFeatureDetails;
+    const catalog = resultFrames.sources;
+    if (!capture || !selected || !selected.layer.visible || !catalog || persistedVectors.loading ||
+        !mapCatalogMatchesDocument(catalog, context, activeDocument)) return null;
+    const vector = persistedVectors.captures.find(item => item.layerID === selected.layer.id &&
+      item.mapType === 'PolylinesVector' && item.source.map.isPersisted &&
+      item.source.map.projectPath === capture.map.projectPath &&
+      item.source.map.projectRevision.toUpperCase() === capture.projectRevision.toUpperCase() &&
+      item.source.map.projectXmlSHA?.toUpperCase() === capture.projectXmlSHA.toUpperCase() &&
+      item.source.map.visualizationRevision?.toUpperCase() === capture.visualizationRevision.toUpperCase() &&
+      item.source.map.mapID !== null && sameMapID(item.source.map.mapID, capture.map.mapID) &&
+      item.source.map.mapIndex === capture.map.mapIndex && item.source.map.mapName === capture.map.mapName &&
+      item.source.map.mapType === capture.map.mapType);
+    const persistedLayer = vector ? persistedVectors.layers.find(layer => layer.id === vector.layerID) : null;
+    const persistedFeature = persistedLayer?.features.find(feature => feature.id === selected.feature.id);
+    const vectorNode = vector ? findVisibleMapNode(catalog.treeRoots, vector.source.locator) : null;
+    if (!vector || !persistedLayer || selected.layer !== persistedLayer || !persistedFeature ||
+        !vectorNode || vectorNode.id !== vector.nodeID || vectorNode.checked !== 'checked') return null;
+    const primary = vector.source.family.files.find(file => file.role === 'source' && file.required && file.exists &&
+      file.path === vector.source.family.sourcePath && typeof file.revision === 'string' && /^[0-9a-f]{64}$/i.test(file.revision));
+    if (!primary?.revision || selected.feature.id.length > 1024 || /[\u0000-\u001f\u007f]/.test(selected.feature.id)) return null;
+    const coordinates: readonly (readonly XY[])[] = persistedFeature.geometry.type === 'LineString'
+      ? [persistedFeature.geometry.coordinates]
+      : persistedFeature.geometry.type === 'MultiLineString' ? persistedFeature.geometry.coordinates : [];
+    const parts: MapSampleLinePart[] = coordinates.flatMap((line, partIndex) =>
+      line.length >= 2 && line.every(point => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+        ? [{ partIndex, coordinates: line.map(point => [point[0], point[1]] as XY) }]
+        : []);
+    if (parts.length === 0) return null;
+    return {
+      ownerKey: capture.ownerKey,
+      layerID: vector.layerID,
+      nodeID: vector.nodeID,
+      featureID: selected.feature.id,
+      featureName: persistedFeature.name,
+      mapType: 'PolylinesVector',
+      vectorPath: vector.source.family.sourcePath,
+      vectorRevision: primary.revision,
+      parts,
+    };
+  }, [activeDocument, analysisCapture, context, persistedVectors.captures, persistedVectors.loading,
+    resultFrames.sources, selectedFeatureDetails]);
+  const analysisPanelProps: MapAnalysisPanelProps = {
+    backend,
+    language,
+    capture: analysisCapture,
+    meshHit: currentMeshHit,
+    sampleLineSource,
+  };
   const resultImages = useMemo((): { layers: MapImageLayer[]; error: unknown } => {
     try {
       return { layers: resultFrames.layers.map((layer) => ({ id: layer.id, name: layer.resultName,
@@ -315,6 +523,8 @@ function MapPage(props: MapFeaturePageProps) {
       currentHoverPointer.project[1] >= layer.extent.minY && currentHoverPointer.project[1] <= layer.extent.maxY)
       .map((layer) => layer.hoverCapture),
     resultFrames,
+    resultMeshCapture: resultMeshHover.capture,
+    resultAnalysisCapture: analysisCapture,
     associatedCaptures: associatedLayers.layers.filter(layer => currentHoverPointer &&
       currentHoverPointer.project[0] >= layer.extent.minX && currentHoverPointer.project[0] <= layer.extent.maxX &&
       currentHoverPointer.project[1] >= layer.extent.minY && currentHoverPointer.project[1] <= layer.extent.maxY)
@@ -322,13 +532,6 @@ function MapPage(props: MapFeaturePageProps) {
     selectedBackendNodeID: selectedBackendNode?.owner === owner ? selectedBackendNode.nodeID : null,
   });
   const selectedLocalLayerID = selectedFeature?.owner === owner ? selectedFeature.layerID : null;
-  const selectedFeatureDetails = useMemo(() => {
-    if (!selectedFeature || selectedFeature.owner !== owner) return null;
-    const layer = allMapLayers.find((item) => item.id === selectedFeature.layerID);
-    const feature = layer?.features.find((item) => item.id === selectedFeature.featureID);
-    return layer && feature ? { layer, feature } : null;
-  }, [allMapLayers, owner, selectedFeature]);
-
   useEffect(() => {
     if (!activeDocument || persistedVectors.loading || persistedGdb.loading || persistedRasters.status === 'loading' || resultFrames.status === 'loading' || associatedLayers.status === 'loading') return;
     const key = JSON.stringify([owner, activeDocument.visualizationRevision, resultFrames.activeNodeKey,
@@ -693,6 +896,20 @@ function MapPage(props: MapFeaturePageProps) {
   };
 
   const handleCanvasClick = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const clickedScreen = pointFromEvent(event);
+    const hoveredMeshHit = mapHover.tooltip?.entries.find(entry => entry.kind === 'mesh')?.meshHit ?? null;
+    const sameHoverPoint = mapHover.tooltip && Math.hypot(
+      mapHover.tooltip.screen[0] - clickedScreen[0], mapHover.tooltip.screen[1] - clickedScreen[1]) <= 6;
+    if (activeTool === 'select' && sameHoverPoint && hoveredMeshHit && analysisCapture &&
+        hoveredMeshHit.ownerKey === analysisCapture.ownerKey && hoveredMeshHit.captureKey === analysisCapture.captureKey) {
+      setSelectedMeshHit(hoveredMeshHit);
+      setMeshAnalysisOpen(true);
+      setStatusMessage(text(language,
+        `已选中 ${hoveredMeshHit.elementKind === 'Cell' ? '单元' : '面'} ${hoveredMeshHit.elementIndex + 1}；来源为当前 Result 中的 Flow Area Mesh。`,
+        `Selected ${hoveredMeshHit.elementKind} ${hoveredMeshHit.elementIndex + 1} from the current Result Flow Area Mesh.`));
+    } else if (activeTool === 'select') {
+      setSelectedMeshHit(null);
+    }
     setHoverPointer(null);
     setContextMenu(null);
     if (activeTool === 'select') {
@@ -1171,6 +1388,34 @@ function MapPage(props: MapFeaturePageProps) {
               setStatusMessage(text(language, '地图视图已保存。', 'Map view was saved.'));
               return true;
             }} />
+          <details data-testid="map-analysis-mesh" onToggle={event => setMeshAnalysisOpen(event.currentTarget.open)}>
+            <summary>{text(language, 'Mesh 单元 / 面时序', 'Mesh cell / face time series')}</summary>
+            {meshAnalysisOpen && <p className="map-page-notice" data-testid="map-mesh-timeseries-side-effects">
+              {text(language, '读取时会生成临时结果缓存，并在读取结束后清理；不会修改源 Result、Geometry 或工程 XML。',
+                'Reading creates a temporary result cache and removes it when the read ends; it does not modify the source Result, Geometry, or project XML.')}
+            </p>}
+            {meshAnalysisOpen && <Suspense fallback={<p role="status">{text(language, '正在加载分析面板…', 'Loading analysis panel…')}</p>}>
+              <MapMeshTimeSeriesPanel {...analysisPanelProps} />
+            </Suspense>}
+            {meshAnalysisOpen && resultMeshHover.loading && <p role="status">{text(language, '正在验证当前 Result 的 Flow Area 网格来源…', 'Verifying the current Result Flow Area mesh source…')}</p>}
+            {meshAnalysisOpen && resultMeshHover.error && <p role="status">{resultMeshHover.error}</p>}
+            {meshAnalysisOpen && !analysisCapture && <p className="map-page-notice">
+              {text(language, '请先选择当前地图中已勾选的 Result 或 MultiResult，并等待结果来源完成捕获。',
+                'Select a checked Result or MultiResult on this map and wait for its source capture.')}
+            </p>}
+          </details>
+          <details data-testid="map-analysis-culvert" onToggle={event => setCulvertAnalysisOpen(event.currentTarget.open)}>
+            <summary>{text(language, '涵洞剖面与时序', 'Culvert profile and time series')}</summary>
+            {culvertAnalysisOpen && <Suspense fallback={<p role="status">{text(language, '正在加载分析面板…', 'Loading analysis panel…')}</p>}>
+              <MapCulvertAnalysisPanel {...analysisPanelProps} />
+            </Suspense>}
+          </details>
+          <details data-testid="map-analysis-sample-line" onToggle={event => setSampleLineAnalysisOpen(event.currentTarget.open)}>
+            <summary>{text(language, '结果采样线', 'Result sample line')}</summary>
+            {sampleLineAnalysisOpen && <Suspense fallback={<p role="status">{text(language, '正在加载分析面板…', 'Loading analysis panel…')}</p>}>
+              <MapSampleLineAnalysisPanel {...analysisPanelProps} />
+            </Suspense>}
+          </details>
           <RasLayerPropertiesPane language={language} featureSelection={selectedFeatureDetails}
             backendSelection={selectedBackend} canZoomBackend={Boolean(selectedBackend && loadedLayerExtent(selectedBackend.nodeID))}
             onZoomFeature={fitFeature} onZoomBackend={zoomToLoadedLayer} />

@@ -436,7 +436,7 @@
           "topology.recipe",
           "topology.filter"
         ],
-        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations. Recipe inspect calls topology.recipe with the captured model/revision/draftState/controlPointFIDs and optional recipe text; response revision, draftIdentity, FIDs, schema, steps and diagnostics are checked against the active owner. Apply uses topology.edit applyRecipe for the captured control-point FIDs; returned topology snapshot enters the parent draft and existing undo/redo lifecycle, and only parent model.save writes Geometry HDF. Recipe controls expose source-supported ingredient/parameter editors; unknown parameter types remain read-only because Host schema supplies no parameter description. For an existing step, every Host-provided parameter remains in its draft; the source parameter whitelist controls visible form fields and defaults for newly added steps only. Serialization writes the visible parameters in source order, then appends the existing hidden parameters in their original order, so editing or reordering a step does not drop hidden algorithm values. Tag create/set/remove uses selected source FIDs; topology.filter validates owner/revision/draft/FIDs and changes selection only. The overview apply-factor control edits supported all-topology arc/control-point size fields in the same draft; cross-page selected scope is unavailable and node coordinates remain read-only in this table page: Host mapCommand/moveNode exists, but the page does not capture the map drag context and MapCellSize required to call it. Selected-node deletion uses the existing topology draft; node creation and map dragging are not offered here. Geometry save sends fields: {} rather than replaying read-only catalog-summary fields, so Host applies only captured child drafts while preserving parent metadata. These facts are static source wiring; no recipe runtime acceptance is claimed."
+        "writeBoundary": "Supported geometry/topology commands update the current Geometry draft through topology.edit and related point/recipe operations. Recipe inspect calls topology.recipe with the captured model/revision/draftState/controlPointFIDs and optional recipe text; response revision, draftIdentity, FIDs, schema, steps and diagnostics are checked against the active owner. Apply uses topology.edit applyRecipe for the captured control-point FIDs; returned topology snapshot enters the parent draft and existing undo/redo lifecycle, and only parent model.save writes Geometry HDF. Recipe controls expose source-supported ingredient/parameter editors; unknown parameter types remain read-only because Host schema supplies no parameter description. For an existing step, every Host-provided parameter remains in its draft; the source parameter whitelist controls visible form fields and defaults for newly added steps only. Serialization writes the visible parameters in source order, then appends the existing hidden parameters in their original order, so editing or reordering a step does not drop hidden algorithm values. Tag create/set/remove uses selected source FIDs; topology.filter validates owner/revision/draft/FIDs and changes selection only. The overview apply-factor control edits supported all-topology arc/control-point size fields in the same draft; cross-page selected scope is unavailable and node coordinates remain read-only in this table page: Host mapCommand/moveNode exists, but the page does not capture the map drag context and MapCellSize required to call it. Selected-node deletion uses the existing topology draft; node creation and map dragging are not offered in this table page. GeometryTopologyNodesPage now mounts a separate GeometryTopologyCanvas for captured-map spatial selection and moveNode gestures, as recorded in geometry-topology-map-canvas. Geometry save sends fields: {} rather than replaying read-only catalog-summary fields, so Host applies only captured child drafts while preserving parent metadata. These facts are static source wiring; no recipe runtime acceptance is claimed."
       },
       {
         "id": "terrain-levee-composition",
@@ -1037,7 +1037,7 @@
           "geometry.mesh.load",
           "geometry.culverts.load"
         ],
-        "writeBoundary": "Selection/filtering does not itself edit model data. Topology arc/region filtering uses topology.filter and only selects validated current FIDs; node coordinates remain read-only in this table page because it has no captured map drag context/MapCellSize, although Host mapCommand/moveNode exists; selected-node deletion uses the existing topology draft and nodes cannot be locally added here. Existing arc/region/mesh edits continue through topology.edit or geometry.mesh.edit, culvert edits through geometry.culverts.edit, and the parent model.save commits the Geometry HDF. This documents mounted source relationships, not a new Host command or UI acceptance."
+        "writeBoundary": "Selection/filtering does not itself edit model data. Topology arc/region filtering uses topology.filter and only selects validated current FIDs; node coordinates remain read-only in this table page; GeometryTopologyNodesPage separately mounts GeometryTopologyCanvas, which captures map context/MapCellSize for spatial selection and Host mapCommand/moveNode. Selected-node deletion uses the existing topology draft, and nodes cannot be locally added here. Existing arc/region/mesh edits continue through topology.edit or geometry.mesh.edit, culvert edits through geometry.culverts.edit, and the parent model.save commits the Geometry HDF. This documents mounted source relationships, not a new Host command or UI acceptance."
       },
       {
         "id": "catalog-tree-search-filter",
@@ -1270,6 +1270,72 @@
           "raster.calculator.inspect"
         ],
         "writeBoundary": "The UI lists the current saved map catalog and explicitly inspects one supported map (Project, Buildable, Geometry or Plan). Host inspection returns actual Terrain and map-output Result sources, file dependencies/revisions, NoData choices and a context token bound to project/XML/map/.vis identities. The UI validates source IDs/revisions, Result map types/profile selection, expression/constants and either the intersection of selected-source extents or explicit finite world bounds; raster resolution is capped at 1536 per side and 2,097,152 pixels total. raster.calculator.evaluate rechecks the context and source files and returns a transient Host RasterRenderer RGBA frame; selecting another Result profile runs evaluation again. The preview remains inside this panel: the current parent MapView has no transient-layer registration callback, and neither inspect nor evaluate writes .ras, .vis, model HDF or input rasters. There are no Add to Map or Save Existing actions in this React flow. This is source-level wiring only; no build, service, browser or GUI acceptance is claimed."
+      },
+      {
+        "id": "geometry-topology-map-canvas",
+        "mount": "GeometryEditor (nodes page) → useGeometryTopologyMap → GeometryTopologyNodesPage → TopologyNodesEditor → GeometryTopologyCanvas",
+        "source": [
+          "frontend/src/features/geometry/GeometryEditor.tsx",
+          "frontend/src/features/geometry/GeometryTopologyNodesPage.tsx",
+          "frontend/src/features/geometry/TopologyNodesEditor.tsx",
+          "frontend/src/features/geometry/GeometryTopologyCanvas.tsx",
+          "frontend/src/features/geometry/useGeometryTopologyMap.ts",
+          "frontend/src/features/geometry/useGeometryWorkbench.ts",
+          "frontend/src/features/geometry/geometryTypes.ts",
+          "backend/Host/GeometryProjectMapService.cs",
+          "backend/Host/GeometryTopologyMapService.cs",
+          "backend/Host/GeometryTopologyService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The Geometry workbench owns the editable topology snapshot, revision, draftState, draftIdentity and undo history. useGeometryTopologyMap owns the current saved-map target and transient capture; canvas camera is view-only, and spatial selection is synchronized by stable source FIDs with the node table.",
+        "readActions": [
+          "map.document.list",
+          "map.tree.load",
+          "map.geometry.load",
+          "topology.load",
+          "topology.spatialSelect"
+        ],
+        "writeBoundary": "The saved map catalog/tree is matched to the exact Geometry locator and the currently loaded Geometry path/revision. map.geometry.load supplies the actual map context token and viewport capture; displayed editable features come from the current topology.load snapshot. topology.spatialSelect accepts world coordinates and current MapCellSize and only changes selected source FIDs; click selection uses All scope while extent selection can use the selected scope/hit mode. Node dragging uses topology.edit mapCommand/moveNode and extends the existing topology draft/undo history; only parent model.save writes Geometry HDF. The context token is a real map.geometry.load receipt, but current topology endpoints only validate nonempty map identity/token strings plus Geometry revision and draft identity; they do not verify that this token was issued by the map loader. Original TopologyNodesEditor/NodeEditor duties were selection and details, with no coordinate-edit fields; native map movement lived in MoveNodeHandler. The React canvas is connection glue for that map interaction, not another original C# UI inventory item. Static source wiring only; no batch-12 browser/UI acceptance is claimed."
+      },
+      {
+        "id": "map-result-analysis-panels",
+        "mount": "MapFeaturePage map inspector → lazy MapMeshTimeSeriesPanel / MapCulvertAnalysisPanel / MapSampleLineAnalysisPanel",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/useMapResultFrames.ts",
+          "frontend/src/features/map/useMapHoverIdentify.ts",
+          "frontend/src/features/map/analysis/mapAnalysisTypes.ts",
+          "frontend/src/features/map/analysis/useMapResultMeshHoverCapture.ts",
+          "frontend/src/features/map/analysis/mapMeshTimeSeriesHelpers.ts",
+          "frontend/src/features/map/analysis/MapMeshTimeSeriesPanel.tsx",
+          "frontend/src/features/map/analysis/MapCulvertAnalysisPanel.tsx",
+          "frontend/src/features/map/analysis/mapSampleLineAnalysis.ts",
+          "frontend/src/features/map/analysis/MapSampleLineAnalysisPanel.tsx",
+          "backend/Host/MapHoverIdentifyContracts.cs",
+          "backend/Host/MapHoverIdentifyService.cs",
+          "backend/Host/MapResultGeometryService.cs",
+          "backend/Host/MapResultMeshTimeSeriesService.cs",
+          "backend/Host/MapResultMeshTimeSeriesContracts.cs",
+          "backend/Host/MapResultCulvertProfileService.cs",
+          "backend/Host/MapResultCulvertTimeSeriesService.cs",
+          "backend/Host/MapResultCulvertTimeSeriesContracts.cs",
+          "backend/Host/MapResultChartService.cs",
+          "backend/Host/MapResultChartContracts.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "MapFeaturePage builds one immutable analysis capture from the checked useMapResultFrames source catalog. It binds project/session/XML SHA/revision, saved map and visualization revision, map context token, active Result node, selection overrides, slot-zero Result and current profile/render snapshot. Mesh hover capture is separately bound to the exact Result-owned Geometry/FlowArea source; sample-line input is derived only from the currently selected checked persisted PolylinesVector layer and its primary file SHA.",
+        "readActions": [
+          "map.resultSources",
+          "map.resultRender",
+          "map.hover.identify",
+          "map.result.geometry.load",
+          "map.result.meshTimeSeries.inspect",
+          "map.result.meshTimeSeries.execute",
+          "map.result.culvertProfile",
+          "map.result.culvertTimeSeries",
+          "map.resultSampleLine"
+        ],
+        "writeBoundary": "Mesh inspection supplies authoritative FlowArea choices; execution reads stored Depth for an exact Cell index or Velocity for an exact Face index. This is time-series extraction, not contour/isolines generation. Mesh time-series reads and sample-line CumulativeVolume integration use ResultPostProcessReadScope → PostProcessor.CreateReadCache in a unique temporary directory; processing operates on that read cache, and disposal closes its HDF resources and removes the directory without modifying the source Result/HDF. This does not imply that sample-line Flow mode writes the shared cache. Culvert panels read Host-returned barrel IDs and stored profile/Flow/Velocity data; positive Flow/Velocity output and direction have no batch-12 fixture acceptance; source wiring does not establish numerical or sign correctness. The sample-line panel requires one persisted selected line feature and an explicit part for MultiLineString, sends project XY and the primary source SHA, and displays Host times, units, NoData and side-effect receipts. Host binds source path/revision and coordinate hash but does not verify that featureID exists in the persisted source record table. The sample-line DTO still declares ResultPostProcessCacheMayBeCreatedOrUpdated against the expected default cache path as a conservative side-effect receipt; that declaration alone does not prove the shared cache was written or changed by this execution. These panels do not save .ras, .vis or the source Result/HDF. The closest original UI responsibilities are DynamicTimeSeriesProfilePlot/DynamicProfilePlot with Geometry arc/culvert line sources; there is no direct original UI class for the new cross-Result mesh time series or stored culvert result endpoints. New panel files are Host integration glue, not additional original C# inventory items. Static source wiring only; no batch-12 browser/HTTP/fixture acceptance is claimed."
       }
     ],
     "stateInvariants": [

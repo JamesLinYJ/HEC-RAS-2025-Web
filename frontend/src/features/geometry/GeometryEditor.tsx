@@ -14,6 +14,7 @@ import { geometryDiagnosticMessage } from './geometryErrors';
 import type { GeometryFeatureKind, GeometryRow } from './geometryTypes';
 import { ArcImportDialog } from './ArcImportDialog';
 import { useGeometryWorkbench } from './useGeometryWorkbench';
+import { useGeometryTopologyMap } from './useGeometryTopologyMap';
 
 type GeometryPageID = 'summary' | 'topologySummary' | 'nodes' | 'arcs' | 'regions' | 'mesh' | 'culverts';
 
@@ -71,8 +72,21 @@ export default function GeometryPage(props: FeaturePageProps) {
   const [arcImportOpen, setArcImportOpen] = useState(false);
   const workspace = useGeometryWorkbench(props);
   const { language } = props;
+  const workbenchBusy = !!workspace.busyOperation;
+  const topologyMapWorkspace = useGeometryTopologyMap({
+    active: page === 'nodes',
+    owner: workspace.ownerKey,
+    backend: props.backend,
+    backendRevision: props.backendRevision,
+    context: props.context,
+    model: workspace.model,
+    topology: workspace.topology,
+    canEdit: !!workspace.topology?.canEdit && workspace.supports('topology.edit'),
+    busy: workbenchBusy,
+    onMapCommand: workspace.editTopologyMapCommand,
+  });
+  const busy = workbenchBusy || topologyMapWorkspace.interactionBusy;
   useEffect(() => { setArcImportOpen(false); }, [workspace.ownerKey]);
-  const busy = !!workspace.busyOperation;
   const validation = useMemo(() => localValidation(language, workspace.draft), [language, workspace.draft]);
   const displayedTopology = workspace.topology;
   const displayedMesh = workspace.mesh ? { ...workspace.mesh, regions: workspace.wrappedMeshRegions() ?? workspace.mesh.regions } : undefined;
@@ -115,6 +129,7 @@ export default function GeometryPage(props: FeaturePageProps) {
     onApplyTopologyFactor: workspace.applyTopologyFactor,
     onArcPointCoordinateChange: workspace.editArcPointCoordinate,
     onApplyRecipe: workspace.applyTopologyRecipe,
+    ...(kind === 'node' ? { onSelectionChange: topologyMapWorkspace.onTableSelectionChange } : {}),
     onTopologyResize: (featureKind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => {
       void workspace.resizeTopology(featureKind, row, operation, axis)
         .catch((error: unknown) => workspace.setError('topology', geometryDiagnosticMessage(error)));
@@ -128,7 +143,7 @@ export default function GeometryPage(props: FeaturePageProps) {
       case 'summary': return <GeometrySummaryPage language={language} asset={workspace.asset} projectPath={props.context.projectPath} sessionID={props.context.projectSessionID} topology={workspace.topology} mesh={workspace.mesh} culverts={workspace.culverts} parent={workspace.parent} loading={Object.values(workspace.loading).some(Boolean)} />;
       case 'topologySummary': return <GeometryTopologySummaryPage language={language} snapshot={displayedTopology} onNavigate={(target) => setPage(target)}
         canEdit={!!workspace.topology?.canEdit && workspace.supports('topology.edit')} busy={busy} onApplyFactor={workspace.applyTopologyFactor} />;
-      case 'nodes': return <GeometryTopologyNodesPage key={workspace.ownerKey} {...topologyPageProps('node')} />;
+      case 'nodes': return <GeometryTopologyNodesPage key={workspace.ownerKey} {...topologyPageProps('node')} mapWorkspace={topologyMapWorkspace} />;
       case 'arcs': return <GeometryTopologyArcsPage key={workspace.ownerKey} {...topologyPageProps('arc')} />;
       case 'regions': return <GeometryTopologyRegionsPage key={workspace.ownerKey} {...topologyPageProps('region')} />;
       case 'mesh': return <GeometryMeshPage key={workspace.ownerKey}

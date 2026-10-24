@@ -3,6 +3,7 @@ import type { BackendGateway, Language, WorkbenchContext } from '../../shared/wo
 import type { CatalogTreeNode, CatalogTreeNodeLocator, MapDocumentTab, MapExtent } from './mapTypes';
 import { projectXmlSha } from './ProjectTreeListener';
 import { mapError } from './mapText';
+import type { MapAnalysisMapRequest } from './analysis/mapAnalysisTypes';
 
 export interface MapResultFramesViewport {
   minX: number;
@@ -140,6 +141,8 @@ export interface MapResultFramesController {
   status: MapResultFramesStatus;
   message: string | null;
   sources: MapResultSourceCatalog | null;
+  /** Exact request retained with the currently checked Result source catalog. */
+  mapRequest: MapAnalysisMapRequest | null;
   nodeOptions: MapResultFrameNodeOption[];
   activeNode: MapResultActiveNode | null;
   activeNodeKey: string | null;
@@ -558,17 +561,20 @@ export function useMapResultFrames({ backend, context, document, language, viewp
   const projectXml = context.projectXml;
   const projectRevision = context.projectRevision;
   const projectSessionID = context.projectSessionID;
+  const coreLayerContext = context.coreLayerContext ?? null;
+  const coreLayerContextIdentity = typeof coreLayerContext?.identityToken === 'string'
+    ? coreLayerContext.identityToken : null;
   // A .vis save invalidates rendered frames, but does not change the owner of
   // this session's explicit Result comparisons. The server revalidates every
   // locator, source path and SHA against the new visualization revision.
   const selectionOwnerKey = JSON.stringify([
     projectSessionID, projectPath, projectRevision, projectXml,
-    document?.id, document?.mapID, document?.mapIndex, document?.name,
+      coreLayerContextIdentity, document?.id, document?.mapID, document?.mapIndex, document?.name,
     document?.mapType, backendRevision,
   ]);
   const mapInputKey = JSON.stringify([
     projectSessionID, projectPath, projectRevision, projectXml,
-    document?.id, document?.mapID, document?.mapIndex, document?.name,
+      coreLayerContextIdentity, document?.id, document?.mapID, document?.mapIndex, document?.name,
     document?.mapType, document?.visualizationRevision, backendRevision,
   ]);
   const viewportKey = viewport ? JSON.stringify(viewport) : 'full-result-extent';
@@ -664,7 +670,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
       }
     })();
     return () => abortController.abort();
-  }, [backend, backendRevision, document, language, mapInputKey, selectionOwnerKey, projectPath, projectRevision, projectSessionID, projectXml, refreshSequence]);
+  }, [backend, backendRevision, coreLayerContextIdentity, document, language, mapInputKey, selectionOwnerKey, projectPath, projectRevision, projectSessionID, projectXml, refreshSequence]);
 
   const activeNodeOptions = useMemo<MapResultFrameNodeOption[]>(() => loaded ? buildNodeOptions(loaded.catalog) : [], [loaded]);
   const selectedNodeKey = activeNodeKey && activeNodeOptions.some((item) => item.key === activeNodeKey)
@@ -1037,11 +1043,24 @@ export function useMapResultFrames({ backend, context, document, language, viewp
   const selectedProfileTime = steps.find((step) => step.id === selectedProfileIndex)?.time
     ?? renderSnapshot?.selectedProfileTime
     ?? null;
+  const mapRequest = useMemo<MapAnalysisMapRequest | null>(() =>
+    loaded && loaded.inputKey === mapInputKey && loaded.map.projectPath === projectPath &&
+      loaded.map.projectXml === projectXml && typeof loaded.map.projectXml === 'string' &&
+      typeof loaded.map.projectXmlSHA === 'string' && loaded.map.projectSessionID === projectSessionID &&
+      typeof loaded.map.expectedVisualizationRevision === 'string' && loaded.map.expectedVisualizationRevision.length > 0 &&
+      Boolean(loaded.catalog.contextToken) &&
+      loaded.catalog.visualizationRevision === loaded.map.expectedVisualizationRevision &&
+      loaded.catalog.projectRevision === projectRevision
+      ? { ...loaded.map, projectXml: loaded.map.projectXml, projectXmlSHA: loaded.map.projectXmlSHA,
+        expectedVisualizationRevision: loaded.map.expectedVisualizationRevision, coreLayerContext }
+      : null,
+    [coreLayerContext, loaded, mapInputKey, projectPath, projectRevision, projectSessionID, projectXml]);
 
   return {
     status,
     message,
     sources: loaded?.catalog ?? null,
+    mapRequest,
     nodeOptions,
     activeNode,
     activeNodeKey: selectedNodeKey,

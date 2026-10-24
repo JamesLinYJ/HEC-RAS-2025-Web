@@ -150,6 +150,10 @@
 .geometry-arc-points-dialog .geometry-table-wrap { max-height: 55vh; }
 .geometry-arc-points-dialog .geometry-table { min-width: 580px; }
 .geometry-arc-points-dialog .geometry-table input[type='number'] { width: 100%; min-width: 130px; }
+.geometry-topology-map-panel .geometry-panel-body { display: grid; gap: 10px; }
+.geometry-topology-map-panel .geometry-panel-heading > .geometry-form-field { min-width: min(100%, 320px); }
+.geometry-topology-map-controls { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.geometry-topology-map-controls .geometry-form-field { min-width: 150px; }
 @keyframes geometry-spin { to { transform: rotate(360deg); } }
 @media (max-width: 1050px) { .geometry-summary-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .geometry-page { padding: 14px 14px 26px; }.geometry-header { flex-direction: column; }.geometry-header-actions { justify-content: flex-start; }.geometry-grid.two, .geometry-grid.three, .geometry-kv-grid, .geometry-detail-fields, .geometry-recipe-parameters { grid-template-columns: 1fr; }.geometry-summary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }.geometry-kv { grid-template-columns: 110px minmax(0,1fr); }.geometry-recipe-step > header { align-items: flex-start; flex-direction: column; }.geometry-arc-tag { grid-template-columns: 1fr; }.geometry-arc-points-dialog { padding: 0; } }

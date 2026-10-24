@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetReference, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { BackendOperationUnavailableError } from '../../shared/workbench';
-import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshPatchEditContext, type GeometryMeshPatchMutation, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFactorSelection, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
+import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshPatchEditContext, type GeometryMeshPatchMutation, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFactorSelection, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyMapCommand, type GeometryTopologyMapRequestContext, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
 import { geometryDiagnosticMessage } from './geometryErrors';
 import { geometryVectorImportCapture, isGeometryVectorImportApplySnapshot, isGeometryVectorImportInspection,
   isGeometryVectorImportSelectedSource, sameGeometryVectorImportCapture, type GeometryVectorImportCapture,
@@ -288,6 +288,47 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     const snapshot = current.value;
     const result = await send<GeometryTopologySnapshot>('topology.edit', { model, revision: snapshot.revision, draftState: snapshot.draftState, mutation }, sourceOwner);
     if (result.revision !== snapshot.revision) throw new Error('The topology response revision does not match the captured source revision.');
+    setTopology(result); setError('topology');
+    return result;
+  });
+
+  const editTopologyMapCommand = (expected: { revision: string; draftState: string; draftIdentity: string },
+    mapOwner: Pick<GeometryTopologyMapRequestContext, 'mapID' | 'contextToken' | 'geometryRevision'>,
+    command: GeometryTopologyMapCommand): Promise<GeometryTopologySnapshot> => enqueue(topologyQueue, async () => {
+    const current = topologyRef.current;
+    if (!model || !current || current.owner !== sourceOwner) throw new Error('Topology draft is not loaded for this asset.');
+    const snapshot = current.value;
+    const currentDraftIdentity = snapshot.completion?.draftIdentity;
+    if (!currentDraftIdentity || snapshot.revision !== expected.revision || snapshot.draftState !== expected.draftState ||
+        currentDraftIdentity !== expected.draftIdentity) {
+      throw new DOMException('The map edit belongs to an earlier topology draft.', 'AbortError');
+    }
+    if (!snapshot.canEdit || snapshot.revision !== mapOwner.geometryRevision) {
+      throw new Error('The current topology source does not match the captured map owner or cannot be edited.');
+    }
+    const requestContext: GeometryTopologyMapRequestContext = {
+      requestID: requestID(),
+      mapID: mapOwner.mapID,
+      contextToken: mapOwner.contextToken,
+      geometryRevision: mapOwner.geometryRevision,
+      expectedDraftIdentity: expected.draftIdentity,
+    };
+    const result = await send<GeometryTopologySnapshot>('topology.edit', {
+      model,
+      revision: expected.revision,
+      draftState: expected.draftState,
+      mutation: { operation: 'mapCommand', featureKind: 'map', featureIDs: [], mapCommand: command },
+      mapRequestContext: requestContext,
+    }, sourceOwner);
+    if (result.revision !== expected.revision || !result.completion ||
+        result.completion.sourceRevision !== expected.revision || !result.completion.draftIdentity ||
+        !result.mapRequestContext || result.mapRequestContext.requestID !== requestContext.requestID ||
+        result.mapRequestContext.mapID !== requestContext.mapID ||
+        result.mapRequestContext.contextToken !== requestContext.contextToken ||
+        result.mapRequestContext.geometryRevision !== requestContext.geometryRevision ||
+        result.mapRequestContext.expectedDraftIdentity !== requestContext.expectedDraftIdentity) {
+      throw new Error('The topology map-edit receipt does not match the captured source, map, or draft identity.');
+    }
     setTopology(result); setError('topology');
     return result;
   });
@@ -965,7 +1006,7 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
   return {
     asset, ownerKey: sourceOwner, model, parent, topology, mesh, culverts, draft, loading, errors, busyOperation, savedNotice,
     topologyDirty, meshDirty, culvertDirty, localOnly, dirty, revision, dirtyOwner,
-    supports, localRows, addLocalRow, onTopologyChange, onTopologyCommand, onTopologyDelete, undoTopology, redoTopology,
+    supports, localRows, addLocalRow, onTopologyChange, onTopologyCommand, onTopologyDelete, undoTopology, redoTopology, editTopologyMapCommand,
     loadArcPoints, loadRecipe, resizeTopology, applyTopologyFactor, editTopologyTag, createTopologyTag, filterTopology, editArcPointCoordinate, applyTopologyRecipe,
     inspectVectorImport, applyVectorImport, vectorImportCapture: geometryVectorImportCapture(topology),
     onFlowAreaChange, onRegionSelection, applyPatchMutation, prepareMesh, generateMesh, degreeScan, propertyTables, undoMesh, redoMesh,

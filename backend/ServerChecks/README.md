@@ -1,5 +1,18 @@
 # Server compute acceptance
 
+Map analysis and topology editing checks use isolated copies of existing fixtures:
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --run-map-analysis-http http://127.0.0.1:5080 /tmp/hecras-result-hover/result-hover-manifest.json /tmp/hecras-map-analysis
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --run-geometry-topology-map-http http://127.0.0.1:5080 /path/to/saved-project.ras /tmp/hecras-topology-map
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --run-map-line-hash-vectors > /tmp/hecras-map-line-hashes.json
+node scripts/verify-map-analysis.mjs /tmp/hecras-map-line-hashes.json
+```
+
+The analysis runner reads actual Cell depth and Face velocity series from completed Result HDF files, imports a persisted source polyline and evaluates flow and cumulative-volume sample-line output. It checks exact map/Result identities and source-file preservation. Its fixture has no culverts, so culvert coverage is limited to the genuine empty-profile diagnostic and time-series rejection; positive culvert output needs a separate fixture. Mesh and cumulative-volume reads use private temporary postprocess caches that are removed when reading ends. The sample-line response retains a conservative cache-side-effect declaration; it does not prove that a shared cache was written.
+
+The topology runner copies a saved project and prepares real conceptual topology in the copy when its original geometry has only a hydraulic mesh. It obtains a saved-map Geometry context, selects a stable source node through Host hit testing, moves it in the draft, undoes/redoes the move, saves through the parent model and verifies reopened coordinates and revisions. It also checks that an expired draft is rejected. Neither runner launches a server or performs browser acceptance. The hash-vector command calls the actual Host coordinate-hash implementation; the Node check compares the browser helper with it and separately checks that NoData gaps retain their original times.
+
 This console project creates one small, real HEC-RAS source fixture for HTTP and browser tests. It uses a flat GeoTIFF terrain (elevation 42), one 2D flow-area cell, constant roughness, a wet initial boundary stage (43), and a short CPU Plan with its retained default equation set. The closed cell starts at 1 m depth; in SI units the 3.6 mm/hour precipitation rate contributes about 0.000004 m over four seconds. The HTTP run reopens the computed Result and requires every stored cell depth to be finite and within 0.0001 m of the 1 m envelope, allowing room for retained solver and HDF precision. It creates and reopens the source project before printing fixture paths as one JSON object.
 
 Create a fixture without contacting the server:

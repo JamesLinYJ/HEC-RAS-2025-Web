@@ -8,6 +8,7 @@ import type { PersistedRasterHoverCapture } from './usePersistedRasterLayers';
 import type { MapAssociationHoverCapture } from './associatedMapLayers';
 import { mapResultSelectionOverridesFromCatalog } from './useMapResultFrames';
 import type { MapResultFramesController, MapResultRenderLayer, MapResultSourceCatalog } from './useMapResultFrames';
+import type { MapMeshElementHit, MapResultAnalysisCapture, MapResultMeshSourceCapture } from './analysis/mapAnalysisTypes';
 import {
   resultHoverEntryMatchesCurrentFrame,
   resultHoverFramesMatchContext,
@@ -19,7 +20,7 @@ import type {
 
 export interface MapHoverIdentifyEntry {
   node: CatalogTreeNodeLocator;
-  kind: 'raster' | 'result' | 'terrain' | 'nvalue' | 'classification';
+  kind: 'raster' | 'result' | 'terrain' | 'nvalue' | 'classification' | 'mesh';
   label: string;
   /** Keep source values as strings so UInt32 categories retain their exact text. */
   value: string | null;
@@ -28,6 +29,9 @@ export interface MapHoverIdentifyEntry {
   sourceRevision: string | null;
   mapType: string | null;
   profileIndex: number | null;
+  meshIndex: number | null;
+  elementIndex: number | null;
+  meshHit: MapMeshElementHit | null;
 }
 
 export interface MapHoverTooltip {
@@ -55,13 +59,15 @@ export interface UseMapHoverIdentifyOptions {
   imagesVisible: boolean;
   rasterCaptures: PersistedRasterHoverCapture[];
   associatedCaptures: MapAssociationHoverCapture[];
+  resultMeshCapture: MapResultMeshSourceCapture | null;
+  resultAnalysisCapture: MapResultAnalysisCapture | null;
   resultFrames: MapResultFramesController;
   selectedBackendNodeID: string | null;
 }
 
 interface MapHoverLayerCapturePayload {
   node: CatalogTreeNodeLocator;
-  kind: 'raster' | 'result' | 'terrain' | 'nvalue' | 'classification';
+  kind: 'raster' | 'result' | 'terrain' | 'nvalue' | 'classification' | 'mesh';
   sourcePath?: string;
   sourceRevision?: string;
   mapType?: string;
@@ -69,6 +75,7 @@ interface MapHoverLayerCapturePayload {
   rasterSource?: Record<string, unknown>;
   resultSelections?: Array<{ selectionIndex: number; resultPath: string; resultRevision: string }>;
   associated?: Pick<MapAssociationHoverCapture, 'geometryNodes' | 'planNodes' | 'resultOwners' | 'dependencies'>;
+  mesh?: MapResultMeshSourceCapture['hoverLayer']['mesh'];
 }
 
 interface HoverRequestPlan {
@@ -79,6 +86,8 @@ interface HoverRequestPlan {
   profileSelections: Array<{ node: CatalogTreeNodeLocator; profileIndex: number }>;
   selectionOverrides: ReturnType<typeof mapResultSelectionOverridesFromCatalog>;
   resultSnapshot: ResultHoverSnapshotCapture | null;
+  meshCapture: MapResultMeshSourceCapture | null;
+  analysisCaptureKey: string | null;
 }
 
 interface ResultHoverSnapshotCapture {
@@ -236,7 +245,7 @@ function parseEntries(
   return response.entries.map((entryValue, index): MapHoverIdentifyEntry => {
     const entry = record(entryValue, `图层标签 ${index + 1}`);
     const node = record(entry.node, `图层标签 ${index + 1} 来源`);
-    if (!['raster', 'result', 'terrain', 'nvalue', 'classification'].includes(String(entry.kind))) throw new Error('服务端返回了未请求的悬停来源类型。');
+    if (!['raster', 'result', 'terrain', 'nvalue', 'classification', 'mesh'].includes(String(entry.kind))) throw new Error('服务端返回了未请求的悬停来源类型。');
     const kind = entry.kind as MapHoverIdentifyEntry['kind'];
     const capture = plan.layers.find((candidate) => candidate.kind === kind &&
       sameLocator(candidate.node, node as unknown as CatalogTreeNodeLocator));
@@ -248,7 +257,53 @@ function parseEntries(
     if (profileIndex !== null && (typeof profileIndex !== 'number' || !Number.isInteger(profileIndex))) {
       throw new Error('悬停结果时刻无效。');
     }
-    if (kind !== 'result') {
+    let meshHit: MapMeshElementHit | null = null;
+    const meshIndex = entry.meshIndex == null ? null : entry.meshIndex;
+    const elementIndex = entry.elementIndex == null ? null : entry.elementIndex;
+    if ((meshIndex !== null && (typeof meshIndex !== 'number' || !Number.isInteger(meshIndex) || meshIndex < 0)) ||
+        (elementIndex !== null && (typeof elementIndex !== 'number' || !Number.isInteger(elementIndex) || elementIndex < 0))) {
+      throw new Error('Mesh 命中索引无效。');
+    }
+    if (kind === 'mesh') {
+      const meshCapture = plan.meshCapture;
+      const resultLayer = plan.layers.find(layer => layer.kind === 'result' &&
+        sameLocator(layer.node, meshCapture?.resultOwner.resultNode ?? capture.node));
+      const selectedSlotZero = resultLayer?.resultSelections?.find(selection => selection.selectionIndex === 0);
+      if (!meshCapture || capture.node.nodeType !== 'FlowAreaLayer' ||
+          !sameLocator(capture.node, meshCapture.flowAreaNode) ||
+          sourcePath !== meshCapture.geometryPath || sourceRevision === null ||
+          !sameRevision(sourceRevision, meshCapture.geometryRevision) || mapType !== null ||
+          profileIndex !== null || meshIndex === null || elementIndex === null ||
+          (entry.valueType !== 'Cell' && entry.valueType !== 'Face') ||
+          !plan.analysisCaptureKey ||
+          meshCapture.resultOwner.contextToken !== request.contextToken ||
+          meshCapture.resultOwner.selectionIndex !== 0 ||
+          !resultLayer || !sameLocator(meshCapture.resultOwner.resultNode, resultLayer.node) ||
+          !selectedSlotZero || selectedSlotZero.resultPath !== meshCapture.resultOwner.selectedResultPath ||
+          !sameRevision(selectedSlotZero.resultRevision, meshCapture.resultOwner.selectedResultRevision)) {
+        throw new Error('Mesh 悬停标签未匹配当前 Flow Area、Result 来源和元素类型。');
+      }
+      meshHit = {
+        ownerKey: meshCapture.ownerKey,
+        captureKey: plan.analysisCaptureKey,
+        contextToken: String(request.contextToken),
+        mapID: String(map.mapID),
+        mapIndex: Number(map.mapIndex),
+        visualizationRevision: String(map.expectedVisualizationRevision),
+        resultNode: meshCapture.resultOwner.resultNode,
+        resultPath: meshCapture.resultOwner.selectedResultPath,
+        resultRevision: meshCapture.resultOwner.selectedResultRevision,
+        selectionIndex: 0,
+        geometryNode: meshCapture.geometryNode,
+        geometryContextToken: meshCapture.geometryContextToken,
+        geometryPath: meshCapture.geometryPath,
+        geometryRevision: meshCapture.geometryRevision,
+        flowAreaNode: meshCapture.flowAreaNode,
+        flowAreaIndex: meshIndex,
+        elementIndex,
+        elementKind: entry.valueType,
+      };
+    } else if (kind !== 'result') {
       if (sourcePath !== capture.sourcePath || sourceRevision === null ||
           !sameRevision(sourceRevision, capture.sourceRevision ?? '') ||
           (kind === 'raster' && mapType !== capture.mapType)) {
@@ -279,6 +334,9 @@ function parseEntries(
       sourceRevision,
       mapType,
       profileIndex,
+      meshIndex,
+      elementIndex,
+      meshHit,
     };
   });
 }
@@ -297,6 +355,8 @@ export function useMapHoverIdentify({
   imagesVisible,
   rasterCaptures,
   associatedCaptures,
+  resultMeshCapture,
+  resultAnalysisCapture,
   resultFrames,
   selectedBackendNodeID,
 }: UseMapHoverIdentifyOptions): { tooltip: MapHoverTooltip | null; loading: boolean } {
@@ -333,6 +393,27 @@ export function useMapHoverIdentify({
     }))];
     const resultCapture = currentResultCapture(document, catalog, resultFrames);
     if (resultCapture) layers = [...layers, resultCapture.capture];
+    const exactMeshCapture = resultMeshCapture && resultAnalysisCapture && resultCapture &&
+      resultAnalysisCapture.contextToken === catalog.contextToken &&
+      resultAnalysisCapture.ownerKey === resultMeshCapture.ownerKey &&
+      sameLocator(resultAnalysisCapture.activeNode.node, resultCapture.capture.node) &&
+      resultAnalysisCapture.profileIndex === resultCapture.snapshot.context.timelineProfileIndex &&
+      resultMeshCapture.resultOwner.contextToken === catalog.contextToken &&
+      sameLocator(resultMeshCapture.resultOwner.resultNode, resultCapture.capture.node) &&
+      resultCapture.capture.resultSelections?.some(selection => selection.selectionIndex === 0 &&
+        selection.resultPath === resultMeshCapture.resultOwner.selectedResultPath &&
+        sameRevision(selection.resultRevision, resultMeshCapture.resultOwner.selectedResultRevision)) &&
+      findVisibleNode(catalog.treeRoots, resultMeshCapture.flowAreaNode)
+      ? resultMeshCapture : null;
+    const analysisCaptureKey = exactMeshCapture && resultAnalysisCapture
+      ? resultAnalysisCapture.captureKey : null;
+    if (exactMeshCapture) layers = [...layers, {
+      node: exactMeshCapture.hoverLayer.node,
+      kind: 'mesh',
+      sourcePath: exactMeshCapture.geometryPath,
+      sourceRevision: exactMeshCapture.geometryRevision,
+      mesh: exactMeshCapture.hoverLayer.mesh,
+    }];
     if (layers.length === 0 || layers.length > 256) return null;
 
     // The last drawn project image is topmost. The selected project tree row
@@ -365,11 +446,13 @@ export function useMapHoverIdentify({
       context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml,
       document.id, document.mapID, document.mapIndex, document.name, document.mapType, document.visualizationRevision,
       catalog.projectRevision, catalog.projectXmlSHA, catalog.contextToken, selectionKey,
+      context.coreLayerContext?.identityToken ?? null,
       resultFrames.status, resultFrames.activeNode?.node ? locatorKey(resultFrames.activeNode.node) : null,
       resultFrames.selectedProfileIndex, resultFrames.renderSnapshot?.selectedProfileIndex ?? null,
       resultFrames.renderSnapshot?.selectedProfileTime ?? null, resultFrameKey,
       associatedCaptures.map(capture => [capture.frameID, capture.kind, capture.sourcePath, capture.sourceRevision,
         capture.dependencies, capture.resultOwners]),
+      exactMeshCapture?.captureKey ?? null, analysisCaptureKey,
       viewport.scale, viewport.offsetX, viewport.offsetY, size.width, size.height,
       pointer.project, pointer.screen, layerKey, activeTool, dragging, draftPointCount,
     ]);
@@ -381,11 +464,16 @@ export function useMapHoverIdentify({
       selectionOverrides: overrides,
       profileSelections: resultCapture ? [resultCapture.profileSelection] : [],
       resultSnapshot: resultCapture?.snapshot ?? null,
+      meshCapture: exactMeshCapture,
+      analysisCaptureKey,
     };
   }, [activeTool, backend, context.projectPath, context.projectRevision, context.projectSessionID,
     context.projectXml, document, dragging, draftPointCount, imagesVisible, pointer, rasterCaptures, associatedCaptures,
+    resultMeshCapture,
+    resultAnalysisCapture,
     resultFrames.activeNode, resultFrames.renderSnapshot, resultFrames.selectedProfileIndex,
     resultFrames.sources, resultFrames.status, selectedBackendNodeID, size.height, size.width,
+    context.coreLayerContext?.identityToken,
     viewport.offsetX, viewport.offsetY, viewport.scale]);
 
   activeKeyRef.current = plan?.key ?? null;
@@ -417,6 +505,7 @@ export function useMapHoverIdentify({
             mapType: document!.mapType,
             expectedVisualizationRevision: document!.visualizationRevision,
             projectSessionID: context.projectSessionID,
+            coreLayerContext: context.coreLayerContext ?? null,
           };
           const point = { x: plan.pointer.project[0], y: plan.pointer.project[1] };
           const worldUnitsPerScreenPoint = 1 / viewport.scale;

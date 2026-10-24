@@ -23,7 +23,8 @@
     "test:recipes": "node scripts/verify-recipe-parameters.mjs",
     "test:context": "node scripts/verify-session-context.mjs",
     "test:cumulus-auth": "node scripts/verify-cumulus-authentication.mjs",
-    "test:clipboard": "node scripts/verify-grid-clipboard.mjs"
+    "test:clipboard": "node scripts/verify-grid-clipboard.mjs",
+    "test:map-analysis": "node scripts/verify-map-analysis.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

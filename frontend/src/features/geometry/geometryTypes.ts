@@ -60,6 +60,8 @@ export interface GeometryTopologySnapshot {
   regionTags?: Array<{ id: string; type: string }>;
   recentArcTags?: Array<{ name: string; type: string; value: string }>;
   recentRegionTags?: Array<{ name: string; type: string; value: string }>;
+  map?: GeometryTopologyMap | null;
+  mapRequestContext?: GeometryTopologyMapRequestContext | null;
   completion?: {
     sourceRevision: string;
     draftIdentity: string;
@@ -68,6 +70,73 @@ export interface GeometryTopologySnapshot {
   } | null;
   canUndo?: boolean;
   canRedo?: boolean;
+}
+
+export interface GeometryTopologyCoordinate {
+  x: number;
+  y: number;
+}
+
+export interface GeometryTopologyExtent {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+export interface GeometryTopologyMapFeature {
+  id: string;
+  featureKind: string;
+  fid: number | null;
+  geometryType: 'line' | 'polygon' | 'point' | string;
+  selectionIDs: string[];
+  paths: GeometryTopologyCoordinate[][];
+  incidentArcs?: Array<{ arcID: number; length: number }> | null;
+}
+
+export interface GeometryTopologyMap {
+  extent: GeometryTopologyExtent | null;
+  features: GeometryTopologyMapFeature[];
+}
+
+/** Per-interaction owner capture returned by map.geometry.load and echoed by topology Host calls. */
+export interface GeometryTopologyMapRequestContext {
+  requestID: string;
+  mapID: string;
+  contextToken: string;
+  geometryRevision: string;
+  expectedDraftIdentity: string;
+}
+
+export type GeometryTopologySelectionScope = 'All' | 'Arcs' | 'Nodes' | 'Regions';
+export type GeometryTopologySelectionMode = 'Replace' | 'Append' | 'EnsureIncluded' | 'Toggle' | 'Remove';
+export type GeometryTopologyMarqueeHitMode = 'Intersects' | 'Contained';
+
+export interface GeometryTopologySelectedFeature {
+  featureKind: 'arc' | 'node' | 'region' | string;
+  fid: number;
+  tableRowID: string;
+  mapFeatureIDs: string[];
+}
+
+export interface GeometryTopologySpatialSelectionResult {
+  requestID: string;
+  mapID: string;
+  contextToken: string;
+  geometryRevision: string;
+  revision: string;
+  draftIdentity: string;
+  selections: GeometryTopologySelectedFeature[];
+}
+
+export interface GeometryTopologyMapCommand {
+  action: 'moveNode';
+  featureKind: 'node';
+  featureIDs: number[];
+  nodeFID: number;
+  nodeFIDs: number[];
+  coordinates: GeometryTopologyCoordinate[];
+  mapCellSize: number;
 }
 
 export interface GeometryTopologyCompletionMessage {
