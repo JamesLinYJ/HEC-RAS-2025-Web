@@ -1452,6 +1452,41 @@
           "terrain.raster.export"
         ],
         "writeBoundary": "Before export, the panel inspects project and Terrain files, loads the selected Terrain snapshot, then rechecks both SHAs. It submits a ModelSaveRequest with empty fields/images/rows/samples/changedCells and the captured sourceState; it does not save model changes. The Host uses TerrainBehaviors.ExportFullRaster/TiffExportEngine.ExportWithOverviews semantics, the valid raster extent and projection, and chooses a unique TIFF path in the project default export directory; the UI controls cell size but has no output-path picker or browser download. On completed terminal receipt, the panel inspects the TIFF and rechecks project/Terrain source identities before displaying output SHA/length. Cancellation can leave a reported partial TIFF and is not shown as success. No .ras/project commit occurs. This React panel is workflow glue for the retained Terrain export behavior, not an additional source UI inventory item. Static source wiring only; no build or runtime acceptance is claimed."
+      },
+      {
+        "id": "result-profile-mesh-picker",
+        "mount": "ResultsWorkspace → ResultProfileMeshPicker → result.profileMap → existing result.profile series selection",
+        "source": [
+          "frontend/src/features/results/ResultsWorkspace.tsx",
+          "frontend/src/features/results/controls/ResultProfileMeshPicker.tsx",
+          "backend/Host/ResultProfileContracts.cs",
+          "backend/Host/ResultProfileService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "ResultsWorkspace owns the selected Result snapshot/catalog and selected flow area/variable. The picker request owner binds the Result path and SHA revision, flow-area index/name, Cell or Face kind, viewport extent and backend generation; abort and request-key checks reject stale responses. Selecting a returned element preserves its original Result-local ordinal and feeds the existing result.profile request.",
+        "readActions": [
+          "result.profileMap",
+          "result.profile"
+        ],
+        "writeBoundary": "result.profileMap reads bounded cell/face geometry embedded in the selected Result HDF; it does not substitute current project Geometry and does not return or persist series values. A selected source ordinal is passed to the existing result.profile read path. Responses are bound to the Result path/revision and flow area; an extent exceeding element or vertex bounds yields no selectable partial geometry and requires zooming. Selection changes local ResultsWorkspace state only; there is no HDF, project or map write."
+      },
+      {
+        "id": "map-saved-source-node-removal",
+        "mount": "MapFeaturePage → MapLayerTree → selected persisted MapLayer → remove from current map",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/MapLayerTree.tsx",
+          "frontend/src/features/map/ProjectTreeListener.ts",
+          "backend/Host/MapTreeService.cs",
+          "backend/Host/BackendWorker.cs"
+        ],
+        "stateOwner": "The operation captures the active project session/path/XML/revision, exact saved map identity and visualization revision, exact tree locator, and source path/revision. MapFeaturePage obtains the parent map-write lease and owns the pending, committed, uncertain or needs-reconciliation state; selection, hover and render captures are cleared only after a matching receipt is adopted.",
+        "readActions": [
+          "map.tree.load",
+          "map.tree.perform(action='removeSourceNode')",
+          "map.document.list and map.tree.load for explicit reconciliation"
+        ],
+        "writeBoundary": "The UI offers this action only for ordinary file-backed GeoJSON vector MapLayer types (PointsVector, PolylinesVector, PolygonsVector) and ordinary raster MapLayer types (DiscreteRasterMapLayer, ImageRasterMapLayer, SingleBandRasterMapLayer) with an exact current source revision; GDB and other node families are not eligible. Host removes one serialized node from the selected map .vis tree and returns previous/new visualization revisions plus a tree identity delta that removes exactly the target while retaining siblings. Parent adoption is required before updating map revisions and clearing the selected node/frame. This is map-membership removal, not global/project asset deletion: backing files and references from other maps remain. An unknown or unadopted outcome stays locked until exact-map/source readback reconciles it; readback does not substitute for the original commit receipt."
       }
     ],
     "stateInvariants": [
@@ -2270,7 +2305,7 @@
       "source": "EmbeddedResultMesh/Viewport",
       "target": "ExactCellFaceSelection/StoredSeries",
       "cardinality": "result-SHA-flow-area-element-kind-ordinal-and-viewport-generation",
-      "semantics": "Cell polygons and face polylines come from the selected Result's embedded mesh, including source face internal points. A complete bounded viewport can select the original local cell/face ordinal and request its stored HDF series. Oversized extents require zoom and return no selectable partial geometry. Current project geometry is never substituted. This element picker does not establish the original sample-line cross-section workflow or solver acceptance."
+      "semantics": "ResultsWorkspace mounts ResultProfileMeshPicker. Cell polygons and face polylines come from the selected Result HDF embedded mesh, including source face internal points. A complete bounded viewport selects the original local cell/face ordinal and passes it to the existing result.profile HDF series read. Oversized extents require zoom and return no selectable partial geometry. Current project geometry is never substituted; selection does not write. This does not establish the original sample-line cross-section workflow or solver acceptance."
     },
     {
       "id": "geometry-staged-prepare",
@@ -2298,7 +2333,7 @@
       "source": "RasMapIndexTypeName/SerializedNodePath",
       "target": "MapCreationRename/FolderMoveVisibility",
       "cardinality": "project-session-map-index-node-locator-and-visualization-SHA",
-      "semantics": "Source maps have no persisted UUID. The workspace binds an in-memory UUID to the serialized map index and type, preserving that UUID during rename. Backend actions update only the current .vis baseline and retain unknown XML. Native acceptance merges Maps/Symbology while retaining unsaved Views and project metadata. Map writers, raster style writers and result removal are mutually exclusive. Source pin serialization is unavailable; Plan/Geometry trees retain the read-only fallback until their map contexts are implemented."
+      "semantics": "Source maps have no persisted UUID. The workspace binds an in-memory UUID to serialized map index and type, preserving it during rename. Backend actions update only the current .vis baseline and retain unknown XML. Native acceptance merges Maps/Symbology while retaining unsaved Views and project metadata. Map writers and raster style writers are mutually exclusive. The Web removeSourceNode action removes only one eligible ordinary file-backed MapLayer reference from the exact current map .vis after source-revision and visualization-revision checks; it does not delete the backing file or references from other maps and is distinct from global/project asset removal. Source pin serialization is unavailable; Plan/Geometry trees retain the read-only fallback until their map contexts are implemented."
     },
     {
       "id": "geometry-mesh-ledger",
@@ -3279,6 +3314,13 @@
       "target": "PlanComputeDuplex/MapResultLiveCulvertParticleSession/Canvas",
       "cardinality": "project-session-compute-owner-context-run-map-node-slot-zero-output-block-profile-time-viewport-target-generation",
       "semantics": "Only producer callbacks copy the active writer OutputBlock culvert rows and embedded barrel geometry; target changes reuse owned snapshots, including earlier produced profiles. Do not open a second HDF reader or weaken stable Result SHA/read leases. Validate the exact Result or MultiResult owner, selected slot0 Result path, profile name/time, viewport, source ordinal and array counts before rendering. A target-set generation can carry multiple frames or unavailable events; reject lower generations, clear the current frame on unavailable, and retain running frames across ordinary progress updates. Target publication and registry replacement/rejection are ordered atomically. Source/profile errors stay local; target/owner replacement and terminal compute clear the writer state before stable loading resumes. Shared map particle enable/scalar controls both stable and live culverts; generic particle mode/lifetime/count do not alter culvert animation. Owned row payloads use at most 32 MiB of retained memory; later profiles spill to a private temporary binary store indexed by the original profile number. Validity bits distinguish failed rows from valid zeros. Reads reuse this store without touching the active HDF writer, and run disposal closes and removes the temporary store."
+    },
+    {
+      "id": "map-saved-source-node-removal",
+      "source": "MapLayerTree/ExactMapTreeLocator/SourceRevision",
+      "target": "SelectedMapSerializedNode/VisualizationRevision",
+      "cardinality": "project-session-map-identity-vis-revision-locator-source-path-and-source-revision",
+      "semantics": "A map-scoped removeSourceNode transaction removes one supported ordinary vector or raster MapLayer reference from one saved map tree. The Host verifies the source identity and .vis revision, then confirms the exact target identity count decreases by one while sibling identities remain. The parent must adopt the receipt before refreshing map documents and clearing selection/render captures. Source files and other maps are untouched. Unknown or unadopted outcomes require exact map/source reconciliation and cannot be retried blindly; this is distinct from global/project asset removal."
     }
   ],
   "stateScopes": [

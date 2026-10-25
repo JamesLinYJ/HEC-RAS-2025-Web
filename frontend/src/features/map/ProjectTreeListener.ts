@@ -19,6 +19,209 @@ export interface MapTreeSnapshot {
   hiddenLayerIDs: string[];
 }
 
+export interface MapSourceRemovalCandidate {
+  sourcePath: string;
+  sourceRevision: string;
+  nodeType: 'MapLayer';
+  mapType: string;
+}
+
+export type MapSourceRemovalCheck =
+  | { canRemove: true; candidate: MapSourceRemovalCandidate }
+  | { canRemove: false; reason: 'unsupported' | 'missing-source' | 'stale-source' };
+
+const removableVectorMapTypes = new Set(['PointsVector', 'PolylinesVector', 'PolygonsVector']);
+const removableRasterMapTypes = new Set(['DiscreteRasterMapLayer', 'ImageRasterMapLayer', 'SingleBandRasterMapLayer']);
+const sha256Pattern = /^[\da-f]{64}$/i;
+
+function stableJSON(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableJSON).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${stableJSON(record[key])}`).join(',')}}`;
+}
+
+function normalizedPath(value: string): string {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
+  return /^[a-z]:\//i.test(normalized) || normalized.startsWith('//') ? normalized.toLowerCase() : normalized;
+}
+
+function sameSourcePath(left: string, right: string): boolean {
+  return normalizedPath(left) === normalizedPath(right);
+}
+
+function isAbsoluteSourcePath(value: string): boolean {
+  return value.startsWith('/') || value.startsWith('\\\\') || /^[a-z]:[\\/]/i.test(value);
+}
+
+/** Keep removal limited to serialized sources whose exact source revision is already in this tree. */
+export function mapSourceRemovalCheck(
+  node: CatalogTreeNode | null,
+  parent: CatalogTreeNode | null,
+  capturedSourceRevision?: string | null,
+): MapSourceRemovalCheck {
+  const locator = node?.locator;
+  if (!node || !locator || locator.nodeType !== 'MapLayer' || !Array.isArray(locator.nodePath) ||
+      locator.nodePath.length < 2 || locator.nodePath.some(index => !Number.isInteger(index) || index < 0) ||
+      !locator.rootName.trim() || !locator.nodeName.trim() || locator.nodeName !== node.name ||
+      !locator.mapType?.trim() || !locator.filename?.trim() && !locator.filenameRelative?.trim()) {
+    return { canRemove: false, reason: 'unsupported' };
+  }
+
+  const mapType = locator.mapType;
+  const vector = removableVectorMapTypes.has(mapType);
+  const raster = removableRasterMapTypes.has(mapType);
+  if (!vector && !raster) return { canRemove: false, reason: 'unsupported' };
+
+  const sourcePath = node.assetID?.trim() ?? '';
+  const sourceIdentity = node.diagnosticSourceIdentity?.trim() ?? '';
+  const diagnosticRevision = node.diagnosticSourceRevision?.trim() ?? '';
+  const capturedRevision = capturedSourceRevision?.trim() ?? '';
+  if (diagnosticRevision && capturedRevision && diagnosticRevision.toUpperCase() !== capturedRevision.toUpperCase()) {
+    return { canRemove: false, reason: 'stale-source' };
+  }
+  const sourceRevision = diagnosticRevision || capturedRevision;
+  if (!sourcePath || !sourceRevision || (!sourceIdentity && !capturedRevision) ||
+      !isAbsoluteSourcePath(sourcePath) || sourceIdentity && !sameSourcePath(sourceIdentity, sourcePath)) {
+    return { canRemove: false, reason: 'missing-source' };
+  }
+
+  const lowerPath = sourcePath.toLocaleLowerCase();
+  if (lowerPath.endsWith('.gdb') || parent?.locator?.nodeType === 'GdbDataset') {
+    return { canRemove: false, reason: 'unsupported' };
+  }
+  if (vector) {
+    if (!sha256Pattern.test(sourceRevision) || !/\.(json|geojson)$/i.test(sourcePath)) {
+      return { canRemove: false, reason: 'stale-source' };
+    }
+  } else if (!sha256Pattern.test(sourceRevision)) {
+    return { canRemove: false, reason: 'stale-source' };
+  }
+
+  return { canRemove: true, candidate: { sourcePath, sourceRevision, nodeType: 'MapLayer', mapType } };
+}
+
+function exactLocatorKey(locator: CatalogTreeNodeLocator): string {
+  return stableJSON(locator);
+}
+
+function locatorIdentityKey(locator: CatalogTreeNodeLocator): string {
+  const identity = { ...locator } as Record<string, unknown>;
+  delete identity.nodePath;
+  delete identity.parentGeometryNodePath;
+  delete identity.parentPlanNodePath;
+  delete identity.parentResultNodePath;
+  return stableJSON(identity);
+}
+
+function treeIdentityCounts(roots: CatalogTreeNode[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  const visit = (nodes: CatalogTreeNode[]): void => {
+    for (const node of nodes) {
+      const key = node.locator
+        ? 'locator:' + locatorIdentityKey(node.locator)
+        : 'unlocated:' + stableJSON({ sourceClass: node.sourceClass, name: node.name, assetID: node.assetID ?? null });
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      if (node.children?.length) visit(node.children);
+    }
+  };
+  visit(roots);
+  return counts;
+}
+
+export function mapTreeSourceIdentityCount(roots: CatalogTreeNode[], locator: CatalogTreeNodeLocator): number {
+  return treeIdentityCounts(roots).get('locator:' + locatorIdentityKey(locator)) ?? 0;
+}
+
+export function sameMapTreeSourceIdentity(left: CatalogTreeNodeLocator, right: CatalogTreeNodeLocator): boolean {
+  return locatorIdentityKey(left) === locatorIdentityKey(right);
+}
+
+export function mapTreeRemovalDeltaMatches(
+  beforeRoots: CatalogTreeNode[],
+  afterRoots: CatalogTreeNode[],
+  locator: CatalogTreeNodeLocator,
+): boolean {
+  const before = treeIdentityCounts(beforeRoots);
+  const after = treeIdentityCounts(afterRoots);
+  const targetKey = 'locator:' + locatorIdentityKey(locator);
+  const beforeTarget = before.get(targetKey) ?? 0;
+  if (beforeTarget < 1 || (after.get(targetKey) ?? 0) !== beforeTarget - 1) return false;
+  for (const [key, count] of before) {
+    if ((after.get(key) ?? 0) !== (key === targetKey ? count - 1 : count)) return false;
+  }
+  for (const [key, count] of after) if (!before.has(key) && count > 0) return false;
+  return true;
+}
+
+function isCatalogTreeNode(value: unknown): value is CatalogTreeNode {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const node = value as Record<string, unknown>;
+  if (typeof node.id !== 'string' || !node.id.trim() || typeof node.sourceClass !== 'string' ||
+      typeof node.name !== 'string' || !node.name.trim() ||
+      (node.children !== undefined && node.children !== null &&
+        (!Array.isArray(node.children) || !node.children.every(isCatalogTreeNode)))) return false;
+  if (node.locator === undefined || node.locator === null) return true;
+  if (typeof node.locator !== 'object' || Array.isArray(node.locator)) return false;
+  const locator = node.locator as Record<string, unknown>;
+  return typeof locator.rootName === 'string' && Boolean(locator.rootName.trim()) &&
+    typeof locator.nodeType === 'string' && Boolean(locator.nodeType.trim()) &&
+    typeof locator.nodeName === 'string' && Boolean(locator.nodeName.trim()) &&
+    (locator.nodePath === undefined || locator.nodePath === null ||
+      Array.isArray(locator.nodePath) && locator.nodePath.every(index => Number.isInteger(index) && Number(index) >= 0));
+}
+
+export function mapTreeExactLocatorCount(roots: CatalogTreeNode[], locator: CatalogTreeNodeLocator): number {
+  let count = 0;
+  const visit = (nodes: CatalogTreeNode[]): void => {
+    for (const node of nodes) {
+      if (node.locator && exactLocatorKey(node.locator) === exactLocatorKey(locator)) count += 1;
+      if (node.children?.length) visit(node.children);
+    }
+  };
+  visit(roots);
+  return count;
+}
+
+function validateMapTreeRemovalReceipt(
+  value: unknown,
+  tab: MapDocumentTab,
+  locator: CatalogTreeNodeLocator,
+): MapTreeSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('地图移除回执不是有效对象。');
+  }
+  const result = value as Record<string, unknown>;
+  if (!Array.isArray(result.roots) ||
+      typeof result.previousVisualizationRevision !== 'string' || !sha256Pattern.test(result.previousVisualizationRevision) ||
+      typeof result.visualizationRevision !== 'string' || !sha256Pattern.test(result.visualizationRevision) ||
+      result.previousVisualizationRevision.toUpperCase() !== tab.visualizationRevision?.toUpperCase() ||
+      result.visualizationRevision.toUpperCase() === result.previousVisualizationRevision.toUpperCase() ||
+      !Array.isArray(result.expandedNodeIDs) || !result.expandedNodeIDs.every(id => typeof id === 'string') ||
+      !(result.selectedNodeID === null || typeof result.selectedNodeID === 'string') ||
+      !Array.isArray(result.hiddenLayerIDs) || !result.hiddenLayerIDs.every(id => typeof id === 'string') ||
+      !result.roots.every(isCatalogTreeNode)) {
+    throw new Error('地图移除回执与当前 .vis 修订或图层树结构不匹配。');
+  }
+
+  const roots = result.roots as CatalogTreeNode[];
+  if (!mapTreeRemovalDeltaMatches(tab.roots, roots, locator)) {
+    throw new Error('地图树回执没有精确移除一个目标来源；请重新读取地图核对。');
+  }
+
+  const exactBeforeCount = mapTreeExactLocatorCount(tab.roots, locator);
+  if (exactBeforeCount !== 1) throw new Error('当前地图中找不到唯一的精确来源节点；请重新读取地图。');
+
+  return {
+    roots,
+    previousVisualizationRevision: result.previousVisualizationRevision,
+    visualizationRevision: result.visualizationRevision,
+    expandedNodeIDs: result.expandedNodeIDs as string[],
+    selectedNodeID: result.selectedNodeID as string | null,
+    hiddenLayerIDs: result.hiddenLayerIDs as string[],
+  };
+}
+
 export interface MapDocumentSummary {
   mapIndex: number;
   mapName: string;
@@ -248,6 +451,46 @@ export async function setMapNodeVisibility(
     throw new Error('The visibility receipt does not match the saved map visualization revision.');
   }
   return result;
+}
+
+/** Removes one persisted layer node from one saved map; the source file itself is never changed. */
+export async function removeMapSourceNode(
+  backend: BackendGateway,
+  context: WorkbenchContext,
+  tab: MapDocumentTab,
+  node: CatalogTreeNode,
+  candidate: MapSourceRemovalCandidate,
+  resultTreeSelections?: Record<string, unknown>[],
+): Promise<MapTreeSnapshot> {
+  if (!backend.supports('map.tree.perform')) throw new BackendOperationUnavailableError('map.tree.perform');
+  if (!context.projectPath || !context.projectRevision || !context.projectXml || !context.projectSessionID.trim()) {
+    throw new Error('移除地图来源需要当前已保存工程会话、.ras XML 和工程修订。');
+  }
+  if (!tab.mapID.trim() || !Number.isInteger(tab.mapIndex) || tab.mapIndex < 0 ||
+      !tab.name.trim() || !tab.mapType.trim() || !tab.visualizationRevision ||
+      !sha256Pattern.test(tab.visualizationRevision)) {
+    throw new Error('当前地图身份或 .vis 修订不完整，无法安全移除。');
+  }
+  const locator = node.locator;
+  const currentCheck = mapSourceRemovalCheck(node, null, candidate.sourceRevision);
+  if (!locator || !currentCheck.canRemove || currentCheck.candidate.sourcePath !== candidate.sourcePath ||
+      currentCheck.candidate.sourceRevision.toUpperCase() !== candidate.sourceRevision.toUpperCase() ||
+      currentCheck.candidate.mapType !== candidate.mapType || candidate.nodeType !== 'MapLayer' ||
+      mapTreeExactLocatorCount(tab.roots, locator) !== 1) {
+    throw new Error('选中的地图来源或来源修订已变化；请重新读取地图树后再操作。');
+  }
+
+  const result = await backend.request<unknown>('map.tree.perform', {
+    map: {
+      ...mapTreeRequest(context, tab, await projectXmlSha(context.projectXml)),
+      ...(resultTreeSelections ? { resultSelectionOverrides: resultTreeSelections } : {}),
+    },
+    action: 'removeSourceNode',
+    node: locator,
+    sourcePath: candidate.sourcePath,
+    sourceRevision: candidate.sourceRevision,
+  });
+  return validateMapTreeRemovalReceipt(result, tab, locator);
 }
 
 export async function reloadMapTree(

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent as ReactChangeEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
-import { text } from '../../shared/workbench';
+import { errorDiagnostics, text } from '../../shared/workbench';
+import type { MapVisualizationCommitReceipt, MapVisualizationTarget } from '../../shared/workbench';
 import { DEFAULT_BACKGROUND_MAPS_VM_STATE, isBackgroundMapDraftDirty } from './BackgroundMapsVM';
 import type { BackgroundMapsVMState } from './BackgroundMapsVM';
 import { MapDocumentTabs } from './MapDocumentTabs';
@@ -19,7 +20,10 @@ import { MapTimeAxis } from './MapTimeAxis';
 import { MapToolsToolbar } from './MapToolsToolbar';
 import type { MapToolID } from './MapToolsVM';
 import { extentOfFeatures, parseGeoJsonFile, unionExtents } from './geoJson';
-import { hasProject, loadMapDocumentCatalog, setMapNodeVisibility } from './ProjectTreeListener';
+import { hasProject, loadMapDocumentCatalog, mapSourceRemovalCheck, mapTreeExactLocatorCount,
+  mapTreeRemovalDeltaMatches, mapTreeSourceIdentityCount, sameMapTreeSourceIdentity,
+  removeMapSourceNode, setMapNodeVisibility } from './ProjectTreeListener';
+import type { MapSourceRemovalCandidate, MapTreeSnapshot } from './ProjectTreeListener';
 import { fitExtent, INITIAL_VIEWPORT, panViewport, screenToWorld, zoomAt } from './mapViewport';
 import type { MapViewport } from './mapViewport';
 import { RasProjectMap } from './RasProjectMap';
@@ -31,6 +35,7 @@ import type { VectorLayerSource } from './vector-render/vectorRenderTypes';
 import { usePersistedGdbLayers } from './usePersistedGdbLayers';
 import { useMapVelocityField } from './useMapVelocityField';
 import { usePersistedRasterLayers, mapRasterViewportFromCamera } from './usePersistedRasterLayers';
+import type { PersistedRasterLayerImage } from './usePersistedRasterLayers';
 import { useMapResultFrames } from './useMapResultFrames';
 import { useAssociatedMapLayers } from './useAssociatedMapLayers';
 import { mapCatalogMatchesDocument, sameMapID, sameMapLocator, stableMapValue } from './associatedMapLayers';
@@ -59,7 +64,7 @@ import { RasMapPositionIndicator } from './RasMapPositionIndicator';
 import { RasMapUndoRedo } from './RasMapUndoRedo';
 import { ZoomToPointDialog } from './ZoomToPointDialog';
 import { navigationViewport } from './mapNavigation';
-import type { CatalogTreeNode, GeoFeature, GeoGeometry, GeoJsonLayer, MapDocumentTab, MapImageLayer, XY } from './mapTypes';
+import type { CatalogTreeNode, CatalogTreeNodeLocator, GeoFeature, GeoGeometry, GeoJsonLayer, MapDocumentTab, MapImageLayer, XY } from './mapTypes';
 import type { MapFeaturePageProps } from './mapTypes';
 import { calculatorLayerMatchesMap } from '../../shared/rasterCalculatorSession';
 import type { RasterCalculatorSessionLayer } from '../../shared/rasterCalculatorSession';
@@ -93,6 +98,25 @@ interface FeatureContextMenu {
   feature: GeoFeature;
 }
 
+interface MapSourceRemovalNotice {
+  projectKey: string;
+  mapID: string;
+  mapIndex: number;
+  mapName: string;
+  mapType: string;
+  locator: CatalogTreeNodeLocator;
+  sourcePath: string;
+  sourceRevision: string;
+  beforeRoots: CatalogTreeNode[];
+  previousVisualizationRevision: string;
+  state: 'committed' | 'receiptNotAdopted' | 'uncertain' | 'reconciledAbsent' | 'inconclusive' | 'resolvedPresent';
+  message: string;
+  needsReconcile: boolean;
+  terminalConfirmed: boolean;
+  receipt?: MapVisualizationCommitReceipt;
+  diagnostic?: unknown;
+}
+
 interface PendingCalculatorMapFocus {
   requestID: string;
   layerID: string;
@@ -107,6 +131,73 @@ function catalogHasNodeType(nodes: readonly CatalogTreeNode[], nodeID: string, n
     if (node.children?.length && catalogHasNodeType(node.children, nodeID, nodeType)) return true;
   }
   return false;
+}
+
+function findCatalogNode(nodes: readonly CatalogTreeNode[], nodeID: string, parent: CatalogTreeNode | null = null):
+  { node: CatalogTreeNode; parent: CatalogTreeNode | null } | null {
+  for (const node of nodes) {
+    if (node.id === nodeID) return { node, parent };
+    if (node.children?.length) {
+      const nested = findCatalogNode(node.children, nodeID, node);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function findCatalogNodesByIdentity(nodes: readonly CatalogTreeNode[], locator: CatalogTreeNodeLocator): CatalogTreeNode[] {
+  const matches: CatalogTreeNode[] = [];
+  const visit = (items: readonly CatalogTreeNode[]) => {
+    for (const node of items) {
+      if (node.locator && sameMapTreeSourceIdentity(node.locator, locator)) matches.push(node);
+      if (node.children?.length) visit(node.children);
+    }
+  };
+  visit(nodes);
+  return matches;
+}
+
+function capturedRasterRemovalRevision(
+  node: CatalogTreeNode | null,
+  parent: CatalogTreeNode | null,
+  layers: readonly PersistedRasterLayerImage[],
+  context: MapFeaturePageProps['context'],
+  document: MapDocumentTab | null,
+): string | null {
+  const locator = node?.locator;
+  const sourcePath = node?.assetID?.trim();
+  if (!node || !locator || locator.nodeType !== 'MapLayer' || !locator.mapType || !sourcePath || !document ||
+      locator.mapType === 'GdbRasterMapLayer' || parent?.locator?.nodeType === 'GdbDataset') return null;
+  const layer = layers.find(candidate => candidate.treeNodeID === node.id);
+  if (!layer || layer.projectSessionID !== context.projectSessionID || layer.projectRevision !== context.projectRevision ||
+      layer.visualizationRevision !== document.visualizationRevision || layer.sourcePath !== sourcePath ||
+      layer.hoverCapture.treeNodeID !== node.id || layer.hoverCapture.kind !== 'raster' ||
+      layer.hoverCapture.sourcePath !== sourcePath || layer.hoverCapture.mapType !== locator.mapType ||
+      !sameMapLocator(layer.hoverCapture.node, locator) || !/^[\da-f]{64}$/i.test(layer.sourceRevision) ||
+      layer.hoverCapture.sourceRevision.toUpperCase() !== layer.sourceRevision.toUpperCase()) return null;
+
+  const source = layer.hoverCapture.rasterSource;
+  if (source.projectPath !== context.projectPath ||
+      source.sourceMapID !== document.mapID || source.mapIndex !== document.mapIndex ||
+      source.mapName !== document.name || source.mapType !== document.mapType ||
+      source.nodeName !== locator.nodeName || source.mapLayerType !== locator.mapType ||
+      source.sourcePath !== sourcePath || source.sourceRevision !== layer.sourceRevision ||
+      String(source.visualizationRevision ?? '').toUpperCase() !== (document.visualizationRevision ?? '').toUpperCase() ||
+      source.filename !== locator.filename ||
+      (source.filenameRelative ?? null) !== (locator.filenameRelative ?? null) ||
+      JSON.stringify(source.nodePath ?? null) !== JSON.stringify(locator.nodePath ?? null)) return null;
+  return layer.sourceRevision;
+}
+
+function sameRemovalMap(notice: MapSourceRemovalNotice, document: MapDocumentTab): boolean {
+  return sameMapID(notice.mapID, document.mapID) && notice.mapIndex === document.mapIndex &&
+    notice.mapName === document.name && notice.mapType === document.mapType;
+}
+
+function terminalRemovalFailure(error: unknown): boolean {
+  const diagnostics = errorDiagnostics(error);
+  return Boolean(diagnostics && typeof diagnostics === 'object' &&
+    (diagnostics as Record<string, unknown>).terminalConfirmed === true);
 }
 
 interface MapEditSnapshot {
@@ -237,13 +328,19 @@ function mapToolHelp(tool: MapToolID, language: 'zh' | 'en'): string {
 }
 
 function MapPage(props: MapFeaturePageProps) {
-  const { language, context, backend, backendRevision, onDirtyStateChange } = props;
+  const { language, context, backend, backendRevision, onDirtyStateChange,
+    onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation } = props;
+  const projectContextKey = JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml]);
+  const mapRemovalProjectScope = JSON.stringify([projectContextKey, stableMapValue(context.coreLayerContext ?? null)]);
   const [documents, setDocuments] = useState<MapDocumentTab[]>([]);
   const [activeDocumentID, setActiveDocumentID] = useState<string | null>(null);
   const [mapCatalogLoading, setMapCatalogLoading] = useState(false);
   const [viewCommitBusy, setViewCommitBusy] = useState(false);
   const [vectorCommitBusy, setVectorCommitBusy] = useState(false);
-  const mapMetadataCommitBusy = viewCommitBusy || vectorCommitBusy;
+  const [mapSourceRemovalBusy, setMapSourceRemovalBusy] = useState(false);
+  const [mapSourceRemovalNotice, setMapSourceRemovalNotice] = useState<MapSourceRemovalNotice | null>(null);
+  const mapRemovalNeedsReconcile = Boolean(mapSourceRemovalNotice?.projectKey === mapRemovalProjectScope && mapSourceRemovalNotice.needsReconcile);
+  const mapMetadataCommitBusy = viewCommitBusy || vectorCommitBusy || mapSourceRemovalBusy || mapRemovalNeedsReconcile;
   const [vectorPreview, setVectorPreview] = useState<MapVectorPreview | null>(null);
   const [vectorSettingsEpoch, setVectorSettingsEpoch] = useState(0);
   const [mapCatalogError, setMapCatalogError] = useState<unknown>(null);
@@ -284,7 +381,8 @@ function MapPage(props: MapFeaturePageProps) {
   const activeOwnerRef = useRef<string | null>(null);
   const handledCalculatorFocusRequestRef = useRef<string | null>(null);
   const preparedCalculatorFocusRequestRef = useRef<string | null>(null);
-  const projectContextKey = JSON.stringify([context.projectSessionID, context.projectPath, context.projectRevision, context.projectXml]);
+  const mapRemovalProjectScopeRef = useRef(mapRemovalProjectScope);
+  mapRemovalProjectScopeRef.current = mapRemovalProjectScope;
   const projectContextKeyRef = useRef(projectContextKey);
   projectContextKeyRef.current = projectContextKey;
   const [mapReloadKey, setMapReloadKey] = useState(0);
@@ -293,6 +391,8 @@ function MapPage(props: MapFeaturePageProps) {
   const activeDocument = documents.find((document) => document.id === activeDocumentID) ?? null;
   const activeDocumentRef = useRef(activeDocument);
   activeDocumentRef.current = activeDocument;
+  const selectedBackendNodeRef = useRef(selectedBackendNode);
+  selectedBackendNodeRef.current = selectedBackendNode;
   const loadedCatalogProjectRef = useRef<string | null>(null);
   const rememberedMapSelectionRef = useRef<{ projectKey: string; mapIndex: number; name: string; mapType: string } | null>(null);
   if (activeDocument && loadedCatalogProjectRef.current === projectContextKey) {
@@ -486,6 +586,31 @@ function MapPage(props: MapFeaturePageProps) {
   const mapTreeDocument = useMemo(() => activeDocument && mapCatalogMatchesDocument(resultFrames.sources, context, activeDocument)
     ? { ...activeDocument, roots: resultFrames.sources.treeRoots } : activeDocument,
   [activeDocument, context.projectPath, context.projectRevision, resultFrames.sources]);
+  const selectedRemovalEntry = mapTreeDocument && selectedBackendNodeID
+    ? findCatalogNode(mapTreeDocument.roots, selectedBackendNodeID) : null;
+  const mapRemovalAvailable = Boolean(context.projectPath && context.projectXml && context.projectRevision &&
+    context.projectSessionID.trim() && activeDocument?.visualizationRevision && backend.supports('map.tree.perform') &&
+    backend.supports('map.document.list') && backend.supports('map.tree.load') && !mapCatalogLoading && !mapCatalogError &&
+    !sourceImportBusy && !mapRemovalNeedsReconcile && onBeginMapVisualizationMutation &&
+    onCommitMapVisualization && onEndMapVisualizationMutation);
+  const mapRemovalCallbacksUnavailable = !onBeginMapVisualizationMutation || !onCommitMapVisualization || !onEndMapVisualizationMutation;
+  const activeMapRemovalNotice = mapSourceRemovalNotice && mapSourceRemovalNotice.projectKey === mapRemovalProjectScope &&
+    activeDocument && sameRemovalMap(mapSourceRemovalNotice, activeDocument) ? mapSourceRemovalNotice : null;
+  const mapRemovalLockedForSelection = Boolean(activeMapRemovalNotice?.needsReconcile && selectedRemovalEntry?.node.locator &&
+    sameMapTreeSourceIdentity(activeMapRemovalNotice.locator, selectedRemovalEntry.node.locator));
+  const mapRemovalBlockedReason = mapRemovalLockedForSelection
+    ? text(language, '此来源的移除结果尚未核对。请先重新读取当前地图；核对前不能再次移除。',
+      'The previous removal has not been reconciled. Reread this map before trying again.') : undefined;
+  const mapRemovalUnavailableReason = mapRemovalNeedsReconcile
+    ? text(language, '移除结果未核对；请先重新读取当前地图。在核对完成前，已暂停本工程的地图写入。',
+      'The removal outcome has not been reconciled. Reread this map first; map writes are paused for this project until then.')
+    : mapRemovalCallbacksUnavailable
+    ? text(language, '当前工作区没有可用的地图写入保护，无法安全移除。',
+      'The workspace map-write guard is unavailable.')
+    : !mapRemovalAvailable
+      ? text(language, '需要已保存的工程会话和可读取的地图目录。',
+        'A saved project session and readable map catalog are required.')
+      : undefined;
   const velocityField = useMapVelocityField({ backend, context, document: activeDocument, controller: resultFrames,
     viewport: resultViewport, enabled: settings.IsMapOverlayVisible && settings.showVelocityArrows, language });
   const allMapLayers = useMemo(() => [...persistedVectors.layers, ...persistedGdb.layers, ...activeLayers], [persistedVectors.layers, persistedGdb.layers, activeLayers]);
@@ -998,7 +1123,7 @@ function MapPage(props: MapFeaturePageProps) {
   };
 
   const toggleBackendNode = async (node: import('./mapTypes').CatalogTreeNode, checked: boolean) => {
-    if (sourceImportBusy) return;
+    if (sourceImportBusy || mapMetadataCommitBusy) return;
     if (!activeDocument || !node.locator) return;
     const selectedDocument = activeDocument;
     const requestContextKey = projectContextKey;
@@ -1040,6 +1165,214 @@ function MapPage(props: MapFeaturePageProps) {
       if (projectContextKeyRef.current === requestContextKey) setStatusMessage(mapError(language, error) + recoveryMessage);
     } finally {
       if (projectContextKeyRef.current === requestContextKey) setBusyNodeID(null);
+    }
+  };
+
+  const clearRemovedMapLayerSelection = (nodeID: string) => {
+    if (selectedBackendNodeRef.current?.nodeID === nodeID) setSelectedBackendNode(null);
+    setSelectedFeature(current => current?.layerID === nodeID ? null : current);
+    setHoverPointer(null);
+    setCursorScreen(null);
+    setContextMenu(null);
+    if (symbologySourceRef.current?.nodeID === nodeID) {
+      symbologySourceRef.current = null;
+      setAppliedLegend(null);
+    }
+  };
+
+  const removeBackendNodeFromMap = async (node: CatalogTreeNode) => {
+    const sourceContext = context;
+    const sourceProjectKey = projectContextKey;
+    const sourceScope = mapRemovalProjectScope;
+    const targetDocument = activeDocumentRef.current;
+    const displayedDocument = mapTreeDocument;
+    const locator = node.locator;
+    const selectedParent = selectedRemovalEntry?.node.id === node.id ? selectedRemovalEntry.parent : null;
+    const capturedRasterRevision = capturedRasterRemovalRevision(node, selectedParent, persistedRasters.layers, sourceContext, targetDocument);
+    const eligibility = mapSourceRemovalCheck(node, selectedParent, capturedRasterRevision);
+    if (!mapRemovalAvailable || !targetDocument || !displayedDocument || !locator || !eligibility.canRemove ||
+        selectedBackendNodeRef.current?.nodeID !== node.id || !sourceContext.projectPath || !sourceContext.projectXml ||
+        !sourceContext.projectRevision || !sourceContext.projectSessionID.trim() ||
+        !sameMapID(targetDocument.mapID, displayedDocument.mapID) || targetDocument.mapIndex !== displayedDocument.mapIndex ||
+        targetDocument.name !== displayedDocument.name || targetDocument.mapType !== displayedDocument.mapType ||
+        mapTreeExactLocatorCount(displayedDocument.roots, locator) !== 1 || sourceImportBusy || busyNodeID !== null ||
+        mapMetadataCommitBusy || mapCatalogLoading) return;
+
+    const target: MapVisualizationTarget = {
+      mapID: targetDocument.mapID,
+      mapIndex: targetDocument.mapIndex,
+      name: targetDocument.name,
+      mapType: targetDocument.mapType,
+      visualizationRevision: targetDocument.visualizationRevision,
+    };
+    const leaseID = onBeginMapVisualizationMutation?.(sourceContext, target, 'map.write:' + sourceProjectKey) ?? null;
+    if (!leaseID) {
+      setStatusMessage(text(language, '工程或地图存在其他写入/草稿，当前无法安全移除。',
+        'Another project or map write is active; this source cannot be removed safely now.'));
+      return;
+    }
+
+    const candidate: MapSourceRemovalCandidate = eligibility.candidate;
+    const beforeRoots = displayedDocument.roots;
+    const previousVisualizationRevision = targetDocument.visualizationRevision;
+    const currentBeforeRequest = () => projectContextKeyRef.current === sourceProjectKey &&
+      mapRemovalProjectScopeRef.current === sourceScope &&
+      activeDocumentRef.current?.id === targetDocument.id &&
+      activeDocumentRef.current?.visualizationRevision?.toUpperCase() === target.visualizationRevision?.toUpperCase();
+    setMapSourceRemovalBusy(true);
+    setBusyNodeID(node.id);
+    setMapSourceRemovalNotice(null);
+    setStatusMessage('');
+    let validReceipt: MapTreeSnapshot | null = null;
+    try {
+      if (!currentBeforeRequest()) throw new Error('当前工程会话或地图修订已变化，移除请求未发送。');
+      const selections = mapCatalogMatchesDocument(resultFrames.sources, sourceContext, displayedDocument)
+        ? resultFrames.sources.treeSelectionOverrides : undefined;
+      const capturedTab = { ...targetDocument, roots: beforeRoots };
+      const result = await removeMapSourceNode(backend, sourceContext, capturedTab, node, candidate, selections);
+      validReceipt = result;
+      const receipt: MapVisualizationCommitReceipt = {
+        mapIndex: targetDocument.mapIndex,
+        mapName: targetDocument.name,
+        mapType: targetDocument.mapType,
+        previousVisualizationRevision: result.previousVisualizationRevision,
+        visualizationRevision: result.visualizationRevision,
+      };
+      let adopted = false;
+      let adoptionError: unknown = null;
+      try {
+        adopted = onCommitMapVisualization?.(sourceContext, target, receipt, leaseID) ?? false;
+      } catch (error) {
+        adoptionError = error;
+      }
+      if (!adopted) {
+        const message = adoptionError
+          ? text(language, '移除已收到有效服务回执，但当前工作区未接纳该地图修订；请重新读取并核对。',
+            'The service confirmed removal, but the workspace did not adopt the map revision. Reread and reconcile it.')
+          : text(language, '移除已收到有效服务回执，但当前工作区已变化，回执未被接纳；请重新读取并核对。',
+            'The service confirmed removal, but the active workspace changed and did not adopt the receipt. Reread and reconcile it.');
+        setMapSourceRemovalNotice({ projectKey: sourceScope, mapID: target.mapID, mapIndex: target.mapIndex,
+          mapName: target.name, mapType: target.mapType, locator, sourcePath: candidate.sourcePath,
+          sourceRevision: candidate.sourceRevision, beforeRoots, previousVisualizationRevision: previousVisualizationRevision!,
+          state: 'receiptNotAdopted', message, needsReconcile: true, terminalConfirmed: true, receipt });
+        setStatusMessage(message);
+        return;
+      }
+
+      setVisualizationRevision(result.visualizationRevision);
+      setMapCatalogError(null);
+      setDocuments(current => current.map(document => document.id === targetDocument.id
+        ? { ...document, roots: result.roots, visualizationRevision: result.visualizationRevision, visibilityTransition: null, treeError: undefined }
+        : { ...document, visualizationRevision: result.visualizationRevision, visibilityTransition: null }));
+      clearRemovedMapLayerSelection(node.id);
+      const message = text(language, '已从当前地图移除该来源；磁盘上的源文件保持不变。',
+        'The source was removed from this map. Its file on disk was left unchanged.');
+      setMapSourceRemovalNotice({ projectKey: sourceScope, mapID: target.mapID, mapIndex: target.mapIndex,
+        mapName: target.name, mapType: target.mapType, locator, sourcePath: candidate.sourcePath,
+        sourceRevision: candidate.sourceRevision, beforeRoots, previousVisualizationRevision: previousVisualizationRevision!,
+        state: 'committed', message, needsReconcile: false, terminalConfirmed: true, receipt });
+      setStatusMessage(message);
+    } catch (error) {
+      const terminalConfirmed = terminalRemovalFailure(error);
+      const message = text(language,
+        terminalConfirmed
+          ? '服务确认本次移除未提交；请重新读取地图，确认来源仍在后再重试。'
+          : '移除请求的最终结果尚不确定；请重新读取当前地图并核对，核对前不要重试。',
+        terminalConfirmed
+          ? 'The service confirmed that this removal was not committed. Reread the map and confirm the source remains before retrying.'
+          : 'The final outcome of this removal is unknown. Reread this map and reconcile it before retrying.');
+      setMapSourceRemovalNotice({ projectKey: sourceScope, mapID: target.mapID, mapIndex: target.mapIndex,
+        mapName: target.name, mapType: target.mapType, locator, sourcePath: candidate.sourcePath,
+        sourceRevision: candidate.sourceRevision, beforeRoots, previousVisualizationRevision: previousVisualizationRevision!,
+        state: validReceipt ? 'receiptNotAdopted' : 'uncertain', message, needsReconcile: true,
+        terminalConfirmed, ...(validReceipt ? { receipt: {
+          mapIndex: target.mapIndex, mapName: target.name, mapType: target.mapType,
+          previousVisualizationRevision: validReceipt.previousVisualizationRevision,
+          visualizationRevision: validReceipt.visualizationRevision,
+        } } : {}), diagnostic: errorDiagnostics(error) });
+      setStatusMessage(message);
+    } finally {
+      setBusyNodeID(null);
+      setMapSourceRemovalBusy(false);
+      onEndMapVisualizationMutation?.(leaseID);
+    }
+  };
+
+  const reconcileMapSourceRemoval = async () => {
+    const notice = mapSourceRemovalNotice;
+    if (!notice?.needsReconcile || notice.projectKey !== mapRemovalProjectScope || mapSourceRemovalBusy || mapCatalogLoading ||
+        !context.projectPath || !context.projectRevision) return;
+    const requestProjectKey = projectContextKey;
+    const requestScope = mapRemovalProjectScope;
+    const currentTarget = activeDocumentRef.current;
+    if (!currentTarget || !sameRemovalMap(notice, currentTarget)) return;
+    setMapSourceRemovalBusy(true);
+    setStatusMessage(text(language, '正在重新读取工程地图并核对来源节点…', 'Rereading saved maps to reconcile the source node…'));
+    try {
+      const catalog = await loadMapDocumentCatalog(backend, context);
+      if (projectContextKeyRef.current !== requestProjectKey || mapRemovalProjectScopeRef.current !== requestScope ||
+          activeDocumentRef.current?.id !== currentTarget.id) return;
+      const refreshedTarget = catalog.documents.find(document => sameMapID(document.mapID, notice.mapID) &&
+        document.mapIndex === notice.mapIndex && document.name === notice.mapName && document.mapType === notice.mapType);
+      if (!refreshedTarget) throw new Error('重新读取后找不到原地图标签，无法核对本次来源变更。');
+      setDocuments(catalog.documents);
+      setVisualizationRevision(catalog.visualizationRevision);
+      setMapCatalogError(null);
+      const deltaMatches = mapTreeRemovalDeltaMatches(notice.beforeRoots, refreshedTarget.roots, notice.locator);
+      const revisionChanged = Boolean(refreshedTarget.visualizationRevision &&
+        refreshedTarget.visualizationRevision.toUpperCase() !== notice.previousVisualizationRevision.toUpperCase());
+      if (deltaMatches && revisionChanged) {
+        const message = text(language,
+          '重新读取确认：该来源节点已从当前地图树中消失，兄弟节点保持不变。此状态来自读回核对，不是本次操作回执。',
+          'Reread confirms that this source node is absent and sibling nodes remain unchanged. This is readback reconciliation, not a receipt for this request.');
+        setMapSourceRemovalNotice({ ...notice, state: 'reconciledAbsent', message, needsReconcile: false });
+        const selected = selectedBackendNodeRef.current;
+        if (selected?.owner === owner) {
+          const previousSelection = findCatalogNode(notice.beforeRoots, selected.nodeID)?.node;
+          if (previousSelection?.locator && sameMapTreeSourceIdentity(previousSelection.locator, notice.locator)) {
+            clearRemovedMapLayerSelection(selected.nodeID);
+          } else if (previousSelection?.locator) {
+            const currentMatches = findCatalogNodesByIdentity(refreshedTarget.roots, previousSelection.locator);
+            if (currentMatches.length === 1) {
+              const currentNode = currentMatches[0];
+              setSelectedBackendNode(current => current?.nodeID === selected.nodeID
+                ? { ...current, nodeID: currentNode.id, name: currentNode.name, sourceClass: currentNode.sourceClass,
+                  diagnostic: currentNode.diagnosticReadError ?? undefined }
+                : current);
+            } else {
+              setSelectedBackendNode(current => current?.nodeID === selected.nodeID ? null : current);
+            }
+          } else if (!findCatalogNode(refreshedTarget.roots, selected.nodeID)) {
+            setSelectedBackendNode(current => current?.nodeID === selected.nodeID ? null : current);
+          }
+        }
+        setStatusMessage(message);
+        return;
+      }
+      const targetStillPresent = mapTreeExactLocatorCount(refreshedTarget.roots, notice.locator) === 1 &&
+        mapTreeSourceIdentityCount(refreshedTarget.roots, notice.locator) ===
+          mapTreeSourceIdentityCount(notice.beforeRoots, notice.locator);
+      const revisionUnchanged = refreshedTarget.visualizationRevision?.toUpperCase() === notice.previousVisualizationRevision.toUpperCase();
+      if (targetStillPresent && revisionUnchanged && notice.terminalConfirmed) {
+        const message = text(language, '重新读取确认来源仍在原地图中，且 .vis 修订未变；可以重新尝试。',
+          'Reread confirms the source is still on the map and the .vis revision is unchanged; retry is available.');
+        setMapSourceRemovalNotice({ ...notice, state: 'resolvedPresent', message, needsReconcile: false });
+        setStatusMessage(message);
+        return;
+      }
+      const message = text(language, '读回结果与原来源及 .vis 修订不能唯一对应；保留锁定，请刷新目录后再核对。',
+        'The readback cannot be uniquely matched to the original source and .vis revision. The retry lock remains in place.');
+      setMapSourceRemovalNotice({ ...notice, state: 'inconclusive', message, needsReconcile: true });
+      setStatusMessage(message);
+    } catch (error) {
+      if (projectContextKeyRef.current !== requestProjectKey || mapRemovalProjectScopeRef.current !== requestScope) return;
+      const message = text(language, '重新读取地图失败；移除状态仍未核实，不能重试。',
+        'Could not reread the map. The removal outcome remains unresolved and cannot be retried.');
+      setMapSourceRemovalNotice({ ...notice, state: 'inconclusive', message, needsReconcile: true,
+        diagnostic: errorDiagnostics(error) });
+      setStatusMessage(message);
+    } finally {
+      setMapSourceRemovalBusy(false);
     }
   };
 
@@ -1513,6 +1846,18 @@ function MapPage(props: MapFeaturePageProps) {
             calculatorSessions?.remove(id);
           }}
           busyNodeID={busyNodeID}
+          mapSourceRemovalAvailable={mapRemovalAvailable}
+          mapSourceRemovalUnavailableReason={mapRemovalUnavailableReason}
+          mapSourceRemovalBusy={mapSourceRemovalBusy || mapCatalogLoading}
+          mapSourceRemovalBlockedReason={mapRemovalBlockedReason}
+          mapSourceRemovalStatus={activeMapRemovalNotice ? {
+            state: activeMapRemovalNotice.state,
+            message: activeMapRemovalNotice.message,
+            needsReconcile: activeMapRemovalNotice.needsReconcile,
+            diagnostic: activeMapRemovalNotice.diagnostic,
+          } : null}
+          onRemoveBackendNode={node => void removeBackendNodeFromMap(node)}
+          onReconcileBackendNodeRemoval={() => void reconcileMapSourceRemoval()}
           onSelectLocalLayer={(id) => {
             setSelectedFeature(null);
             setSelectedBackendNode(null);
@@ -1609,7 +1954,7 @@ function MapPage(props: MapFeaturePageProps) {
           <MapViewsPanel {...props} activeDocument={activeDocument} visualizationRevision={visualizationRevision}
             onCommitStateChange={setViewCommitBusy}
             currentExtent={activeDocument ? resultViewport : null} shortcutScopeRef={viewportRef}
-            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || vectorCommitBusy)}
+          hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || vectorCommitBusy || mapRemovalNeedsReconcile)}
             onNavigateToExtent={extent => setUserViewport(fitExtent(extent, size, 0))}
             onVisualizationCommit={(source, receipt) => {
               if (projectContextKeyRef.current !== projectContextKey || source.projectPath !== context.projectPath ||
@@ -1662,7 +2007,7 @@ function MapPage(props: MapFeaturePageProps) {
           <RasLayerPropertiesPane language={language} featureSelection={selectedFeatureDetails}
             backendSelection={selectedBackend} canZoomBackend={Boolean(selectedBackend && loadedLayerExtent(selectedBackend.nodeID))}
             onZoomFeature={fitFeature} onZoomBackend={zoomToLoadedLayer} />
-          {symbologySource && selectedBackend && activeDocument && <RasterSymbologyEditor
+          {!mapRemovalNeedsReconcile && symbologySource && selectedBackend && activeDocument && <RasterSymbologyEditor
             key={`${owner}:${selectedBackend.nodeID}`}
             backend={backend} context={context} language={language}
             source={symbologySource} viewport={resultViewport}
@@ -1693,7 +2038,7 @@ function MapPage(props: MapFeaturePageProps) {
             backend={backend} language={language} sourceCapture={selectedRenderSource} viewport={resultViewport}
             backendRevision={backendRevision} settingsEpoch={vectorSettingsEpoch}
             onCommitStateChange={setVectorCommitBusy} onDirtyStateChange={onDirtyStateChange}
-            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || viewCommitBusy)}
+            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || viewCommitBusy || mapRemovalNeedsReconcile)}
             dirtyOwners={props.dirtyOwners}
             onPreviewChange={(source, draft) => {
               if (!vectorSources.some(candidate => candidate.key === source.key)) return;

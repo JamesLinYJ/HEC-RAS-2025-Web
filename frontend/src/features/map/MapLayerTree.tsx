@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import type { CatalogTreeNode, GeoJsonLayer, MapDocumentTab } from './mapTypes';
 import type { RasterCalculatorSessionLayer } from '../../shared/rasterCalculatorSession';
 import { mapCRS, mapError } from './mapText';
+import { mapSourceRemovalCheck } from './ProjectTreeListener';
 import { RasTreeV2 } from './tree/RasTreeV2';
 
 export interface CalculatorSessionLayerState {
@@ -23,6 +25,13 @@ export interface MapLayerTreeProps {
   onMoveLocalLayer: (id: string, direction: -1 | 1) => void;
   onRemoveLocalLayer: (id: string) => void;
   onToggleBackendNode: (node: CatalogTreeNode, checked: boolean) => void;
+  mapSourceRemovalAvailable?: boolean;
+  mapSourceRemovalUnavailableReason?: string;
+  mapSourceRemovalBusy?: boolean;
+  mapSourceRemovalBlockedReason?: string;
+  mapSourceRemovalStatus?: { state: string; message: string; needsReconcile: boolean; diagnostic?: unknown } | null;
+  onRemoveBackendNode?: (node: CatalogTreeNode) => void;
+  onReconcileBackendNodeRemoval?: () => void;
   calculatorLayers?: readonly RasterCalculatorSessionLayer[];
   selectedCalculatorLayerID?: string | null;
   calculatorStates?: Readonly<Record<string, CalculatorSessionLayerState | undefined>>;
@@ -49,6 +58,13 @@ export function MapLayerTree({
   onMoveLocalLayer,
   onRemoveLocalLayer,
   onToggleBackendNode,
+  mapSourceRemovalAvailable = false,
+  mapSourceRemovalUnavailableReason,
+  mapSourceRemovalBusy = false,
+  mapSourceRemovalBlockedReason,
+  mapSourceRemovalStatus = null,
+  onRemoveBackendNode,
+  onReconcileBackendNodeRemoval,
   calculatorLayers = [],
   selectedCalculatorLayerID = null,
   calculatorStates = {},
@@ -60,6 +76,27 @@ export function MapLayerTree({
   onRemoveCalculatorLayer,
   language,
 }: MapLayerTreeProps) {
+  const [confirmingRemovalNodeID, setConfirmingRemovalNodeID] = useState<string | null>(null);
+  useEffect(() => setConfirmingRemovalNodeID(null), [document?.id, document?.visualizationRevision, selectedBackendNodeID]);
+  const findSelectedNode = (nodes: CatalogTreeNode[], parent: CatalogTreeNode | null = null): { node: CatalogTreeNode; parent: CatalogTreeNode | null } | null => {
+    for (const node of nodes) {
+      if (node.id === selectedBackendNodeID) return { node, parent };
+      const nested = node.children?.length ? findSelectedNode(node.children, node) : null;
+      if (nested) return nested;
+    }
+    return null;
+  };
+  const selectedBackendEntry = document && selectedBackendNodeID ? findSelectedNode(document.roots) : null;
+  const removalCheck = mapSourceRemovalCheck(selectedBackendEntry?.node ?? null, selectedBackendEntry?.parent ?? null);
+  const removalReason = mapSourceRemovalBlockedReason ?? mapSourceRemovalUnavailableReason ?? (
+    removalCheck.canRemove ? '' : language === 'zh'
+      ? removalCheck.reason === 'missing-source' ? '缺少精确来源路径或读取修订，不能安全移除。'
+        : removalCheck.reason === 'stale-source' ? '来源格式或修订与当前保存图层不匹配。'
+          : '此节点类型当前不支持从地图中移除。'
+      : removalCheck.reason === 'missing-source' ? 'An exact source path or revision is unavailable.'
+        : removalCheck.reason === 'stale-source' ? 'The source format or revision does not match this saved layer.'
+          : 'This node type cannot be removed from the map here.');
+  const confirmingRemoval = confirmingRemovalNodeID !== null && confirmingRemovalNodeID === selectedBackendEntry?.node.id;
   const copy = language === 'zh'
     ? {
       title: '图层', local: '本地 GeoJSON', sources: '工程图层树',
@@ -75,6 +112,9 @@ export function MapLayerTree({
       pending: '等待当前地图图层帧…',
       dynamic: '动态', profiles: '个剖面', static: '静态', sessionOnly: '仅当前工程会话有效，不写入保存地图或 .vis。',
       diagnostics: '原始诊断',
+      removeFromMap: '从此地图移除', cancelRemove: '取消', confirmRemove: '确认移除',
+      removalScope: '只从当前地图文档移除此来源；不会删除或修改磁盘上的源文件。',
+      reconcileRemove: '重新读取并核对',
     }
     : {
       title: 'Layers', local: 'Local GeoJSON', sources: 'Project layer tree',
@@ -90,6 +130,9 @@ export function MapLayerTree({
       pending: 'Waiting for the current map frame…',
       dynamic: 'Dynamic', profiles: 'profiles', static: 'Static', sessionOnly: 'Only available in this project session; not written to the saved map or .vis.',
       diagnostics: 'Raw diagnostic',
+      removeFromMap: 'Remove from this map', cancelRemove: 'Cancel', confirmRemove: 'Confirm removal',
+      removalScope: 'This removes the source from the current map document only. The source file on disk is not deleted or changed.',
+      reconcileRemove: 'Reread and reconcile',
     };
   return (
     <aside className="map-layer-pane" aria-label={copy.title}>
@@ -225,9 +268,42 @@ export function MapLayerTree({
               onToggle={onToggleBackendNode}
               language={language}
             />
+            {selectedBackendEntry && <section className="map-source-removal" aria-label={copy.removeFromMap}>
+              <button type="button" data-testid="map-remove-source-action"
+                aria-label={copy.removeFromMap + ' ' + selectedBackendEntry.node.name}
+                title={removalReason || copy.removeFromMap}
+                disabled={!removalCheck.canRemove || !mapSourceRemovalAvailable || mapSourceRemovalBusy || Boolean(mapSourceRemovalBlockedReason)}
+                onClick={() => setConfirmingRemovalNodeID(selectedBackendEntry.node.id)}>
+                {copy.removeFromMap}
+              </button>
+              {removalReason && <small role="status" data-testid="map-remove-source-unavailable">{removalReason}</small>}
+              {confirmingRemoval && removalCheck.canRemove && <div className="map-source-removal-confirmation"
+                role="alertdialog" aria-label={copy.confirmRemove} data-testid="map-remove-source-confirmation">
+                <strong>{selectedBackendEntry.node.name}</strong>
+                <p>{copy.removalScope}</p>
+                <div className="map-source-removal-actions">
+                  <button type="button" data-testid="map-remove-source-cancel" disabled={mapSourceRemovalBusy}
+                    onClick={() => setConfirmingRemovalNodeID(null)}>{copy.cancelRemove}</button>
+                  <button type="button" data-testid="map-remove-source-confirm" disabled={mapSourceRemovalBusy || !mapSourceRemovalAvailable || Boolean(mapSourceRemovalBlockedReason)}
+                    onClick={() => {
+                      setConfirmingRemovalNodeID(null);
+                      onRemoveBackendNode?.(selectedBackendEntry.node);
+                    }}>{mapSourceRemovalBusy ? (language === 'zh' ? '正在处理…' : 'Working…') : copy.confirmRemove}</button>
+                </div>
+              </div>}
+            </section>}
             <p className="map-tree-note">{copy.renderNote}</p>
           </>
         )}
+        {mapSourceRemovalStatus && <div className="map-source-removal-status" role={mapSourceRemovalStatus.state === 'uncertain' || mapSourceRemovalStatus.state === 'inconclusive' ? 'alert' : 'status'}
+          data-testid="map-remove-source-status" data-state={mapSourceRemovalStatus.state}>
+          <span>{mapSourceRemovalStatus.message}</span>
+          {mapSourceRemovalStatus.diagnostic !== undefined && <details data-testid="map-remove-source-diagnostic">
+            <summary>{copy.treeError}</summary><pre>{JSON.stringify(mapSourceRemovalStatus.diagnostic, null, 2)}</pre>
+          </details>}
+          {mapSourceRemovalStatus.needsReconcile && <button type="button" data-testid="map-remove-source-reconcile"
+            disabled={mapSourceRemovalBusy} onClick={onReconcileBackendNodeRemoval}>{copy.reconcileRemove}</button>}
+        </div>}
       </section>
     </aside>
   );

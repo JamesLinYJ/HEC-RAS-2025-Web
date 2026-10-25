@@ -12,6 +12,7 @@ import { IntervalPicker } from './charting/IntervalPicker';
 import { TimeWindow } from './charting/TimeWindow';
 import { TimeWindowGroup } from './charting/TimeWindowGroup';
 import { Timeline } from './charting/Timeline';
+import { ResultProfileMeshPicker } from './controls/ResultProfileMeshPicker';
 import type {
   ResultPlanAssociationsSnapshot,
   ResultPlanContextSnapshot,
@@ -35,20 +36,6 @@ interface ResultProfileCatalog {
     variables: Array<{ id: string; name: string; elementKind: string; quantity: string; units: string }>;
   }>;
   flowAreas: Array<{ index: number; name: string; cellCount: number; faceCount: number }>;
-}
-
-interface ResultProfileSeriesResponse {
-  available: boolean;
-  unavailableReason: string | null;
-  outputBlockName: string;
-  variable: string;
-  flowAreaName: string;
-  flowAreaIndex: number;
-  elementIndex: number;
-  elementKind: string;
-  quantity: string;
-  units: string;
-  points: Array<{ profileIndex: number; profileName: string; time: string; value: number | null }>;
 }
 
 interface ActiveProfileRequest {
@@ -598,7 +585,10 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
     && !hasOtherUnsavedDrafts && isSha256(context.projectRevision) && isSha256(snapshot.revision)
     && planSettingsIdentityMatches && planSettings.hasPlan && !!planSettings.planName
     && selectedAssetRevisionMatches;
-  const profileRequestKey = JSON.stringify([source, owner, resultAsset?.path ?? '', currentDataKey, elementIndexInput]);
+  const profileRequestKey = JSON.stringify([
+    source, owner, resultAsset?.path ?? '', snapshot?.resultPath ?? '', snapshot?.revision ?? '', currentDataKey,
+    selectedFlowArea, selectedVariable, activeVariable?.elementKind ?? '', backendRevision ?? null,
+  ]);
   const profileRequestKeyRef = useRef(profileRequestKey);
   profileRequestKeyRef.current = profileRequestKey;
 
@@ -644,19 +634,25 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
     };
   }, [detailsOwner]);
 
-  const loadElementSeries = async (): Promise<void> => {
+  const loadElementSeries = async (requestedElementIndex?: number): Promise<void> => {
     setSeriesError(null);
     if (!snapshot || !catalog || !activeVariable || !backend.supports('result.profile')) {
       setSeriesError(text('当前 C# 尚未提供真实结果序列读取能力。', 'The current C# build does not expose real result-series reading.'));
       return;
     }
-    const elementIndex = Number(elementIndexInput);
-    if (elementIndexInput.trim() === '') {
+    if (activeVariable.elementKind !== 'Cell' && activeVariable.elementKind !== 'Face') {
+      setSeriesError(text('所选变量没有可用的单元或面索引。', 'The selected variable has no supported cell or face index.'));
+      return;
+    }
+    const elementIndexText = elementIndexInput.trim();
+    if (requestedElementIndex === undefined && elementIndexText === '') {
       setSeriesError(text('请输入网格元素编号。', 'Enter a mesh element index.'));
       return;
     }
-    const elementCount = activeVariable.elementKind.toLowerCase() === 'face' ? catalog.flowAreas.find((area) => area.index === selectedFlowArea)?.faceCount : catalog.flowAreas.find((area) => area.index === selectedFlowArea)?.cellCount;
-    if (!Number.isInteger(elementIndex) || elementIndex < 0 || (elementCount !== undefined && elementIndex >= elementCount)) {
+    const elementIndex = requestedElementIndex ?? Number(elementIndexText);
+    const selectedArea = catalog.flowAreas.find((area) => area.index === selectedFlowArea);
+    const elementCount = activeVariable.elementKind === 'Face' ? selectedArea?.faceCount : selectedArea?.cellCount;
+    if (!selectedArea || elementCount === undefined || !Number.isInteger(elementIndex) || elementIndex < 0 || elementIndex >= elementCount) {
       setSeriesError(text('网格元素编号超出可选范围。', 'The mesh element index is outside the available range.'));
       return;
     }
@@ -683,7 +679,7 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
       && profileRequestKeyRef.current === requestKey;
     setSeriesLoading(true);
     try {
-      const response = await backend.request<ResultProfileSeriesResponse>('result.profile', {
+      const responseValue = await backend.request<unknown>('result.profile', {
         resultPath: snapshot.resultPath,
         revision: snapshot.revision,
         outputBlockName: selectedBlockName,
@@ -692,20 +688,84 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
         elementIndex,
       }, { signal: controller.signal });
       if (!isCurrentRequest()) return;
-      if (!response.available) {
-        const reason = response.unavailableReason;
+      if (!responseValue || typeof responseValue !== 'object' || Array.isArray(responseValue)) {
+        throw new Error('结果序列接口返回的数据结构无效。');
+      }
+      const responseRecord = responseValue as Record<string, unknown>;
+      const responsePath = responseRecord.resultPath;
+      const responseRevision = responseRecord.revision;
+      const responseResultName = responseRecord.resultName;
+      const responseBlockName = responseRecord.outputBlockName;
+      const responseVariable = responseRecord.variable;
+      const responseFlowAreaIndex = responseRecord.flowAreaIndex;
+      const responseElementIndex = responseRecord.elementIndex;
+      const responseAvailable = responseRecord.available;
+      const responseUnavailableReason = responseRecord.unavailableReason;
+      if (typeof responsePath !== 'string' || comparablePath(responsePath) !== comparablePath(snapshot.resultPath)
+        || !isSha256(responseRevision) || !sameSha(responseRevision, snapshot.revision)
+        || typeof responseResultName !== 'string' || responseResultName !== catalog.resultName
+        || typeof responseBlockName !== 'string' || responseBlockName !== selectedBlockName
+        || typeof responseVariable !== 'string' || responseVariable !== selectedVariable
+        || typeof responseFlowAreaIndex !== 'number' || responseFlowAreaIndex !== selectedFlowArea
+        || typeof responseElementIndex !== 'number' || responseElementIndex !== elementIndex || typeof responseAvailable !== 'boolean'
+        || (responseUnavailableReason !== null && typeof responseUnavailableReason !== 'string')) {
+        throw new Error('结果序列回执与当前 Result、SHA、输出块、变量、流区或元素编号不一致。');
+      }
+      if (!responseAvailable) {
+        const reason = responseUnavailableReason;
         throw new Error(reason
           ? text(`后端未提供所选结果序列。后端原始信息：${reason}`, `The backend did not provide the selected result series. Backend detail: ${reason}`)
           : text('后端未提供所选结果序列。', 'The backend did not provide the selected result series.'));
       }
+      const activeFlowArea = catalog.flowAreas.find((area) => area.index === selectedFlowArea);
+      if (!activeFlowArea || !activeBlock
+        || comparablePath(catalog.resultPath) !== comparablePath(snapshot.resultPath)
+        || !sameSha(catalog.revision, snapshot.revision)) {
+        throw new Error('当前 Result 目录已与所选结果源脱离。');
+      }
+      const responseFlowAreaName = responseRecord.flowAreaName;
+      const responseElementKind = responseRecord.elementKind;
+      const responseQuantity = responseRecord.quantity;
+      const responseUnits = responseRecord.units;
+      const rawPoints = responseRecord.points;
+      if (typeof responseFlowAreaName !== 'string' || responseFlowAreaName !== activeFlowArea.name
+        || typeof responseElementKind !== 'string' || responseElementKind !== activeVariable.elementKind
+        || typeof responseQuantity !== 'string' || responseQuantity !== activeVariable.quantity
+        || typeof responseUnits !== 'string' || responseUnits !== activeVariable.units || !Array.isArray(rawPoints)
+        || activeBlock.profileCount !== activeBlock.profileNames.length || activeBlock.profileCount !== activeBlock.times.length
+        || rawPoints.length !== activeBlock.profileCount) {
+        throw new Error('结果序列的流区、元素类型、单位或时间步元数据与当前目录不一致。');
+      }
+      const points = rawPoints.map((rawPoint, index) => {
+        if (!rawPoint || typeof rawPoint !== 'object' || Array.isArray(rawPoint)) {
+          throw new Error('结果序列包含无效时间步。');
+        }
+        const point = rawPoint as Record<string, unknown>;
+        const profileIndex = point.profileIndex;
+        const profileName = point.profileName;
+        const time = point.time;
+        const value = point.value;
+        if (typeof profileIndex !== 'number' || profileIndex !== index
+          || typeof profileName !== 'string' || profileName !== activeBlock.profileNames[index]
+          || typeof time !== 'string' || time !== activeBlock.times[index]
+          || (value !== null && (typeof value !== 'number' || !Number.isFinite(value)))) {
+          throw new Error('结果序列的时步顺序、时间、名称或数值与当前目录不一致。');
+        }
+        return { profileIndex, profileName, time, value };
+      });
+      if (backendSeries.length > 0 && (backendTimes.length !== points.length
+        || backendTimes.some((time, index) => time !== points[index]?.time)
+        || backendSeries.some((series) => series.values.length !== points.length))) {
+        throw new Error('已载入序列与当前结果目录时间轴不一致；请先清除旧序列后重试。');
+      }
       const newSeries: ResultSeries = {
         id,
         name: displayResultVariableName(activeVariable.name || text('数值', 'Value'), language) + ' · ' + displayMeshElementName(activeVariable.elementKind, language) + ' ' + elementIndex,
-        units: response.units,
+        units: responseUnits,
         elementIndex,
-        values: response.points.map((point) => point.value),
+        values: points.map((point) => point.value),
       };
-      if (backendSeries.length === 0) setBackendTimes(response.points.map((point) => point.time));
+      if (backendSeries.length === 0) setBackendTimes(points.map((point) => point.time));
       setBackendSeries((current) => [...current, newSeries]);
       setSelectedIndex(0);
       setRange([0, 1]);
@@ -742,6 +802,21 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
 
   const changeVariable = (name: string): void => { setSelectedVariable(name); resetBackendSeries(); };
   const changeArea = (index: number): void => { setSelectedFlowArea(index); resetBackendSeries(); };
+  const activeFlowArea = catalog?.flowAreas.find((area) => area.index === selectedFlowArea) ?? null;
+  const meshElementCount = activeVariable?.elementKind === 'Face' ? activeFlowArea?.faceCount ?? 0 : activeFlowArea?.cellCount ?? 0;
+  const meshElementKind = activeVariable?.elementKind === 'Cell' || activeVariable?.elementKind === 'Face'
+    ? activeVariable.elementKind : null;
+  const selectedMeshElementIndex = elementIndexInput.trim() !== '' && Number.isInteger(Number(elementIndexInput))
+    ? Number(elementIndexInput) : null;
+  const meshOwner = JSON.stringify([
+    owner, snapshot?.resultPath ?? '', snapshot?.revision ?? '', selectedFlowArea, activeFlowArea?.name ?? '',
+    selectedVariable, meshElementKind ?? '',
+  ]);
+  const selectMeshElement = (elementIndex: number): void => {
+    cancelPendingProfileRequest();
+    setElementIndexInput(String(elementIndex));
+    void loadElementSeries(elementIndex);
+  };
 
   const savePlanDescription = (description: string): void => {
     if (!canEditPlanDescription || !snapshot || !planSettings || !resultAsset || !context.projectPath || !context.projectXml || !isSha256(context.projectRevision)) return;
@@ -938,27 +1013,42 @@ export default function ResultsWorkspace({ language, context, backend, backendRe
       language={language}
     />}
 
-    {source === 'result' && resultAsset && <section className="results-selector-panel">
+    {source === 'result' && resultAsset && <section className="results-selector-panel" data-testid="results-selector-panel">
       <div className="results-selector-heading"><div><span className="results-section-index">01</span><h2>{text('结果数据选择', 'Result data selection')}</h2></div><span>{catalog?.resultName ?? snapshot?.name ?? resultAsset.name}</span></div>
       <div className="results-selector-grid">
-        <label className="results-field"><span>{text('输出块', 'Output block')}</span><select value={selectedBlockName} onChange={(event) => changeBlock(event.target.value)} disabled={!catalog || catalogLoading}>
+        <label className="results-field"><span>{text('输出块', 'Output block')}</span><select data-testid="results-selector-output-block" value={selectedBlockName} onChange={(event) => changeBlock(event.target.value)} disabled={!catalog || catalogLoading}>
           {catalog?.outputBlocks.map((block) => <option value={block.name} key={block.name}>{block.name} · {block.profileCount} {text('时步', 'profiles')}</option>)}
           {!catalog && <option value="">{text('尚无可用输出块', 'No output block available')}</option>}
         </select></label>
-        <label className="results-field"><span>{text('流区', 'Flow area')}</span><select value={selectedFlowArea} onChange={(event) => changeArea(Number(event.target.value))} disabled={!catalog || catalogLoading}>
+        <label className="results-field"><span>{text('流区', 'Flow area')}</span><select data-testid="results-selector-flow-area" value={selectedFlowArea} onChange={(event) => changeArea(Number(event.target.value))} disabled={!catalog || catalogLoading}>
           {catalog?.flowAreas.map((area) => <option value={area.index} key={area.index}>{area.name} · {(activeVariable?.elementKind === 'Face' ? area.faceCount : area.cellCount).toLocaleString(numberLocale)} {activeVariable?.elementKind === 'Face' ? text('面', 'faces') : text('单元', 'cells')}</option>)}
           {catalog?.flowAreas.length === 0 && <option value={0}>{text('此结果没有可用的二维网格', 'No 2D mesh is available in this result')}</option>}
         </select></label>
-        <label className="results-field"><span>{text('变量', 'Variable')}</span><select value={selectedVariable} onChange={(event) => changeVariable(event.target.value)} disabled={!activeBlock || activeBlock.variables.length === 0}>
+        <label className="results-field"><span>{text('变量', 'Variable')}</span><select data-testid="results-selector-variable" value={selectedVariable} onChange={(event) => changeVariable(event.target.value)} disabled={!activeBlock || activeBlock.variables.length === 0}>
           {activeBlock?.variables.map((variable) => <option value={variable.name} key={variable.name}>{displayResultVariableName(variable.name, language)} · {displayResultDimensionName(variable.quantity, language)}{variable.units ? ' (' + variable.units + ')' : ''}</option>)}
           {activeBlock?.variables.length === 0 && <option value="">{text('此输出块没有可视变量', 'No plottable variables in this output block')}</option>}
         </select></label>
-        <div className="results-load-series-field"><label className="results-field"><span>{text(activeVariable?.elementKind === 'Face' ? '面编号' : '单元编号', activeVariable?.elementKind === 'Face' ? 'Face index' : 'Cell index')}</span><input inputMode="numeric" value={elementIndexInput} onChange={(event) => { cancelPendingProfileRequest(); setElementIndexInput(event.target.value); }} disabled={!activeVariable} /></label>
-          <button type="button" className="results-primary-button" onClick={() => void loadElementSeries()} disabled={seriesLoading || catalogLoading || !catalog || !activeVariable || !backend.supports('result.profile')}>
+        <div className="results-load-series-field"><label className="results-field"><span>{text(activeVariable?.elementKind === 'Face' ? '面编号' : '单元编号', activeVariable?.elementKind === 'Face' ? 'Face index' : 'Cell index')}</span><input data-testid="results-element-index" inputMode="numeric" value={elementIndexInput} onChange={(event) => { cancelPendingProfileRequest(); setElementIndexInput(event.target.value); }} disabled={!activeVariable} /></label>
+          <button type="button" className="results-primary-button" data-testid="results-load-series" onClick={() => void loadElementSeries()} disabled={seriesLoading || catalogLoading || !catalog || !activeVariable || !backend.supports('result.profile')}>
             {seriesLoading ? <span className="results-spinner" /> : <span aria-hidden="true">＋</span>}{text('载入序列', 'Load series')}
           </button>
         </div>
       </div>
+      {resultSnapshotMatchesSelected && snapshot && catalog && activeVariable && activeFlowArea && <ResultProfileMeshPicker
+        backend={backend}
+        backendRevision={backendRevision}
+        language={language}
+        owner={meshOwner}
+        resultPath={snapshot.resultPath}
+        revision={snapshot.revision}
+        flowAreaIndex={selectedFlowArea}
+        flowAreaName={activeFlowArea.name}
+        elementCount={meshElementCount}
+        elementKind={meshElementKind}
+        selectedElementIndex={selectedMeshElementIndex}
+        ready={!catalogLoading && !catalogError && meshElementKind !== null && isSha256(snapshot.revision)}
+        onSelectElement={selectMeshElement}
+      />}
       {!backend.supports('result.profile') && <p className="results-capability-note">{text('当前 C# 尚未暴露 result.profile。结果目录和时间步可读，但无法伪造 HDF 数值序列。', 'This C# build does not expose result.profile. The catalog and timestamps may be available, but HDF values are not fabricated.')}</p>}
       {seriesError && <p className="results-inline-error" role="alert">{seriesError}</p>}
     </section>}
