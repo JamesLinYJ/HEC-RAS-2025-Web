@@ -8,11 +8,13 @@ import { SelectProjectionPage } from './SelectProjectionPage';
 const SourceManagerControl = lazy(() => import('./SourceManagerControl').then(module => ({ default: module.SourceManagerControl })));
 const PlanDiffView = lazy(() => import('./plan-analysis/PlanDiffView').then(module => ({ default: module.PlanDiffView })));
 const R2RMatrixView = lazy(() => import('./plan-analysis/R2RMatrixView').then(module => ({ default: module.R2RMatrixView })));
+const StableChannelWindow = lazy(() => import('./stable-channel/StableChannelWindow').then(module => ({ default: module.StableChannelWindow })));
+const DevHomePage = lazy(() => import('./archive/DevHomePage').then(module => ({ default: module.DevHomePage })));
 import { WilcockMainControl } from './hydraulics/WilcockMainControl';
 import { UnitCalculatorPage } from './hydraulics/UnitCalculatorPage';
 import { USGSTerrainImportControl } from './usgs/USGSTerrainImportControl';
 
-type ToolsPage = 'geoprocessing' | 'import-export' | 'raster-calculator' | 'projection' | 'sources' | 'wilcock' | 'unit-calculator' | 'usgs-terrain' | 'plan-diff' | 'r2r-matrix';
+type ToolsPage = 'geoprocessing' | 'import-export' | 'raster-calculator' | 'projection' | 'sources' | 'wilcock' | 'unit-calculator' | 'usgs-terrain' | 'plan-diff' | 'r2r-matrix' | 'stable-channel' | 'project-archive';
 
 const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
   { id: 'geoprocessing', zh: '地理处理', en: 'Geoprocessing', mark: '⌁' },
@@ -25,6 +27,8 @@ const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
   { id: 'usgs-terrain', zh: 'USGS 地形', en: 'USGS terrain', mark: '⌖' },
   { id: 'plan-diff', zh: '计划对比', en: 'Plan comparison', mark: '≠' },
   { id: 'r2r-matrix', zh: '参数矩阵', en: 'Parameter matrix', mark: '▦' },
+  { id: 'stable-channel', zh: '稳定河槽', en: 'Stable channel', mark: '≈' },
+  { id: 'project-archive', zh: '工程归档', en: 'Project archive', mark: '⇩' },
 ];
 
 /** Web and Electron entry point for the tools workspace. */
@@ -110,6 +114,16 @@ export default function ToolsPageView(props: FeaturePageProps) {
         <section id="tools-panel-r2r-matrix" role="tabpanel" aria-labelledby="tools-tab-r2r-matrix" hidden={active !== 'r2r-matrix'}>
           {mountedPages.has('r2r-matrix') && <Suspense fallback={<p role="status">{zh ? '正在加载参数矩阵…' : 'Loading parameter matrix…'}</p>}>
             <R2RMatrixView {...props} />
+          </Suspense>}
+        </section>
+        <section id="tools-panel-stable-channel" role="tabpanel" aria-labelledby="tools-tab-stable-channel" hidden={active !== 'stable-channel'}>
+          {mountedPages.has('stable-channel') && <Suspense fallback={<p role="status">{zh ? '正在加载稳定河槽设计…' : 'Loading stable-channel design…'}</p>}>
+            <StableChannelWindow {...props} />
+          </Suspense>}
+        </section>
+        <section id="tools-panel-project-archive" role="tabpanel" aria-labelledby="tools-tab-project-archive" hidden={active !== 'project-archive'}>
+          {mountedPages.has('project-archive') && <Suspense fallback={<p role="status">{zh ? '正在加载工程归档…' : 'Loading project archive…'}</p>}>
+            <DevHomePage {...props} />
           </Suspense>}
         </section>
       </div>

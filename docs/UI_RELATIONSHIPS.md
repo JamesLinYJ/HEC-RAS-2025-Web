@@ -215,6 +215,32 @@ Host 在临时模型中重放现有拓扑和网格变更，导出过程不重放
 
 导出沿原 emitter 逐文件返回 Written/Skipped/Failed/Excluded/Cancelled/NotRun、路径、字节数和诊断。覆盖开关只决定同名 R2R HDF 的处理；`writeManifest` 会生成或更新同目录同计划 CSV，独立于 HDF 覆盖开关。前端核对来源、检查身份、组合顺序/文件名、目录、逐文件状态与汇总计数，不将进度事件当终态，也不替没有完整文件回执的失败/取消补造文件清单。部分文件可在失败或取消前已经写出，取消不回滚它们。未知传输/无效回执保留原捕获、原始响应及写保护；有 HTTP ID 时通过捕获的网关恢复同一任务，无 ID 时禁止重发。任务回执始终属于提交时来源，表单、目录选项或后续选择不能改写它。
 
+### 当前稳定河道设计
+
+`ToolsPageView → StableChannelWindow → TractiveForceControl → TractiveForceSolveFor / TractiveForceRequiredInput` 保留四个原 C# UI 文件的独立职责：窗口持有设计来源，Control 组合表单，SolveFor 管理方法与未知量，RequiredInput 管理流量、水温、边坡及左岸/河床/右岸材料参数。`useStableChannel / stableChannelWorkflow` 是 React 草稿与 HTTP 接线。Host 打开当前工程首个 `StableChannelDesign`，不存在时使用明确标记的原始内存默认设计；内存设计不能保存或自动创建文件。原 Control 的硬编码样例图未作为计算图展示，页面挂载不代表完整 WinUI 窗口表现已迁移。
+
+草稿保留数字输入的原始字符串和独立基线；从 Depth、Width、Slope、ParticleSize 中选择恰好两个目标后，显式计算或有效输入变化触发的延迟计算调用原 `TractiveForceMethod`，只回填求解目标。ft、ft³/s、°F、mm 和角度单位沿用来源，内部角度/粒径换算仍由原 `convertValues` 执行，React 不重复转换。读取代次与工程会话/路径/XML/修订/Core、后端实例/能力版本、设计路径/修订/source ID 一起约束响应；打开或保存前经 `project.open` 核对当前 XML 正是已保存来源。
+
+`stableChannel.save` 只对捕获的现有 `.scd.h5` 进行暂存及替换，前后核对工程与设计修订，不保存 `.ras` 或 `.vis`。回执必须匹配 request ID、source ID、设计路径和提交的数字状态，才能推进设计修订及草稿基线。未决写入保留原网关、HTTP ID 和写保护；传输终态未知与服务已返回但回执未通过核对分别展示，均不重复 POST 保存。保存失败保留输入，真实完成回执不能被后续工程或后端身份采纳。
+
+### 当前工程投影导出
+
+`ProjectExplorerControl` 的工程标题通过 `ProjectCatalogHeaderBehaviors`，所选工程节点通过 `ProjectBehaviors`，注册同一个 `GenericProjectBehaviors.ExportProjection`。实际 catalog 的工程节点为 `ModelSectionContext`，必须与当前工程匹配；投影来自精确目录来源的 `Project/ProjectionWKT`，不使用所选模型的修订。这里覆盖三个来源文件中的投影导出与注册职责，`GenericProjectBehaviors` 和 `ProjectBehaviors` 的其他命令并未因此全部迁移；controller、parser 和回执面板是 Web 胶水。
+
+请求捕获工程会话/路径/XML/修订/Core、后端实例/能力版本，并在发送前登记 `project.projection-export:*` 保护。内存工程、无投影、目录来源过期、未保存输入及并行写入会禁用操作。Host `project.projection.export` 在私有工程模型应用提交的 XML 元数据，调用原 `Projection.ExportEsri`，核对工程文件修订，以不覆盖方式在工程 `Exports` 中发布唯一 `Projection.prj` 或编号文件。前端校验工程与目录/文件名回执，再以 `workspace.file.inspect` 确认相同输出路径、规范路径、非零长度和 SHA-256。
+
+传输未知时只续查原网关的同一 HTTP 任务；已有路径但读回失败时仅重读该文件，不重新导出。工程或后端变化拒绝迟到回执。本操作只生成服务器 `.prj`，不保存工程或改变模型/地图修订；当前入口没有浏览器下载或本机资源管理器定位动作。
+
+### 当前工程归档与下载
+
+`ToolsPageView → DevHomePage → ProjectArchiveWorkflow` 只承接原 `UploadCurrentSubmit_Click` 中当前工程的归档准备职责，`includeResults` 默认 true 对应原 `UploadResults`。S3 上传、上传链接生成、远端模型编号下载/打开均不属于此入口；浏览器 ZIP 下载是 Web 新增适配，不能等同于原 `DownloadModelSubmit_Click`，也不能据此标记完整 DevHomePage 已迁移。
+
+准备前冻结工程会话/路径/XML/修订/Core、后端实例/版本及结果选项，由 `project.open` 确认保存文件与当前 XML 相同。未保存输入、其他在途任务及仅在会话加载的外部 Core/HDF 引用会阻止归档；所选资产不影响整个工程目录的来源身份。Host 将所含文件复制到私有目录，在暂存工程上执行原 `Project.ZipFullProject`，保留已保存外部连接元数据而不追读这些外部来源，并复核源目录清单和 ZIP 内容。原工程 `.ras` SHA、暂存保存后的归档内 `.ras` SHA、归档清单 SHA 分别记录；清单 SHA 不是 ZIP 自身的字节摘要。 原 `CoreLayerBase` 加载后要求模型内部名称与文件名一致；若由此触发 `NeedsSave`，暂存工程保存会更新相应 HDF 的 `Name` 和 `Date Last Modified` 元数据。因此归档内模型不保证逐字节等于源文件；这些保存只发生在私有副本，不能把任意数据集变化归为预期差异。
+
+Host 只在 ZIP 核验、暂存模型释放及暂存目录清理完成后，将 `.pending` 文件原子发布为 token 对应的完整 ZIP。`ServerBackend → SessionBackend.projectArchiveUrl` 生成 `GET /api/project-archives/{token}`：服务只接受规范 UUID，从私有根目录读取已发布文件，不接收任意路径，响应为 `application/zip` 并禁用缓存。点击下载只表示已请求浏览器传输，不能宣称用户本地保存完成。`developer.projectArchive.cleanup` 由用户显式触发，始终使用原回执 token 与捕获后端；下载和切页不自动删除产物，清理未确认时保留回执并允许重试。
+
+归档任务在已验证终态前保留来源保护。取消请求不代替取消终态，竞态返回完成回执时仍保留真实 ZIP；未知传输与已返回但无效回执分别展示，后者保留原始回执且不能使用未核验 token 下载或清理。恢复只核对原 HTTP ID，不重发准备请求。切换来源后历史回执明确标记原工程，并继续通过其原后端下载/清理，不提交当前工程状态。
+
 `currentImplementation` 与本表只记录当前源码中的组件挂载、操作名、状态所有者和持久化边界；这是静态关系图，不代表构建成功、浏览器/Electron 交互、Host 实际运行或真实文件路径验收。旧 C#/SwiftUI 内容仍是来源契约，模块存在、来源契约或预览草稿不代表完整交互或持久化。旧 `VectorSymbologyEditor` 仍只是条件求值预览；独立的图层样式编辑器和 C# 地图绘图链路已在上表记录源码接线，但仍需单独运行验收。
 
 ## 来源基线与可比口径

@@ -187,6 +187,7 @@
   --project-aqua: #137c99;
   --project-background: #f2f6f8;
   --project-control: #ffffff;
+  --project-success: #126651;
   color: #273b46;
   background: #f2f6f8;
 }
@@ -220,6 +221,82 @@
 :root[data-theme='light'] .project-feature .project-search-empty { color: #566d78; }
 :root[data-theme='light'] .project-feature .project-search-results button:hover,
 :root[data-theme='light'] .project-feature .project-search-results button.is-active { background: #e7f2f1; }
+
+/* Project receipts and catalog details share readable semantic colors in light mode. */
+:root[data-theme='light'] .project-feature .project-global-notice {
+  color: var(--project-ink);
+  border-color: var(--project-border);
+  background: #e7f2ef;
+}
+:root[data-theme='light'] .project-feature .project-global-notice > span { color: var(--project-success); }
+:root[data-theme='light'] .project-feature .project-global-notice button { color: var(--project-muted); }
+:root[data-theme='light'] .project-feature .project-global-notice button:hover { color: var(--project-ink); }
+:root[data-theme='light'] .project-feature .project-global-notice.is-error { color: var(--red); background: #fff0ef; border-color: #d7aaa6; }
+:root[data-theme='light'] .project-feature .project-global-notice.is-error > span { color: var(--red); }
+:root[data-theme='light'] .project-feature .project-global-notice details,
+:root[data-theme='light'] .project-feature .project-global-notice summary,
+:root[data-theme='light'] .project-feature .project-global-notice pre { color: var(--project-ink); }
+:root[data-theme='light'] .project-feature .project-toolbar-breadcrumb,
+:root[data-theme='light'] .project-feature .project-toolbar-breadcrumb i { color: var(--project-muted); }
+:root[data-theme='light'] .project-feature .project-toolbar-breadcrumb strong,
+:root[data-theme='light'] .project-feature .project-toolbar-actions > span { color: var(--project-ink); }
+:root[data-theme='light'] .project-feature .project-kicker,
+:root[data-theme='light'] .project-feature .project-toolbar-mark,
+:root[data-theme='light'] .project-feature .project-file-mark,
+:root[data-theme='light'] .project-feature .project-value-good,
+:root[data-theme='light'] .project-feature .project-parse-icon { color: var(--project-success) !important; }
+:root[data-theme='light'] .project-feature .project-file-facts > div { background: var(--project-control); border-color: var(--project-border); }
+:root[data-theme='light'] .project-feature .project-file-facts span,
+:root[data-theme='light'] .project-feature .project-parse-state { color: var(--project-muted); }
+:root[data-theme='light'] .project-feature .project-file-facts strong { color: var(--project-ink); }
+:root[data-theme='light'] .project-feature .project-parse-state { background: #e7f2ef; border-color: var(--project-border); }
+:root[data-theme='light'] .project-feature .project-tree-mode-switch,
+:root[data-theme='light'] .project-feature .project-tree-search,
+:root[data-theme='light'] .project-feature .project-tree-inspector,
+:root[data-theme='light'] .project-feature .project-catalog-file-path,
+:root[data-theme='light'] .project-feature .project-detail-path code,
+:root[data-theme='light'] .project-feature .project-detail-technical pre { background: var(--project-control); border-color: var(--project-border); }
+:root[data-theme='light'] .project-feature .project-tree-mode-switch button,
+:root[data-theme='light'] .project-feature .project-tree-search input,
+:root[data-theme='light'] .project-feature .project-tree-search input::placeholder,
+:root[data-theme='light'] .project-feature .project-tree-search > span,
+:root[data-theme='light'] .project-feature .project-tree-search button,
+:root[data-theme='light'] .project-feature .project-tree-categories button,
+:root[data-theme='light'] .project-feature .project-tree-count,
+:root[data-theme='light'] .project-feature .project-tree-source-kind,
+:root[data-theme='light'] .project-feature .project-tree-state,
+:root[data-theme='light'] .project-feature .project-tree-detail-empty,
+:root[data-theme='light'] .project-feature .project-detail-kicker,
+:root[data-theme='light'] .project-feature .project-catalog-path-heading,
+:root[data-theme='light'] .project-feature .project-catalog-description h4,
+:root[data-theme='light'] .project-feature .project-catalog-description p,
+:root[data-theme='light'] .project-feature .project-catalog-description .is-missing,
+:root[data-theme='light'] .project-feature .project-catalog-file-path > code.is-missing,
+:root[data-theme='light'] .project-feature .project-tree-detail dt,
+:root[data-theme='light'] .project-feature .project-tree-detail-runtime dt,
+:root[data-theme='light'] .project-feature .project-detail-description,
+:root[data-theme='light'] .project-feature .project-detail-path,
+:root[data-theme='light'] .project-feature .project-detail-technical { color: var(--project-muted); }
+:root[data-theme='light'] .project-feature .project-tree-tool-button,
+:root[data-theme='light'] .project-feature .project-tree-expander { color: var(--project-muted) !important; }
+:root[data-theme='light'] .project-feature .project-tree-mode-switch button.is-active,
+:root[data-theme='light'] .project-feature .project-tree-node[aria-selected='true'] { color: var(--project-ink) !important; background: #d7ebe4; border-color: #a8c8bc; }
+:root[data-theme='light'] .project-feature .project-tree-node { color: var(--project-ink) !important; }
+:root[data-theme='light'] .project-feature .project-tree-node:hover { background: #e7f2ef; }
+:root[data-theme='light'] .project-feature .project-tree-categories button.is-active,
+:root[data-theme='light'] .project-feature .project-tree-node-icon,
+:root[data-theme='light'] .project-feature .project-tree-node-icon.is-group,
+:root[data-theme='light'] .project-feature .project-detail-icon,
+:root[data-theme='light'] .project-feature .project-catalog-path-heading button,
+:root[data-theme='light'] .project-feature .project-selection-count { color: var(--project-success); }
+:root[data-theme='light'] .project-feature .project-tree-detail h3,
+:root[data-theme='light'] .project-feature .project-tree-detail dd,
+:root[data-theme='light'] .project-feature .project-tree-detail-runtime dd,
+:root[data-theme='light'] .project-feature .project-detail-properties h4,
+:root[data-theme='light'] .project-feature .project-catalog-file-path > code,
+:root[data-theme='light'] .project-feature .project-detail-path code,
+:root[data-theme='light'] .project-feature .project-detail-technical pre { color: var(--project-ink); }
+:root[data-theme='light'] .project-feature .project-feature-statusbar { color: var(--project-muted); background: #e9eff3; border-color: var(--project-border); }
 
 .project-active-layout { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; overflow: auto; }
 .project-open-summary { flex: 0 0 auto; padding: 13px 17px 12px; border-bottom: 1px solid rgba(151, 185, 201, .11); background: rgba(11, 32, 45, .57); }

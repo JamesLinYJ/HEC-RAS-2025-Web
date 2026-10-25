@@ -1,0 +1,31 @@
+.project-archive { max-width: 980px; margin: 0 auto; padding: 22px; color: var(--tool-ink, #1c2939); }
+.project-archive header, .project-archive-status { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.project-archive h2 { margin: 4px 0 0; font-size: 22px; }
+.project-archive h3 { font-size: 16px; margin: 0; }
+.project-archive-eyebrow { font-size: 11px; color: var(--tool-muted, #6b7280); letter-spacing: .1em; }
+.project-archive-badge { border: 1px solid var(--tool-line, #d3dce7); border-radius: 8px; padding: 8px 12px; font-weight: 700; }
+.project-archive-help { color: var(--tool-muted, #64748b); line-height: 1.65; font-size: 13px; }
+.project-archive-source { display: grid; gap: 6px; padding: 14px; border-radius: 8px; background: var(--tool-panel-soft, #f3f6fa); font-size: 13px; }
+.project-archive-source strong, .project-archive dd { overflow-wrap: anywhere; }
+.project-archive-source > span, .project-archive dt { color: var(--tool-muted, #64748b); }
+.project-archive-settings { display: grid; gap: 8px; margin: 18px 0; }
+.project-archive-settings label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.project-archive-settings > span { color: var(--tool-muted, #64748b); font-size: 12px; }
+.project-archive-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.project-archive-actions button, .project-archive-actions a { padding: 8px 13px; border: 1px solid var(--tool-line, #cbd5e1); border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; color: inherit; background: var(--tool-panel, #fff); text-decoration: none; }
+.project-archive-actions .project-archive-primary { background: #176c68; border-color: #176c68; color: white; }
+.project-archive-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.project-archive-note { background: var(--tool-panel-soft, #f3f6fa); border-left: 3px solid #c99843; padding: 10px 12px; line-height: 1.65; font-size: 13px; }
+.project-archive-error { color: var(--tool-red, #b83838); font-size: 13px; }
+.project-archive-success { color: #288576; font-size: 13px; }
+.project-archive-receipt { margin-top: 22px; border: 1px solid var(--tool-line, #d3dce7); border-radius: 10px; padding: 18px; }
+.project-archive progress { width: 100%; height: 8px; margin: 14px 0; accent-color: #176c68; }
+.project-archive dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 24px; font-size: 12px; }
+.project-archive dt { margin-bottom: 5px; }
+.project-archive dd { margin: 0; font-family: ui-monospace, monospace; line-height: 1.5; }
+.project-archive details { margin-top: 14px; font-size: 12px; }
+.project-archive summary { cursor: pointer; }
+.project-archive pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; padding: 12px; background: var(--tool-panel-soft, #f3f6fa); }
+@media (max-width: 650px) { .project-archive { padding: 14px; } .project-archive dl { grid-template-columns: 1fr; } }
+
+.project-archive button:focus-visible, .project-archive a:focus-visible, .project-archive input:focus-visible { outline: 2px solid #288576; outline-offset: 3px; }

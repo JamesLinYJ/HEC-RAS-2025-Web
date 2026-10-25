@@ -233,6 +233,14 @@ export class ServerBackend implements BackendGateway {
     return this.url(`/workspaces/${workspaceId}/archive`);
   }
 
+  projectArchiveUrl(cleanupToken: string): string {
+    if (this.disposed) throw new ServerBackendError('CLIENT_DISPOSED', 'The server gateway has been disposed.');
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(cleanupToken)) {
+      throw new ServerBackendError('INVALID_REQUEST', 'Expected a canonical project archive UUID.');
+    }
+    return this.url(`/project-archives/${cleanupToken}`);
+  }
+
   async uploadMapSources(context: WorkbenchContext, files: File[], options?: Pick<BackendRequestOptions, 'signal'> & { directory?: boolean }): Promise<MapSourceUploadResult> {
     if (this.disposed) throw new ServerBackendError('CLIENT_DISPOSED', 'The server gateway has been disposed.');
     if (options?.signal?.aborted) throw abortError(options.signal.reason);

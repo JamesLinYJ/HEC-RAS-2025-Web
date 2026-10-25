@@ -129,12 +129,37 @@ public static class DeveloperProjectArchiveService
         string archivePath = Path.GetFullPath(Path.Combine(root, expectedToken + ".zip"));
         if (!string.Equals(Path.GetDirectoryName(archivePath), Path.GetFullPath(root), PathComparison))
             return new(false);
-        if (!File.Exists(archivePath)) return new(true);
-        if (IsReparsePoint(archivePath) || Directory.Exists(archivePath)) return new(false);
-
+        string pendingPath = PendingArchivePath(expectedToken);
+        foreach (string path in new[] { archivePath, pendingPath })
+        {
+            if (Directory.Exists(path) || (File.Exists(path) && IsReparsePoint(path))) return new(false);
+        }
         File.Delete(archivePath);
-        return new(!File.Exists(archivePath));
+        File.Delete(pendingPath);
+        return new(!File.Exists(archivePath) && !File.Exists(pendingPath));
     }
+
+    /// <summary>Opens only an atomically published archive; the HTTP caller supplies no path.</summary>
+    public static FileStream? OpenCompletedArchive(string cleanupToken)
+    {
+        if (!Guid.TryParseExact(cleanupToken, "D", out Guid token) ||
+            !string.Equals(cleanupToken, token.ToString("D"), StringComparison.Ordinal)) return null;
+        string root = ArchiveRoot;
+        string path = Path.GetFullPath(Path.Combine(root, cleanupToken + ".zip"));
+        try
+        {
+            if (!string.Equals(Path.GetDirectoryName(path), root, PathComparison) ||
+                !Directory.Exists(root) || IsReparsePoint(root) || !File.Exists(path) ||
+                Directory.Exists(path) || IsReparsePoint(path)) return null;
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
+                HashBufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    private static string PendingArchivePath(string cleanupToken) =>
+        Path.Combine(ArchiveRoot, ".pending-" + cleanupToken + ".zip");
 
     private static DeveloperProjectArchiveResult PrepareCore(
         DeveloperProjectArchiveRequest request,
@@ -152,7 +177,8 @@ public static class DeveloperProjectArchiveService
             IsSameOrWithin(ArchiveRoot, operation.ProjectDirectory))
             throw new InvalidDataException("The selected project overlaps the private archive workspace.");
         EnsureArchiveDirectory();
-        if (File.Exists(operation.ArchivePath) || Directory.Exists(operation.ArchivePath))
+        if (File.Exists(operation.ArchivePath) || Directory.Exists(operation.ArchivePath) ||
+            File.Exists(operation.PendingArchivePath) || Directory.Exists(operation.PendingArchivePath))
             throw new IOException("The developer project archive identifier is already in use.");
         if (Directory.Exists(operation.StageDirectory) || File.Exists(operation.StageDirectory))
             throw new IOException("The developer project staging identifier is already in use.");
@@ -209,7 +235,7 @@ public static class DeveloperProjectArchiveService
                 inventoryBeforeZip = CaptureIncludedFiles(stagedProject.ProjectDirectory,
                     stagedProject.ResultsDirectory, request.IncludeResults, cancellationToken);
             }, progressStart: 0.4, progressScale: 0.6);
-            stagedProject.ZipFullProject(operation.ArchivePath, request.IncludeResults, reporter.Reporter);
+            stagedProject.ZipFullProject(operation.PendingArchivePath, request.IncludeResults, reporter.Reporter);
             cancellationToken.ThrowIfCancellationRequested();
             FileSnapshot[] beforeZip = inventoryBeforeZip
                 ?? throw new InvalidDataException("The source project archive did not report its staged file inventory.");
@@ -217,7 +243,7 @@ public static class DeveloperProjectArchiveService
             FileSnapshot[] afterZip = CaptureIncludedFiles(stagedProject.ProjectDirectory,
                 stagedProject.ResultsDirectory, request.IncludeResults, cancellationToken);
             EnsureSameInventory(beforeZip, afterZip);
-            int entryCount = VerifyArchive(operation.ArchivePath, afterZip, cancellationToken);
+            int entryCount = VerifyArchive(operation.PendingArchivePath, afterZip, cancellationToken);
             FileSnapshot[] stableAfterVerification = CaptureIncludedFiles(stagedProject.ProjectDirectory,
                 stagedProject.ResultsDirectory, request.IncludeResults, cancellationToken);
             EnsureSameInventory(afterZip, stableAfterVerification);
@@ -248,9 +274,22 @@ public static class DeveloperProjectArchiveService
             }
             try { TryDeleteStage(operation.StageDirectory, operation.CleanupToken); }
             catch (Exception error) { cleanupFailure ??= error; }
-            if (!completed || cleanupFailure is not null) TryDeleteArchive(operation.ArchivePath);
-            if (cleanupFailure is not null)
-                throw new IOException("The staged project could not be fully removed.", cleanupFailure);
+            try
+            {
+                if (cleanupFailure is not null)
+                    throw new IOException("The staged project could not be fully removed.", cleanupFailure);
+                if (completed)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    // Atomic same-directory publication is visible to the separate HTTP process
+                    // only after ZIP verification and staged-project disposal have succeeded.
+                    File.Move(operation.PendingArchivePath, operation.ArchivePath, overwrite: false);
+                }
+            }
+            finally
+            {
+                TryDeleteArchive(operation.PendingArchivePath);
+            }
         }
     }
 
@@ -280,6 +319,7 @@ public static class DeveloperProjectArchiveService
         DeveloperProjectArchiveRequest request,
         ArchiveOperation operation)
     {
+        TryDeleteArchive(operation.PendingArchivePath);
         TryDeleteArchive(operation.ArchivePath);
         return new("cancelled", operation.CleanupToken, operation.ArchivePath,
             operation.ProjectPath, operation.SourceProjectSHA256 ?? request.ExpectedProjectSHA256,
@@ -576,6 +616,7 @@ public static class DeveloperProjectArchiveService
         public string ProjectDirectory { get; } = projectDirectory;
         public string CleanupToken { get; } = cleanupToken;
         public string ArchivePath { get; } = archivePath;
+        public string PendingArchivePath { get; } = DeveloperProjectArchiveService.PendingArchivePath(cleanupToken);
         public string StageDirectory { get; } = stageDirectory;
         public string? SourceProjectSHA256 { get; set; }
     }

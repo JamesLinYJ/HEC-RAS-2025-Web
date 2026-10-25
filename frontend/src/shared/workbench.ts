@@ -43,6 +43,7 @@ export interface BackendGateway {
   uploadWorkspace?(files: File[], options?: Pick<BackendRequestOptions, 'signal'>): Promise<WorkspaceUploadResult>;
   /** Browser download URL for a successfully uploaded workspace; the server streams the archive. */
   workspaceArchiveUrl?(workspaceId: string): string;
+  projectArchiveUrl?(cleanupToken: string): string;
   /** Copies selected source files into the owning project before a separate map import commits. */
   uploadMapSources?(context: WorkbenchContext, files: File[], options?: Pick<BackendRequestOptions, 'signal'> & { directory?: boolean }): Promise<MapSourceUploadResult>;
 }

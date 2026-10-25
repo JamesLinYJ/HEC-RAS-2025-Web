@@ -1,0 +1,38 @@
+.stable-channel { color: var(--tool-ink, #203147); display: grid; gap: 16px; min-width: 0; }
+.stable-channel *, .stable-channel *::before, .stable-channel *::after { box-sizing: border-box; }
+.stable-heading, .stable-toolbar { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+.stable-heading h2 { font-size: 23px; margin: 4px 0 8px; }
+.stable-channel p { line-height: 1.65; margin: 7px 0; }
+.stable-eyebrow { color: var(--tool-muted, #586c80); font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+.stable-badge { background: var(--tool-panel-soft, #edf5f9); border: 1px solid var(--tool-line, #c7d8e5); border-radius: 20px; font-size: 12px; padding: 6px 10px; }
+.stable-card { background: var(--tool-panel, #fff); border: 1px solid var(--tool-line, #d7e2eb); border-radius: 12px; min-width: 0; padding: 18px; }
+.stable-card h3 { font-size: 16px; margin: 0 0 10px; }
+.stable-source { background: var(--tool-panel-soft, #f3f7fa); border-radius: 7px; display: grid; font-size: 13px; gap: 6px; padding: 12px; }
+.stable-form { display: grid; gap: 16px; }
+.stable-grid { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 16px; }
+.stable-four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.stable-field { display: grid; gap: 6px; min-width: 0; }
+.stable-field > span { font-size: 13px; font-weight: 650; }
+.stable-field em { color: var(--tool-blue, #1769aa); font-size: 11px; font-style: normal; font-weight: 500; margin-left: 8px; }
+.stable-channel input:not([type=checkbox]), .stable-channel select { background: var(--tool-panel, #fff); border: 1px solid var(--tool-line, #b8c9d8); border-radius: 6px; color: inherit; font: inherit; min-height: 36px; min-width: 0; padding: 7px 9px; width: 100%; }
+.stable-channel input[readonly] { background: var(--tool-panel-soft, #edf5fb); color: var(--tool-blue-dark, #0f4f86); }
+.stable-targets { border: 0; display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 5px; padding: 0; }
+.stable-targets legend { font-size: 13px; margin-bottom: 8px; }
+.stable-target { align-items: center; border: 1px solid var(--tool-line, #c3d3df); border-radius: 7px; display: flex; font-size: 13px; gap: 8px; padding: 9px 15px; }
+.stable-target.selected { background: var(--tool-panel-soft, #e9f4fc); border-color: var(--tool-blue, #1769aa); }
+.stable-material { border: 1px solid var(--tool-line, #c3d3df); border-radius: 8px; display: grid; gap: 13px; min-width: 0; padding: 14px; }
+.stable-material legend { font-size: 14px; font-weight: 650; padding: 0 5px; }
+.stable-channel button { background: var(--tool-panel-soft, #f2f7fb); border: 1px solid var(--tool-line, #becfdd); border-radius: 6px; color: var(--tool-blue-dark, #164f79); cursor: pointer; font: inherit; font-size: 13px; padding: 8px 12px; }
+.stable-channel button.stable-primary { background: var(--tool-blue, #1769aa); border-color: var(--tool-blue, #1769aa); color: #fff; }
+.stable-channel button:disabled, .stable-channel input:disabled, .stable-channel select:disabled, .stable-channel fieldset:disabled { cursor: default; opacity: .65; }
+.stable-channel button:focus-visible, .stable-channel input:focus-visible, .stable-channel select:focus-visible { outline: 2px solid var(--tool-blue, #1769aa); outline-offset: 2px; }
+.stable-help, .stable-channel small { color: var(--tool-muted, #586c80); font-size: 12px; line-height: 1.6; }
+.stable-actions { display: flex; gap: 10px; }
+.stable-warning { background: #fff7e7; border-radius: 7px; color: #725319; font-size: 13px; padding: 12px; }
+.stable-error { background: #fff2f1; border: 1px solid #e8c3bf; border-radius: 7px; color: #943a32; font-size: 13px; padding: 12px; }
+.stable-channel details { font-size: 12px; }
+.stable-channel summary { cursor: pointer; }
+.stable-channel code { font-size: 11px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.stable-channel pre { background: var(--tool-panel-soft, #f3f6f8); border-radius: 5px; max-height: 300px; overflow: auto; padding: 10px; white-space: pre-wrap; word-break: break-word; }
+@media (max-width: 1000px) { .stable-four { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .stable-grid, .stable-four { grid-template-columns: 1fr; } }

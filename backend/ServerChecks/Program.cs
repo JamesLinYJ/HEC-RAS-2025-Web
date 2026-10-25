@@ -10,6 +10,59 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-project-archive-download-http", string archiveBase, string archiveOutput])
+            {
+                TextWriter protocol = Console.Out;
+                ProjectArchiveDownloadAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunProjectArchiveDownloadAsync(
+                    new Uri(EnsureTrailingSlash(archiveBase)), archiveOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--create-stable-channel-fixture", string stableFixtureOutput])
+            {
+                TextWriter protocol = Console.Out;
+                object report;
+                Console.SetOut(Console.Error);
+                try { report = ServerAcceptance.CreateStableChannelFixture(stableFixtureOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--run-stable-channel-http", string stableBase, string stableOutput])
+            {
+                TextWriter protocol = Console.Out;
+                object report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunStableChannelAsync(
+                    new Uri(EnsureTrailingSlash(stableBase)), stableOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--create-projection-export-fixture", string projectionFixtureOutput])
+            {
+                TextWriter protocol = Console.Out;
+                object report;
+                Console.SetOut(Console.Error);
+                try { report = ServerAcceptance.CreateProjectionExportFixture(projectionFixtureOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--run-project-projection-export-http", string projectionBase, string projectionOutput])
+            {
+                TextWriter protocol = Console.Out;
+                object report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunProjectProjectionExportAsync(
+                    new Uri(EnsureTrailingSlash(projectionBase)), projectionOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-plan-matrix-isolation-http", string matrixBase, string matrixOutput])
             {
                 TextWriter protocol = Console.Out;

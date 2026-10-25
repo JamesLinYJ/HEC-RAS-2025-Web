@@ -222,3 +222,15 @@ dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- \
 ```
 
 This check creates its own fresh project and exports two `.r2r.h5` files through the running HTTP service. It verifies unchanged input file hashes, actual property-table and initial-condition preparation, Plan draft values and associations in the exported HDF, existing-file skips, stale dependency rejection, cancellation and cleanup after output or partial-copy failures. It does not invoke the solver. Use a new output directory outside the repository. Run the server and the check with the same isolated temporary directory (`TMPDIR` on macOS/Linux, or `TEMP`/`TMP` on Windows), without concurrent matrix exports there, so cleanup checks can account for every preparation workspace. Browser interaction requires separate verification.
+
+### Stable channel design
+
+`--run-stable-channel-http <loopback-base-url> <new-output-directory>` creates an independent US Customary project with two stable-channel designs. It compares two target-pair calculations through HTTP with the retained `TractiveForceMethod`, checks invalid and stale input rejection, saves one design, and reads the HDF through a fresh project. The other design and project files must remain unchanged. This is the stable-channel design solver, separate from a complete project simulation. `--create-stable-channel-fixture <new-directory>` creates a reusable input fixture for browser checks.
+
+### Project projection export
+
+`--run-project-projection-export-http <loopback-base-url> <new-output-directory>` creates projected and local-coordinate projects, exports real ESRI `.prj` files, checks GDAL readback and unique filenames, and verifies source-file preservation and stale-source rejection. `--create-projection-export-fixture <new-directory>` creates independent inputs for browser checks.
+
+### Prepared project archive download
+
+`--run-project-archive-download-http <loopback-base-url> <new-output-directory>` prepares and downloads ZIPs with and without result files. It checks downloaded bytes and each entry against the verified archive inventory, source preservation, cancellation, token-only access and idempotent cleanup. The server and check must share the same isolated temporary directory so pending-file and link-denial checks examine the correct archive directory. A ZIP is downloadable only after verification and staging cleanup complete; preparation publishes the completed file atomically. Run against a local service and use a fresh output directory outside the repository. Browser download interaction is verified separately.

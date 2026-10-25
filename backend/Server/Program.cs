@@ -142,6 +142,7 @@ app.MapPost("/api/operations/{id}/controls", async (string id, HttpContext conte
     };
 });
 
+app.MapProjectArchiveDownloads();
 app.MapWorkspaceUploads();
 app.MapSourceUploads();
 app.MapGdbSourceUploads();

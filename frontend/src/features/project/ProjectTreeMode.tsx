@@ -19,6 +19,9 @@ import {
   toggleProjectTreeNode,
 } from './ProjectTreeModeVM';
 import type { ProjectTreeAction, ProjectTreeCategory, ProjectTreeModeName } from './ProjectTreeModeVM';
+import { ProjectBehaviors } from './behaviors/ProjectBehaviors';
+import { sameProjectionPath } from './behaviors/projectProjectionExport';
+import { text } from '../../shared/workbench';
 
 export interface ProjectTreeModeProps {
   language: Language;
@@ -40,6 +43,8 @@ export interface ProjectTreeModeProps {
   onOpen: (node: CatalogTreeNode) => void;
   onPerformAction: (action: ProjectTreeAction, node: CatalogTreeNode) => void;
   onRetry: () => void;
+  onExportProjectProjection?: () => void;
+  projectionExportDisabledReason?: string;
 }
 
 /** React counterpart to the source ProjectTreeMode view; VM transitions stay in ProjectTreeModeVM.ts. */
@@ -63,6 +68,8 @@ export function ProjectTreeMode({
   onOpen,
   onPerformAction,
   onRetry,
+  onExportProjectProjection,
+  projectionExportDisabledReason,
 }: ProjectTreeModeProps) {
   const [statesByMode, setStatesByMode] = useState(() => ({
     project: createProjectTreeModeVMState(),
@@ -119,7 +126,20 @@ export function ProjectTreeMode({
     onPerformAction(action, node);
   };
 
+  const selectedProject = snapshot ? state.selectedNode : null;
+  const projectActions = ProjectBehaviors.AttachActions_Layer_ContextMenu(selectedProject);
+  const selectedProjectMatches = !!context.projectPath && !!selectedProject?.catalogSummary?.filename &&
+    sameProjectionPath(selectedProject.catalogSummary.filename, context.projectPath);
+
   return (
+    <>
+    {projectActions.length > 0 && onExportProjectProjection && <div className="project-toolbar-actions" data-testid="project-selected-project-actions">
+      <span>{selectedProject?.localizeName ? text(language, '工程', 'Project') : selectedProject?.name}</span>
+      <button type="button" className="project-button project-button-secondary" data-testid="project-selected-projection-export"
+        disabled={!selectedProjectMatches || Boolean(projectionExportDisabledReason)}
+        title={!selectedProjectMatches ? '所选工程与当前工程不一致，请重新选择当前工程。' : projectionExportDisabledReason}
+        onClick={onExportProjectProjection}>{text(language, projectActions[0].name, 'Export projection')}</button>
+    </div>}
     <ProjectTreeModeReactView
       language={language}
       backend={backend}
@@ -154,5 +174,6 @@ export function ProjectTreeMode({
       onCloseContextMenu={() => setContextMenu(null)}
       onRetry={onRetry}
     />
+    </>
   );
 }

@@ -26,6 +26,7 @@ export function sessionBackend(backend: BackendGateway, context: WorkbenchContex
     ...(backend.subscribeCapabilities ? { subscribeCapabilities: backend.subscribeCapabilities.bind(backend) } : {}),
     ...(backend.uploadWorkspace ? { uploadWorkspace: backend.uploadWorkspace.bind(backend) } : {}),
     ...(backend.workspaceArchiveUrl ? { workspaceArchiveUrl: backend.workspaceArchiveUrl.bind(backend) } : {}),
+    ...(backend.projectArchiveUrl ? { projectArchiveUrl: backend.projectArchiveUrl.bind(backend) } : {}),
     ...(backend.uploadMapSources ? { uploadMapSources: backend.uploadMapSources.bind(backend) } : {}),
   };
 }

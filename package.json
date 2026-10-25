@@ -31,7 +31,10 @@
     "test:mesh-export": "node scripts/verify-mesh-export.mjs",
     "test:plan-diff": "node scripts/verify-plan-diff.mjs",
     "test:r2r-matrix": "node scripts/verify-r2r-matrix.mjs",
-    "test:plan-analysis-drafts": "node scripts/verify-plan-analysis-drafts.mjs"
+    "test:plan-analysis-drafts": "node scripts/verify-plan-analysis-drafts.mjs",
+    "test:stable-channel": "node scripts/verify-stable-channel.mjs",
+    "test:project-projection-export": "node scripts/verify-project-projection-export.mjs",
+    "test:project-archive": "node scripts/verify-project-archive.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

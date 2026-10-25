@@ -71,6 +71,15 @@ try {
   assert.equal(resumeCalls[0].operationId, resumeID, 'Resuming keeps the exact accepted HTTP operation identity.');
   assert.equal(resumeCalls[0].options, resumeOptions, 'Resuming preserves cancellation and progress callbacks without a new request payload.');
   assert.equal(calls.length, 0, 'A resumed session operation must not submit a new request.');
+  assert.equal(gateway.projectArchiveUrl, undefined, 'A session cannot invent archive download support.');
+  const archiveToken = '12345678-abcd-4000-8000-123456789abc';
+  const archiveTransport = { ...transport, projectArchiveUrl: function (token) {
+    assert.equal(this, archiveTransport, 'Archive downloads remain bound to the captured transport.');
+    return `http://127.0.0.1:5080/api/project-archives/${token}`;
+  } };
+  assert.equal(sessionBackend(archiveTransport, active).projectArchiveUrl(archiveToken),
+    `http://127.0.0.1:5080/api/project-archives/${archiveToken}`);
+  assert.equal(calls.length, 0, 'Building a download link must not submit another archive preparation.');
   const parameters = { map: { projectPath: source.projectPath }, model: { projectPath: source.projectPath }, source: { projectPath: source.projectPath } };
   const options = { signal: new AbortController().signal };
   await gateway.request('map.layer.inspect', parameters, options);
@@ -383,6 +392,6 @@ try {
   verify(staleSourceCalls.length === 0,
     'A stale source core capture produces no inspect or commit POST.');
 
-  console.log(JSON.stringify({ state: 'passed', checks: 48 + addedChecks + documentChecks,
+  console.log(JSON.stringify({ state: 'passed', checks: 52 + addedChecks + documentChecks,
     scope: 'session-reference-project-context-and-external-connection-ownership' }));
 } finally { await rm(temporary, { recursive: true, force: true }); }

@@ -55,6 +55,13 @@ try {
   const registryWith = changes => publishPlanAnalysisDraft(emptyPlanAnalysisDraftRegistry(), editorID, { ...publication, ...changes });
   const codes = result => result.blockers.map(item => item.code);
 
+  test('tool and project writes block navigation until confirmed, while ordinary settings remain discardable', () => {
+    for (const owner of ['tools.stable-channel-write:save', 'project.projection-export:export', 'tools.project-archive:prepare'])
+      assert.equal(hasProtectedSourceWrite(new Set([owner]), emptyPlanAnalysisDraftRegistry()), true, owner);
+    for (const owner of ['tools.stable-channel-draft:form', 'tools.project-archive-settings:form'])
+      assert.equal(hasProtectedSourceWrite(new Set([owner]), emptyPlanAnalysisDraftRegistry()), false, owner);
+  });
+
   test('changed ordinary raw values and sourceState preserved; loaded derived fields omitted', () => {
     assert.deepEqual(planDraft.fields, { value: ' 0.2500 ', core: '4' });
     assert.equal(planDraft.sourceState, snapshot.sourceState);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ContextChangeOptions, FeatureId, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { errorDiagnostics, message, text } from '../../shared/workbench';
 import { validateSessionReferenceContext, withSessionReferenceContext } from '../../shared/sessionReferences';
@@ -34,6 +34,10 @@ import { isAbsoluteServerPath, MAX_RECENT_PROJECTS, RECENT_PROJECTS_STORAGE_KEY 
 import { ProjectOpenProjectDialog } from './ProjectOpenProjectDialog';
 import { ExternalConnectionManager } from './ExternalConnectionManager';
 import type { ExternalConnectionCommitReceipt } from './ExternalConnectionWorkflow';
+import { ProjectCatalogHeaderBehaviors } from './behaviors/ProjectCatalogHeaderBehaviors';
+import { ProjectProjectionExportController } from './behaviors/ProjectProjectionExportController';
+import { ProjectProjectionExportPanel } from './behaviors/ProjectProjectionExportPanel';
+import { projectProjectionSourceKey, type ProjectProjectionSource } from './behaviors/projectProjectionExport';
 import './project.css';
 
 export type ProjectCommandKind = 'open' | 'new';
@@ -216,6 +220,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   const [treeMode, setTreeMode] = useState<ProjectTreeModeName>('project');
   const [projectSnapshot, setProjectSnapshot] = useState<CatalogTreeSnapshot | null>(null);
   const [catalogSnapshot, setCatalogSnapshot] = useState<CatalogTreeSnapshot | null>(null);
+  const [catalogProjectionSourceKey, setCatalogProjectionSourceKey] = useState<string | null>(null);
   const [treeLoading, setTreeLoading] = useState(false);
   const [treeErrors, setTreeErrors] = useState<TreeErrors>({});
   const [treeReloadKey, setTreeReloadKey] = useState(0);
@@ -240,6 +245,32 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
   draftProtectionRef.current = { newProjectDirty, hasUnsavedDrafts: Boolean(props.hasUnsavedDrafts) };
   const libraryImportBusyRef = useRef(false);
   libraryImportBusyRef.current = libraryImportBusy;
+
+  const projectionDirtyRef = useRef(props.onDirtyStateChange);
+  projectionDirtyRef.current = props.onDirtyStateChange;
+  const projectionBackendRef = useRef({ backend, revision: props.backendRevision });
+  projectionBackendRef.current = { backend, revision: props.backendRevision };
+  const [projectionController] = useState(() => new ProjectProjectionExportController((owner, dirty) => projectionDirtyRef.current?.(owner, dirty)));
+  const projectionState = useSyncExternalStore(projectionController.subscribe, projectionController.getSnapshot);
+  const projectionSource: ProjectProjectionSource = {
+    context, catalogSourceKey: catalogProjectionSourceKey,
+    projectionWKT: catalogSnapshot?.roots.find(node => node.sourceClass === 'ModelSectionContext')?.properties
+      ?.find(property => property.id === 'Project/ProjectionWKT')?.value ?? null,
+  };
+  const projectionAction = ProjectCatalogHeaderBehaviors.GetContextMenuActions()[0];
+  const projectionExportBlocked = Boolean(props.hasUnsavedDrafts || newProjectDirty || fileBusy || libraryImportBusy || savingProject || pendingModelActionNodeId);
+  const projectionExportDisabledReason = projectionController.pending ? '工程投影导出尚未完成，请先核对当前任务。'
+    : !props.onDirtyStateChange ? '当前界面缺少工程写入保护。'
+      : projectionExportBlocked ? '存在未保存编辑或正在进行的写入，请先完成后再导出投影。'
+        : !backend.supports(projectionAction.method) || !backend.supports('workspace.file.inspect') ? '当前 C# 服务未提供投影导出及文件读回能力。'
+          : projectionAction.disabledReason(projectionSource);
+  const exportProjectProjection = (): void => {
+    const key = projectProjectionSourceKey(context);
+    const backendRevision = props.backendRevision;
+    void projectionController.start(projectionSource, backend, () => projectProjectionSourceKey(contextRef.current) === key &&
+      projectionBackendRef.current.backend === backend && projectionBackendRef.current.revision === backendRevision,
+      projectionExportBlocked || !props.onDirtyStateChange);
+  };
 
   const hasCurrentProject = Boolean(context.projectPath);
   const hasProjectRevision = /^[0-9a-f]{64}$/i.test(context.projectRevision ?? '');
@@ -569,6 +600,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     treeAbort.current = controller;
     setProjectSnapshot(null);
     setCatalogSnapshot(null);
+    setCatalogProjectionSourceKey(null);
     setTreeErrors({});
     if (!path || isBrowserFileIdentity(path)) {
       setTreeLoading(false);
@@ -605,7 +637,10 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
       for (const result of results) {
         if (result.status === 'fulfilled') {
           if (result.value.target === 'project') setProjectSnapshot(result.value.snapshot);
-          else setCatalogSnapshot(result.value.snapshot);
+          else {
+            setCatalogSnapshot(result.value.snapshot);
+            setCatalogProjectionSourceKey(projectProjectionSourceKey(context));
+          }
         } else {
           const method = methods[results.indexOf(result)]?.target;
           if (method) errors[method] = message(result.reason);
@@ -619,7 +654,7 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
     return () => {
       controller.abort();
     };
-  }, [backend, context.projectPath, context.projectXml, context.projectSessionID, language, props.backendRevision, treeReloadKey]);
+  }, [backend, context.projectPath, context.projectXml, context.projectRevision, context.projectSessionID, context.coreLayerContext, language, props.backendRevision, treeReloadKey]);
 
   const retryTrees = (): void => setTreeReloadKey((key) => key + 1);
 
@@ -1135,6 +1170,9 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
         <div className="project-toolbar-breadcrumb"><span className="project-toolbar-mark">RAS</span><span>{text(language, '工程管理器', 'Project Explorer')}</span>{title && <><i>/</i><strong title={title}>{title}</strong></>}</div>
         <div className="project-toolbar-actions">
           {headerAction}
+          <button type="button" className="project-button project-button-secondary" data-testid="project-projection-export"
+            disabled={Boolean(projectionExportDisabledReason)} title={projectionExportDisabledReason}
+            onClick={exportProjectProjection}>{text(language, projectionAction.name, 'Export projection')}</button>
           {hasBackendFileIdentity && <>
             <button type="button" className="project-button project-button-secondary" data-testid="project-create-terrain" disabled={Boolean(surfaceCreationDisabledReason)} title={surfaceCreationDisabledReason} onClick={() => openSurfaceCreationDialog('newTerrain')}>{text(language, '新建地形', 'New terrain')}</button>
             <button type="button" className="project-button project-button-secondary" data-testid="project-create-classification" disabled={Boolean(surfaceCreationDisabledReason)} title={surfaceCreationDisabledReason} onClick={() => openSurfaceCreationDialog('newClassification')}>{text(language, '新建分类图层', 'New classification layer')}</button>
@@ -1147,6 +1185,9 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
           <button type="button" className="project-button project-button-primary" disabled={libraryImportBusy} onClick={() => setNewProjectOpen(true)}>{text(language, '新建工程', 'New project')}</button>
         </div>
       </div>
+
+      {hasCurrentProject && projectionExportDisabledReason && !projectionController.pending && <p className="project-inline-help" data-testid="project-projection-export-disabled-reason">{projectionExportDisabledReason}</p>}
+      <ProjectProjectionExportPanel language={language} state={projectionState} controller={projectionController} />
 
       {fileError && <div className="project-global-notice is-error" role="alert"><span>!</span><div className="project-global-error-copy">{fileError}{fileErrorDetails && <details><summary>{text(language, '原始诊断', 'Raw diagnostics')}</summary><pre>{fileErrorDetails}</pre></details>}</div><button type="button" onClick={() => { setFileError(undefined); setFileErrorDetails(undefined); }}>×</button></div>}
       {notice && <div className="project-global-notice" role="status"><span>i</span>{notice}<button type="button" onClick={() => setNotice(undefined)}>×</button></div>}
@@ -1224,6 +1265,8 @@ export function ProjectExplorerControl(props: ProjectExplorerProps) {
             onRetry={retryTrees}
             onContextCommit={props.onContextCommit}
             onGeometryBackupCommitted={onGeometryBackupCommitted}
+            onExportProjectProjection={exportProjectProjection}
+            projectionExportDisabledReason={projectionExportDisabledReason}
           />}
         </div>
       )}
