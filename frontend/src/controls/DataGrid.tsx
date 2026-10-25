@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FocusEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type FocusEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import type { Language } from '../shared/workbench';
 import { GenericEnumFilterControl, type GenericEnumFilterOption } from './GenericEnumFilterControl';
 import { clipboardMatrixFits, parseClipboardMatrix, serializeClipboardMatrix } from './dataGridClipboard';
+import { DataGridContextMenuFlyout } from './DataGridContextMenuFlyout';
+import { gridArrowDestination, planGridCellEdits, sameGridClipboardScope,
+  type GridArrowKey, type GridCellEdit, type GridCellIdentity as CellIdentity, type GridClipboardScope } from './dataGridSelection';
 import './dataGrid.css';
 
 export interface DataGridColumn {
@@ -60,11 +63,6 @@ interface DiscreteValues {
   overLimit: boolean;
 }
 
-interface CellIdentity {
-  rowID: string;
-  columnID: string;
-}
-
 interface CellPosition {
   identity: CellIdentity;
   rowIndex: number;
@@ -85,6 +83,10 @@ interface ResizeSession {
 }
 
 const cellIdentityKey = (rowID: string, columnID: string): string => JSON.stringify([rowID, columnID]);
+
+function isCellEditor(target: Element | null): boolean {
+  return Boolean(target?.closest('input, select, textarea, button, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'));
+}
 
 function parseCellIdentityKey(value: string): CellIdentity | null {
   try {
@@ -158,6 +160,17 @@ export function DataGrid<Row>({
   const gridRoot = useRef<HTMLDivElement | null>(null);
   const pointerSelection = useRef(false);
   const keyboardFocus = useRef(false);
+  const [pendingFocus, setPendingFocus] = useState<CellIdentity | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [clipboardPending, setClipboardPending] = useState<{ id: number; scope: GridClipboardScope } | null>(null);
+  const clipboardRequestID = useRef(0);
+  const interactionVersion = useRef(0);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; clipboardRequestID.current += 1; };
+  }, []);
 
   useEffect(() => {
     setSearch('');
@@ -170,6 +183,10 @@ export function DataGrid<Row>({
     setSelectedCellKeys([]);
     setSelectionMessage('');
     setColumnWidths({});
+    setContextMenu(null);
+    setPendingFocus(null);
+    copiedGridText.current = null;
+    interactionVersion.current += 1;
   }, [initialFilterColumnId, resetKey]);
 
   useEffect(() => {
@@ -266,6 +283,37 @@ export function DataGrid<Row>({
   const pageStart = pageSize ? currentPage * pageSize : 0;
   const rowIndexByID = useMemo(() => new Map<string, number>(filteredRows.map((item, index): [string, number] => [getRowId(item.row), index])), [filteredRows, getRowId]);
   const columnIndexByID = useMemo(() => new Map<string, number>(columns.map((column, index): [string, number] => [column.id, index])), [columns]);
+  const viewKey = JSON.stringify([filteredRows.map(item => getRowId(item.row)), columns.map(column => column.id), currentPage]);
+  const clipboardScope: GridClipboardScope = { rows, columns, resetKey, viewKey,
+    selectionKey: JSON.stringify([activeCell, selectedCellKeys]), interactionVersion: interactionVersion.current,
+    adapters: [canPasteCell, onCellPaste, getRowId, getCellValue, getClipboardCellValue] };
+  const clipboardScopeRef = useRef(clipboardScope);
+  // Changing away and back to the same row/selection objects must not revive an old clipboard read.
+  if (!sameGridClipboardScope(clipboardScopeRef.current, clipboardScope)) {
+    clipboardScope.interactionVersion = ++interactionVersion.current;
+  }
+  clipboardScopeRef.current = clipboardScope;
+  const clipboardBusy = clipboardPending !== null && clipboardPending.id === clipboardRequestID.current &&
+    sameGridClipboardScope(clipboardPending.scope, clipboardScope);
+
+  useEffect(() => { setContextMenu(null); }, [rows, columns, resetKey, viewKey]);
+
+  // A page change must commit its new rows before a requested cell can receive focus.
+  useLayoutEffect(() => {
+    if (!pendingFocus) return;
+    const rowIndex = rowIndexByID.get(pendingFocus.rowID);
+    if (rowIndex === undefined || !columnIndexByID.has(pendingFocus.columnID)) { setPendingFocus(null); return; }
+    const destinationPage = pageSize ? Math.floor(rowIndex / pageSize) : 0;
+    if (destinationPage !== currentPage) { setPageIndex(destinationPage); return; }
+    const cell = Array.from(gridRoot.current?.querySelectorAll<HTMLElement>('td[data-grid-row-id][data-grid-column-id]') ?? [])
+      .find(candidate => candidate.dataset.gridRowId === pendingFocus.rowID && candidate.dataset.gridColumnId === pendingFocus.columnID);
+    if (cell) {
+      keyboardFocus.current = true;
+      try { cell.focus({ preventScroll: true }); cell.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+      finally { keyboardFocus.current = false; }
+    }
+    setPendingFocus(null);
+  }, [columnIndexByID, currentPage, pageSize, pendingFocus, rowIndexByID]);
 
   const positionFor = (identity: CellIdentity): CellPosition | null => {
     const rowIndex = rowIndexByID.get(identity.rowID);
@@ -303,6 +351,9 @@ export function DataGrid<Row>({
   };
 
   const selectCell = (identity: CellIdentity, modifiers: { shift?: boolean; toggle?: boolean } = {}): void => {
+    interactionVersion.current += 1;
+    setPendingFocus(null);
+    setContextMenu(null);
     setActiveCell(identity);
     if (modifiers.shift && selectionAnchor) {
       const nextKeys = selectRectangle(selectionAnchor, identity);
@@ -349,6 +400,51 @@ export function DataGrid<Row>({
     return { text: lines.join('\r\n'), cellCount: positions.length };
   };
 
+  const submitCellEdits = (edits: GridCellEdit[], action: 'paste' | 'clear'): void => {
+    if (!onCellPaste) return;
+    const plan = planGridCellEdits(edits, filteredRows.map(item => item.row), columns, getRowId, canPasteCell);
+    const submitted: CellIdentity[] = [];
+    let failed = 0;
+    for (const edit of plan.accepted) {
+      try { onCellPaste(edit.row, edit.column, edit.value); submitted.push(edit.identity); }
+      catch { failed += 1; }
+    }
+    if (action === 'paste' && submitted.length > 0) {
+      interactionVersion.current += 1;
+      setSelectedCellKeys(submitted.map(identity => cellIdentityKey(identity.rowID, identity.columnID)));
+      setSelectionAnchor(submitted[0]!);
+      setActiveCell(submitted[submitted.length - 1]!);
+      setPendingFocus(submitted[submitted.length - 1]!);
+    }
+    setSelectionMessage(zh
+      ? `已向编辑器提交 ${submitted.length} 个单元格的${action === 'clear' ? '清空' : '粘贴'}请求${plan.skipped ? `；跳过 ${plan.skipped} 个只读、不可编辑或当前视图外的单元格` : ''}${failed ? `；${failed} 个单元格被编辑器拒绝` : ''}。`
+      : `Submitted ${action} requests for ${submitted.length} cells${plan.skipped ? `; skipped ${plan.skipped} read-only, unavailable or out-of-view cells` : ''}${failed ? `; the editor rejected ${failed} cells` : ''}.`);
+  };
+
+  const effectiveSelectedPositions = (): CellPosition[] => {
+    const positions = selectedPositions();
+    const active = activeCell ? positionFor(activeCell) : null;
+    return positions.length ? positions : active ? [active] : [];
+  };
+
+  const clearSelectionValues = (): void => {
+    if (!onCellPaste) return;
+    interactionVersion.current += 1;
+    submitCellEdits(effectiveSelectedPositions().map(position => ({ identity: position.identity, value: '' })), 'clear');
+  };
+
+  const selectAllCells = (): void => {
+    if (!filteredRows.length || !columns.length) return;
+    interactionVersion.current += 1;
+    const first = { rowID: getRowId(filteredRows[0]!.row), columnID: columns[0]!.id };
+    const last = { rowID: getRowId(filteredRows[filteredRows.length - 1]!.row), columnID: columns[columns.length - 1]!.id };
+    const keys = selectRectangle(first, last);
+    setSelectedCellKeys(keys);
+    setSelectionAnchor(first);
+    if (!activePosition) setActiveCell(first);
+    setSelectionMessage(zh ? `已选择当前筛选表格的全部 ${keys.length} 个单元格。` : `Selected all ${keys.length} cells in the filtered grid.`);
+  };
+
   const applyClipboardText = (text: string): void => {
     if (!onCellPaste) return;
     const matrix = parseClipboardMatrix(text);
@@ -372,16 +468,11 @@ export function DataGrid<Row>({
       setSelectionMessage(language === 'zh' ? '粘贴区域超出当前筛选表格范围，未应用任何单元格。' : 'The paste range extends beyond the filtered grid; no cells were changed.');
       return;
     }
-    const accepted: CellIdentity[] = [];
-    let skipped = 0;
+    const edits: GridCellEdit[] = [];
     if (fillSelection) {
       const value = matrix[0]![0]!;
       for (const position of positions) {
-        const row = filteredRows[position.rowIndex]!.row;
-        const column = columns[position.columnIndex]!;
-        if (column.readOnly || canPasteCell?.(row, column) === false) { skipped += 1; continue; }
-        onCellPaste(row, column, value);
-        accepted.push(position.identity);
+        edits.push({ identity: position.identity, value });
       }
     } else {
       for (let rowOffset = 0; rowOffset < matrix.length; rowOffset += 1) {
@@ -389,41 +480,36 @@ export function DataGrid<Row>({
         for (let columnOffset = 0; columnOffset < matrix[rowOffset]!.length; columnOffset += 1) {
           const column = columns[origin.columnIndex + columnOffset]!;
           const value = matrix[rowOffset]![columnOffset]!;
-          if (column.readOnly || canPasteCell?.(row, column) === false) { skipped += 1; continue; }
-          onCellPaste(row, column, value);
-          accepted.push({ rowID: getRowId(row), columnID: column.id });
+          edits.push({ identity: { rowID: getRowId(row), columnID: column.id }, value });
         }
       }
     }
-    if (accepted.length > 0) {
-      const keys = accepted.map(identity => cellIdentityKey(identity.rowID, identity.columnID));
-      setSelectedCellKeys(keys);
-      setSelectionAnchor(accepted[0]!);
-      setActiveCell(accepted[accepted.length - 1]!);
-    }
-    const summary = language === 'zh'
-      ? `已粘贴 ${accepted.length} 个单元格${skipped ? `；跳过 ${skipped} 个只读或当前视图外的单元格` : ''}。`
-      : `Pasted ${accepted.length} cells${skipped ? `; skipped ${skipped} read-only or out-of-view cells` : ''}.`;
-    setSelectionMessage(summary);
+    submitCellEdits(edits, 'paste');
   };
 
   const handleCopy = (event: ClipboardEvent<HTMLDivElement>): void => {
     const target = event.target;
     if (!(target instanceof Element) || !target.closest('td[data-grid-row-id]')) return;
     copiedGridText.current = null;
+    if (target.closest('[contenteditable]:not([contenteditable="false"]), [role="textbox"]')) return;
     const input = target.closest('input, textarea') as HTMLInputElement | HTMLTextAreaElement | null;
     if (input && input.selectionStart !== input.selectionEnd) return;
     const selection = copySelectionText();
     if (!selection) return;
-    event.preventDefault();
-    event.clipboardData.setData('text/plain', selection.text);
-    copiedGridText.current = selection.text;
-    setSelectionMessage(language === 'zh' ? `已复制 ${selection.cellCount} 个单元格。` : `Copied ${selection.cellCount} cells.`);
+    try {
+      event.clipboardData.setData('text/plain', selection.text);
+      event.preventDefault();
+      copiedGridText.current = selection.text;
+      setSelectionMessage(language === 'zh' ? `已复制 ${selection.cellCount} 个单元格。` : `Copied ${selection.cellCount} cells.`);
+    } catch {
+      setSelectionMessage(zh ? '复制失败；剪贴板未写入，请使用 Ctrl/Command+C。' : 'Copy failed; the clipboard was not written. Use Control/Command+C.');
+    }
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>): void => {
     const target = event.target;
     if (!onCellPaste || !(target instanceof Element) || !target.closest('td[data-grid-row-id]')) return;
+    if (target.closest('[contenteditable]:not([contenteditable="false"]), [role="textbox"]')) return;
     const text = event.clipboardData.getData('text/plain');
     const input = target.closest('input, textarea') as HTMLInputElement | HTMLTextAreaElement | null;
     const copiedFromGrid = copiedGridText.current === text;
@@ -431,7 +517,67 @@ export function DataGrid<Row>({
     const gridRangePaste = /[\t\r\n]/.test(text) || text.startsWith('"') || selectedPositions().length > 1 || copiedFromGrid;
     if (input && !input.readOnly && !input.disabled && !gridRangePaste) return;
     event.preventDefault();
+    interactionVersion.current += 1;
     applyClipboardText(text);
+  };
+
+  const closeContextMenu = (restoreFocus: boolean): void => {
+    setContextMenu(null);
+    if (restoreFocus && activeCell) setPendingFocus(activeCell);
+  };
+
+  const clipboardCommand = async (action: 'copy' | 'paste'): Promise<void> => {
+    if (clipboardBusy) return;
+    const selection = action === 'copy' ? copySelectionText() : null;
+    if (action === 'copy' && !selection) return;
+    const capture = { id: ++clipboardRequestID.current, scope: clipboardScopeRef.current };
+    const isCurrent = (): boolean => mounted.current && clipboardRequestID.current === capture.id &&
+      interactionVersion.current === capture.scope.interactionVersion && sameGridClipboardScope(capture.scope, clipboardScopeRef.current);
+    setClipboardPending(capture);
+    closeContextMenu(true);
+    copiedGridText.current = null;
+    setSelectionMessage(zh ? (action === 'copy' ? '正在写入剪贴板…' : '正在读取剪贴板…')
+      : action === 'copy' ? 'Writing to the clipboard…' : 'Reading the clipboard…');
+    try {
+      if (action === 'copy') {
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard write is unavailable.');
+        await navigator.clipboard.writeText(selection!.text);
+        if (!isCurrent()) return;
+        copiedGridText.current = selection!.text;
+        setSelectionMessage(zh ? `已复制 ${selection!.cellCount} 个单元格。` : `Copied ${selection!.cellCount} cells.`);
+      } else {
+        if (!navigator.clipboard?.readText) throw new Error('Clipboard read is unavailable.');
+        const text = await navigator.clipboard.readText();
+        if (!isCurrent()) {
+          if (mounted.current && clipboardRequestID.current === capture.id) setSelectionMessage(zh
+            ? '选择或表格数据已变化，剪贴板内容未粘贴；请重新操作。'
+            : 'The selection or table changed. Clipboard text was not pasted; try again.');
+          return;
+        }
+        applyClipboardText(text);
+      }
+    } catch {
+      if (!isCurrent()) return;
+      setSelectionMessage(zh
+        ? action === 'copy' ? '复制失败；剪贴板未写入，请使用 Ctrl/Command+C。' : '无法读取剪贴板；请选中目标单元格后使用 Ctrl/Command+V。'
+        : action === 'copy' ? 'Copy failed; the clipboard was not written. Use Control/Command+C.' : 'Could not read the clipboard. Select the destination and use Control/Command+V.');
+    } finally {
+      if (mounted.current && clipboardRequestID.current === capture.id) setClipboardPending(null);
+    }
+  };
+
+  const handleGridContextMenu = (event: MouseEvent<HTMLDivElement>): void => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (isCellEditor(target)) return;
+    const cell = target?.closest<HTMLTableCellElement>('td[data-grid-row-id][data-grid-column-id]');
+    const rowID = cell?.dataset.gridRowId;
+    const columnID = cell?.dataset.gridColumnId;
+    if (!cell || !rowID || !columnID) return;
+    event.preventDefault();
+    const identity = { rowID, columnID };
+    if (!selectedCellKeySet.has(cellIdentityKey(rowID, columnID))) selectCell(identity);
+    else { interactionVersion.current += 1; setActiveCell(identity); }
+    setContextMenu({ x: event.clientX, y: event.clientY });
   };
 
   const handleCellFocus = (event: FocusEvent<HTMLDivElement>): void => {
@@ -445,6 +591,7 @@ export function DataGrid<Row>({
   };
 
   const handleGridKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.altKey) return;
     const commandKey = event.ctrlKey || event.metaKey;
     const target = event.target instanceof Element ? event.target : null;
     const cell = target?.closest<HTMLTableCellElement>('td[data-grid-row-id][data-grid-column-id]') ?? null;
@@ -453,36 +600,38 @@ export function DataGrid<Row>({
       ? { rowID: cell.dataset.gridRowId, columnID: cell.dataset.gridColumnId }
       : activeCell;
     const arrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key);
-    const focusIsEditor = Boolean(target?.closest('input, select, textarea, button'));
-    const commandRange = commandKey && event.shiftKey && targetIsCell;
-    const cellNavigation = targetIsCell && !focusIsEditor && !commandKey && arrow;
-    if ((commandRange || cellNavigation) && targetIdentity && arrow) {
+    const focusIsEditor = isCellEditor(target);
+    if (focusIsEditor) return;
+    if (targetIsCell && targetIdentity && (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey)) {
+      event.preventDefault();
+      if (!selectedCellKeySet.has(cellIdentityKey(targetIdentity.rowID, targetIdentity.columnID))) selectCell(targetIdentity);
+      const rect = cell!.getBoundingClientRect();
+      setContextMenu({ x: rect.left, y: rect.bottom });
+      return;
+    }
+    if (targetIsCell && commandKey && event.key.toLowerCase() === 'a') {
+      event.preventDefault(); selectAllCells(); return;
+    }
+    if (targetIsCell && !commandKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+      event.preventDefault(); clearSelectionValues(); return;
+    }
+    if (targetIsCell && targetIdentity && arrow) {
       const from = positionFor(targetIdentity);
       if (!from) return;
-      const direction = event.key === 'ArrowUp' ? [-1, 0] : event.key === 'ArrowDown' ? [1, 0] : event.key === 'ArrowLeft' ? [0, -1] : [0, 1];
-      const nextRow = Math.max(0, Math.min(filteredRows.length - 1, from.rowIndex + direction[0]!));
-      const nextColumn = Math.max(0, Math.min(columns.length - 1, from.columnIndex + direction[1]!));
+      const destination = gridArrowDestination(from, event.key as GridArrowKey, filteredRows.length, columns.length, commandKey);
+      if (!destination) return;
+      const { rowIndex: nextRow, columnIndex: nextColumn } = destination;
       const next = { rowID: getRowId(filteredRows[nextRow]!.row), columnID: columns[nextColumn]!.id };
       event.preventDefault();
-      const extending = commandRange || event.shiftKey;
+      interactionVersion.current += 1;
+      const extending = event.shiftKey;
       const anchor = extending ? selectionAnchor ?? targetIdentity : next;
       const keys = extending ? selectRectangle(anchor, next) : [cellIdentityKey(next.rowID, next.columnID)];
       setSelectionAnchor(anchor);
       setSelectedCellKeys(keys);
       setActiveCell(next);
       setSelectionMessage(language === 'zh' ? `已选择 ${keys.length} 个单元格。` : `${keys.length} cells selected.`);
-      if (pageSize) setPageIndex(Math.floor(nextRow / pageSize));
-      keyboardFocus.current = true;
-      requestAnimationFrame(() => {
-        const target = Array.from(gridRoot.current?.querySelectorAll<HTMLElement>('td[data-grid-row-id][data-grid-column-id]') ?? [])
-          .find(cell => cell.dataset.gridRowId === next.rowID && cell.dataset.gridColumnId === next.columnID);
-        if (cellNavigation || !commandRange && !event.shiftKey) {
-          target?.focus();
-        } else {
-          (target?.querySelector<HTMLElement>('input, select, textarea, button') ?? target)?.focus();
-        }
-        requestAnimationFrame(() => { keyboardFocus.current = false; });
-      });
+      setPendingFocus(next);
       return;
     }
     if (targetIsCell && cell && !focusIsEditor && (event.key === 'Enter' || event.key === 'F2')) {
@@ -491,6 +640,7 @@ export function DataGrid<Row>({
       return;
     }
     if (event.key === 'Escape' && (event.target === gridRoot.current || (event.target instanceof Element && !event.target.closest('input, select, textarea')))) {
+      interactionVersion.current += 1;
       setActiveCell(null);
       setSelectionAnchor(null);
       setSelectedCellKeys([]);
@@ -516,6 +666,7 @@ export function DataGrid<Row>({
   });
 
   const toggleSort = (column: DataGridColumn): (() => void) => () => {
+    interactionVersion.current += 1;
     setPageIndex(0);
     setSort(current => current?.columnId !== column.id
       ? { columnId: column.id, direction: 'ascending' }
@@ -528,40 +679,54 @@ export function DataGrid<Row>({
     pageIndex: currentPage,
     pageCount: totalPages,
     pageSize: pageSize ?? filteredRows.length,
-    setPageIndex: page => setPageIndex(Math.max(0, Math.min(totalPages - 1, page))),
+    setPageIndex: page => { interactionVersion.current += 1; setPageIndex(Math.max(0, Math.min(totalPages - 1, page))); },
   };
+  const selectedForActions = effectiveSelectedPositions();
+  const canClearSelection = Boolean(onCellPaste && selectedForActions.some(position => {
+    const row = filteredRows[position.rowIndex]!.row;
+    const column = columns[position.columnIndex]!;
+    return !column.readOnly && canPasteCell?.(row, column) !== false;
+  }));
 
   return <div className="ras-data-grid" ref={gridRoot} role="region"
-    aria-label={language === 'zh' ? '数据表格；点击单元格选择，Shift 点击或 Ctrl 加 Shift 加方向键扩展；Ctrl 或 Command 加 C 复制，Ctrl 或 Command 加 V 粘贴。' : 'Data table. Click a cell to select; Shift-click or Control-Shift-arrow extends the selection. Control or Command-C copies; Control or Command-V pastes.'}
-    onFocusCapture={handleCellFocus} onKeyDown={handleGridKeyDown} onCopy={handleCopy} onPaste={handlePaste}>
+    aria-label={language === 'zh' ? '数据表格；方向键移动，Ctrl 或 Command 加方向键跳到数据首末行列，Shift 扩展选择；Delete 或 Backspace 清空可编辑单元格；Ctrl 或 Command 加 A 全选，C 复制，V 粘贴；Shift 加 F10 打开单元格菜单。' : 'Data table. Arrow keys move; Control or Command-arrow jumps to the data boundary; Shift extends selection. Delete or Backspace clears editable cells. Control or Command-A selects all, C copies, V pastes. Shift-F10 opens cell actions.'}
+    onFocusCapture={handleCellFocus} onKeyDown={handleGridKeyDown} onCopy={handleCopy} onPaste={handlePaste}
+    onContextMenu={handleGridContextMenu}>
     <div className="ras-data-grid-toolbar">
       <label className="ras-data-grid-search">
         <span>{zh ? '搜索表格' : 'Search table'}</span>
-        <input type="search" value={search} onChange={event => { setSearch(event.currentTarget.value); setPageIndex(0); }}
+        <input type="search" value={search} onChange={event => { interactionVersion.current += 1; setSearch(event.currentTarget.value); setPageIndex(0); }}
           aria-label={zh ? '搜索表格' : 'Search table'} />
       </label>
       <label className="ras-data-grid-filter-column">
         <span>{zh ? '离散值字段' : 'Discrete-value column'}</span>
         <select value={selectedFilterColumn?.id ?? ''} disabled={columns.length === 0}
           aria-label={zh ? '选择离散值过滤字段' : 'Choose discrete-value filter column'}
-          onChange={event => { setFilterColumnId(event.currentTarget.value); setSelectedDiscreteValues(null); setPageIndex(0); }}>
+          onChange={event => { interactionVersion.current += 1; setFilterColumnId(event.currentTarget.value); setSelectedDiscreteValues(null); setPageIndex(0); }}>
           {columns.map(column => <option key={column.id} value={column.id}>{column.title}</option>)}
         </select>
       </label>
       {selectedFilterColumn && !discreteValues.overLimit && discreteValues.options.length > 0
         ? <GenericEnumFilterControl language={language} label={zh ? '筛选离散值' : 'Filter discrete values'}
           options={discreteValues.options} selectedValues={activeDiscreteSelection}
-          onSelectionChange={values => { setSelectedDiscreteValues(values); setPageIndex(0); }} />
+          onSelectionChange={values => { interactionVersion.current += 1; setSelectedDiscreteValues(values); setPageIndex(0); }} />
         : selectedFilterColumn && discreteValues.overLimit
           ? <span className="ras-data-grid-filter-hint" role="status">{zh ? `值种类超过 ${DISCRETE_FILTER_LIMIT} 项，请使用文本搜索。` : `More than ${DISCRETE_FILTER_LIMIT} distinct values; use text search.`}</span>
           : null}
+      <button type="button" className="ras-data-grid-actions-toggle" data-testid="data-grid-actions-toggle"
+        aria-haspopup="menu" aria-expanded={contextMenu !== null} disabled={!selectedForActions.length || clipboardBusy}
+        onClick={event => {
+          if (contextMenu) { closeContextMenu(true); return; }
+          const rect = event.currentTarget.getBoundingClientRect();
+          setContextMenu({ x: rect.left, y: rect.bottom });
+        }}>{zh ? '单元格操作' : 'Cell actions'} ▾</button>
       <span className="ras-data-grid-count" role="status">{zh
         ? `显示 ${filteredRows.length.toLocaleString('zh-CN')} / ${rows.length.toLocaleString('zh-CN')} 行`
         : `Showing ${filteredRows.length.toLocaleString('en-US')} / ${rows.length.toLocaleString('en-US')} rows`}</span>
       {selectionMessage ? <span className="ras-data-grid-selection-status" role="status" aria-live="polite">{selectionMessage}</span> : null}
     </div>
     <div className={tableWrapperClassName}>
-    <table className={tableClassName} role="grid" aria-multiselectable="true">
+    <table className={tableClassName} role="grid" aria-multiselectable="true" aria-rowcount={filteredRows.length + 1} aria-colcount={columns.length + 1}>
       <thead><tr><th scope="col" aria-label={rowHeaderLabel}>{rowHeaderContent ?? rowHeaderLabel}</th>
         {columns.map(column => {
           const direction = sort?.columnId === column.id ? sort.direction : null;
@@ -590,16 +755,18 @@ export function DataGrid<Row>({
           </th>;
         })}
       </tr></thead>
-      <tbody>{pageRows.map(({ row, sourceIndex }) => {
+      <tbody>{pageRows.map(({ row, sourceIndex }, pageRowIndex) => {
         const attributes = rowAttributes?.(row, sourceIndex) ?? {};
         return <tr key={getRowId(row)} data-row-id={getRowId(row)} data-testid={rowTestId?.(row, sourceIndex)} {...attributes}>
           <th scope="row">{renderRowHeader ? renderRowHeader(row, sourceIndex) : sourceIndex + 1}</th>
-          {columns.map(column => {
+          {columns.map((column, columnIndex) => {
             const identity = { rowID: getRowId(row), columnID: column.id };
             const selected = selectedCellKeySet.has(cellIdentityKey(identity.rowID, identity.columnID));
             const isTabStop = tabStopCell?.rowID === identity.rowID && tabStopCell.columnID === identity.columnID;
             return <td key={column.id} className={cellClassName?.(row, column, sourceIndex)} role="gridcell" aria-selected={selected}
               data-grid-row-id={identity.rowID} data-grid-column-id={identity.columnID} tabIndex={isTabStop ? 0 : -1}
+              data-grid-view-row-index={pageStart + pageRowIndex} data-grid-view-column-index={columnIndex}
+              aria-rowindex={pageStart + pageRowIndex + 2} aria-colindex={columnIndex + 2}
               onPointerDown={() => { pointerSelection.current = true; }}
               onClick={event => {
                 selectCell(identity, { shift: event.shiftKey, toggle: event.ctrlKey || event.metaKey });
@@ -612,9 +779,16 @@ export function DataGrid<Row>({
     </div>
     {renderFooter ? <footer className={footerClassName ?? 'ras-data-grid-footer'}>{renderFooter(footerContext)}</footer>
       : pageSize ? <footer className={footerClassName ?? 'ras-data-grid-footer'}>
-        <button type="button" disabled={currentPage <= 0} onClick={() => setPageIndex(currentPage - 1)}>{zh ? '上一页' : 'Previous'}</button>
+        <button type="button" disabled={currentPage <= 0} onClick={() => footerContext.setPageIndex(currentPage - 1)}>{zh ? '上一页' : 'Previous'}</button>
         <span>{currentPage + 1} / {totalPages}</span>
-        <button type="button" disabled={currentPage + 1 >= totalPages} onClick={() => setPageIndex(currentPage + 1)}>{zh ? '下一页' : 'Next'}</button>
+        <button type="button" disabled={currentPage + 1 >= totalPages} onClick={() => footerContext.setPageIndex(currentPage + 1)}>{zh ? '下一页' : 'Next'}</button>
       </footer> : null}
+    {contextMenu && <DataGridContextMenuFlyout language={language} {...contextMenu}
+      canCopy={!clipboardBusy && selectedForActions.length > 0}
+      canPaste={!clipboardBusy && Boolean(onCellPaste) && selectedForActions.length > 0}
+      canClear={!clipboardBusy && canClearSelection} canSelectAll={filteredRows.length > 0 && columns.length > 0}
+      onCopy={() => void clipboardCommand('copy')} onPaste={() => void clipboardCommand('paste')}
+      onClear={() => { closeContextMenu(true); clearSelectionValues(); }}
+      onSelectAll={() => { closeContextMenu(true); selectAllCells(); }} onClose={closeContextMenu} />}
   </div>;
 }

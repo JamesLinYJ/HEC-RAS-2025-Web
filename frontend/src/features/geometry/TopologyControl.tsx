@@ -4,6 +4,7 @@ import type { GeometryTopologySnapshot } from './geometryTypes';
 import { TopologyBuildResultViewer } from './TopologyBuildResultViewer';
 import { TopologyStatus } from './TopologyStatus';
 import { TopologyProperties } from './TopologyProperties';
+import type { TopologyDiagnosticLocator } from './geometryTopologySelection';
 
 export interface TopologyControlProps {
   language: Language;
@@ -12,10 +13,11 @@ export interface TopologyControlProps {
   canEdit?: boolean;
   busy?: boolean;
   onApplyFactor?: (factor: number) => Promise<void>;
+  onLocateTopologyDiagnostic?: TopologyDiagnosticLocator;
 }
 
 /** Topology overview and build-result surface backed by the current topology snapshot. */
-export function TopologyControl({ language, snapshot, onNavigate, canEdit = false, busy = false, onApplyFactor }: TopologyControlProps) {
+export function TopologyControl({ language, snapshot, onNavigate, canEdit = false, busy = false, onApplyFactor, onLocateTopologyDiagnostic }: TopologyControlProps) {
   const tables = [
     ['nodes', snapshot?.nodes.rows.length ?? 0, () => onNavigate('nodes')],
     ['arcs', snapshot?.arcs.rows.length ?? 0, () => onNavigate('arcs')],
@@ -30,7 +32,7 @@ export function TopologyControl({ language, snapshot, onNavigate, canEdit = fals
       </button>)}
     </div>
     <div className="geometry-grid two"><TopologyStatus language={language} snapshot={snapshot} />
-      <TopologyBuildResultViewer language={language} snapshot={snapshot} /></div>
+      <TopologyBuildResultViewer language={language} snapshot={snapshot} onLocate={onLocateTopologyDiagnostic} /></div>
     <TopologyProperties language={language} snapshot={snapshot} canEdit={canEdit} busy={busy} onApplyFactor={onApplyFactor} />
   </section>;
 }

@@ -77,6 +77,10 @@ import { CalculatorProfileStateSlider } from './RasProfileStateSlider';
 import { useRasterCalculatorSessionLayers } from './useRasterCalculatorSessionLayers';
 import { RasContextualActionsBar } from './RasContextualActionsBar';
 import { mapCRS, mapDocumentKind, mapError } from './mapText';
+import { MapMeshErrorProperties } from './mesh-errors/MapMeshErrorProperties';
+import { mapMeshErrorCandidate, meshErrorZoomExtent } from './mesh-errors/mapMeshErrorsWorkflow';
+import { useMapMeshErrors } from './mesh-errors/useMapMeshErrors';
+import type { MapMeshErrorGuard } from './mesh-errors/useMapMeshErrors';
 import './map.css';
 
 const MapMeshTimeSeriesPanel = lazy(() => import('./analysis/MapMeshTimeSeriesPanel')
@@ -369,8 +373,11 @@ function MapPage(props: MapFeaturePageProps) {
   const [mapDocumentMutationBusy, setMapDocumentMutationBusy] = useState(false);
   const [mapDocumentMutationNotice, setMapDocumentMutationNotice] = useState<MapDocumentMutationNotice | null>(null);
   const mapDocumentNeedsReconcile = Boolean(mapDocumentMutationNotice?.projectKey === mapRemovalProjectScope && mapDocumentMutationNotice.needsReconcile);
-  const mapMetadataCommitBusy = viewCommitBusy || vectorCommitBusy || mapSourceRemovalBusy || mapRemovalNeedsReconcile ||
+  const [meshErrorGuard, setMeshErrorGuard] = useState<MapMeshErrorGuard>({ locked: false, transaction: false });
+  const [meshErrorFocus, setMeshErrorFocus] = useState<{ captureKey: string; issueID: string } | null>(null);
+  const mapOtherMetadataCommitBusy = viewCommitBusy || vectorCommitBusy || mapSourceRemovalBusy || mapRemovalNeedsReconcile ||
     mapDocumentMutationBusy || mapDocumentNeedsReconcile;
+  const mapMetadataCommitBusy = mapOtherMetadataCommitBusy || meshErrorGuard.locked;
   const [vectorPreview, setVectorPreview] = useState<MapVectorPreview | null>(null);
   const [vectorSettingsEpoch, setVectorSettingsEpoch] = useState(0);
   const [mapCatalogError, setMapCatalogError] = useState<unknown>(null);
@@ -480,6 +487,7 @@ function MapPage(props: MapFeaturePageProps) {
     });
   }, [calculatorFrames.images, calculatorFrames.states, currentCalculatorSessionLayers]);
   useEffect(() => {
+    if (meshErrorGuard.locked) return;
     const request = calculatorSessions?.focusRequest;
     if (!request || request.requestID === handledCalculatorFocusRequestRef.current ||
         request.requestID === preparedCalculatorFocusRequestRef.current) return;
@@ -496,7 +504,7 @@ function MapPage(props: MapFeaturePageProps) {
     setSelectedFeature(null);
     setSelectedBackendNode(null);
     setActiveDocumentID(target.id);
-  }, [calculatorSessionLayers, calculatorSessions, context, documents]);
+  }, [calculatorSessionLayers, calculatorSessions, context, documents, meshErrorGuard.locked]);
   useEffect(() => {
     if (!pendingCalculatorMapFocus) return;
     const request = calculatorSessions?.focusRequest;
@@ -621,6 +629,44 @@ function MapPage(props: MapFeaturePageProps) {
   [activeDocument, context.projectPath, context.projectRevision, resultFrames.sources]);
   const selectedRemovalEntry = mapTreeDocument && selectedBackendNodeID
     ? findCatalogNode(mapTreeDocument.roots, selectedBackendNodeID) : null;
+  const meshErrorCandidate = useMemo(() => mapMeshErrorCandidate(context, activeDocument,
+    resultFrames.sources, resultFrames.mapRequest, selectedBackendNodeID),
+  [context, activeDocument, resultFrames.sources, resultFrames.mapRequest, selectedBackendNodeID]);
+  const meshErrors = useMapMeshErrors({ backend, backendRevision, language, scope: mapRemovalProjectScope,
+    candidate: meshErrorCandidate,
+    selectionKey: activeDocument ? JSON.stringify([activeDocument.id, selectedBackendNodeID]) : null,
+    visible: selectedRemovalEntry?.node.sourceClass === 'FlowAreaLayerVisualContext',
+    otherBusy: mapOtherMetadataCommitBusy || sourceImportBusy || mapCatalogLoading || busyNodeID !== null ||
+      activeLayers.length > 0 || hasPersistentDraftPoints || backgroundDraftDirty,
+    onDirtyStateChange, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation,
+    dirtyOwners: props.dirtyOwners, hasUnsavedDrafts: props.hasUnsavedDrafts,
+    onGuardChange: guard => setMeshErrorGuard(previous => previous.locked === guard.locked &&
+      previous.transaction === guard.transaction ? previous : guard),
+    onInstall: (readback, previous) => {
+      const capturedProjectKey = JSON.stringify([previous.context.projectSessionID, previous.context.projectPath,
+        previous.context.projectRevision, previous.context.projectXml]);
+      const capturedScope = JSON.stringify([capturedProjectKey, stableMapValue(previous.context.coreLayerContext ?? null)]);
+      const current = activeDocumentRef.current;
+      if (projectContextKeyRef.current !== capturedProjectKey || mapRemovalProjectScopeRef.current !== capturedScope ||
+          !current || !sameMapID(current.mapID, previous.map.mapID) || current.mapIndex !== previous.map.mapIndex ||
+          current.name !== previous.map.mapName || current.mapType !== previous.map.mapType) return false;
+      mapCatalogGenerationRef.current++;
+      loadedCatalogProjectRef.current = capturedProjectKey;
+      rememberedMapSelectionRef.current = { projectKey: capturedProjectKey, mapIndex: readback.document.mapIndex,
+        name: readback.document.name, mapType: readback.document.mapType };
+      setDocuments(readback.catalog.documents.map(document => document.id === readback.document.id ? readback.document : document));
+      setVisualizationRevision(readback.catalog.visualizationRevision);
+      setActiveDocumentID(readback.document.id);
+      setMapCatalogError(null);
+      setMapCatalogLoading(false);
+      const flow = readback.capture.flow;
+      setSelectedFeature(null);
+      setSelectedBackendNode({ owner: readback.document.id, node: null, nodeID: flow.id, name: flow.name,
+        sourceClass: flow.sourceClass, diagnostic: flow.diagnosticReadError ?? undefined });
+      setMeshErrorFocus(null);
+      return true;
+    },
+  });
   const mapRemovalAvailable = Boolean(context.projectPath && context.projectXml && context.projectRevision &&
     context.projectSessionID.trim() && activeDocument?.visualizationRevision && backend.supports('map.tree.perform') &&
     backend.supports('map.document.list') && backend.supports('map.tree.load') && !mapCatalogLoading && !mapCatalogError &&
@@ -933,9 +979,11 @@ function MapPage(props: MapFeaturePageProps) {
   }, [activeLayers.length, backgroundDraftDirty, hasPersistentDraftPoints, onDirtyStateChange, owner]);
   useEffect(() => {
     const writeOwner = 'map.write:' + projectContextKey;
-    onDirtyStateChange?.(writeOwner, sourceImportBusy || busyNodeID !== null || mapMetadataCommitBusy);
+    // Mesh checks own their draft/lease registration; a second map.write owner
+    // would incorrectly block the root lease from accepting that same draft.
+    onDirtyStateChange?.(writeOwner, sourceImportBusy || busyNodeID !== null || mapOtherMetadataCommitBusy);
     return () => onDirtyStateChange?.(writeOwner, false);
-  }, [sourceImportBusy, busyNodeID, mapMetadataCommitBusy, projectContextKey, onDirtyStateChange]);
+  }, [sourceImportBusy, busyNodeID, mapOtherMetadataCommitBusy, projectContextKey, onDirtyStateChange]);
 
   useEffect(() => {
     if (activeOwnerRef.current === null) {
@@ -969,7 +1017,7 @@ function MapPage(props: MapFeaturePageProps) {
     // remember the pre-rename identity and could select a different saved map.
     // Cleanup invalidates older reads, and completion resumes with the newly
     // installed selection. An uncertain transaction stays under reconciliation.
-    if (mapDocumentMutationBusy || mapDocumentNeedsReconcile) {
+    if (mapDocumentMutationBusy || mapDocumentNeedsReconcile || meshErrorGuard.locked) {
       setMapCatalogLoading(false);
       return () => { mapCatalogGenerationRef.current += 1; };
     }
@@ -1010,7 +1058,7 @@ function MapPage(props: MapFeaturePageProps) {
       mapCatalogGenerationRef.current += 1;
     };
   }, [backend, backendRevision, projectContextKey, selectedResultIdentity, mapReloadKey, props.mapRevision,
-    mapDocumentMutationBusy, mapDocumentNeedsReconcile]);
+    mapDocumentMutationBusy, mapDocumentNeedsReconcile, meshErrorGuard.locked]);
 
   const updateActiveLayers = (update: (layers: GeoJsonLayer[]) => GeoJsonLayer[]) => {
     setMapStateByOwner((current) => {
@@ -1179,7 +1227,7 @@ function MapPage(props: MapFeaturePageProps) {
   const handleImport = async (event: ReactChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = '';
-    if (!file) return;
+    if (!file || meshErrors.locked) return;
     const requestOwner = owner;
     const requestGeneration = requestGenerationRef.current;
     setImportError('');
@@ -1691,6 +1739,7 @@ function MapPage(props: MapFeaturePageProps) {
   const toWorld = (event: ReactPointerEvent<SVGSVGElement>): XY => screenToWorld(pointFromEvent(event), viewport);
 
   const appendDrawnGeometry = (geometry: GeoGeometry) => {
+    if (meshErrors.locked) return;
     const crs = visibleLayers[visibleLayers.length - 1]?.crs ?? 'Unknown CRS';
     const layer = makeDrawnLayer(geometry, crs, activeLayers.length, language);
     if (!layer) return;
@@ -1733,6 +1782,7 @@ function MapPage(props: MapFeaturePageProps) {
   };
 
   const handleCanvasClick = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (meshErrors.locked) return;
     const clickedScreen = pointFromEvent(event);
     const hoveredMeshHit = mapHover.tooltip?.entries.find(entry => entry.kind === 'mesh')?.meshHit ?? null;
     const sameHoverPoint = mapHover.tooltip && Math.hypot(
@@ -1850,6 +1900,7 @@ function MapPage(props: MapFeaturePageProps) {
   };
 
   const showFeatureContext = (layer: GeoJsonLayer, feature: GeoFeature, event: ReactMouseEvent<SVGGElement>) => {
+    if (meshErrors.locked) return;
     setSelectedFeature({ owner, layerID: layer.id, featureID: feature.id });
     setSelectedBackendNode(null);
     const bounds = viewportRef.current?.getBoundingClientRect();
@@ -2032,7 +2083,7 @@ function MapPage(props: MapFeaturePageProps) {
         </div>
         <div className="map-file-action">
           <input ref={fileInputRef} className="sr-only" type="file" accept=".geojson,.json,application/geo+json,application/json" onChange={(event) => void handleImport(event)} />
-          <button type="button" className="map-import-button" onClick={() => fileInputRef.current?.click()}>
+          <button type="button" className="map-import-button" disabled={meshErrors.locked} onClick={() => fileInputRef.current?.click()}>
             <span aria-hidden="true">↥</span>{copy.import}
           </button>
           <small>{copy.importHint}</small>
@@ -2138,6 +2189,7 @@ function MapPage(props: MapFeaturePageProps) {
 
       <div className="map-workspace-layout">
         <MapLayerTree
+          interactionDisabled={meshErrors.locked}
           document={mapTreeDocument}
           localLayers={activeLayers}
           selectedLocalLayerID={selectedLocalLayerID}
@@ -2146,6 +2198,7 @@ function MapPage(props: MapFeaturePageProps) {
           selectedCalculatorLayerID={selectedCalculatorLayer?.id ?? null}
           calculatorStates={calculatorFrames.states}
           onSelectCalculatorLayer={(id) => {
+            if (meshErrors.locked) return;
             calculatorSessions?.select(id);
             setSelectedFeature(null);
             setSelectedBackendNode(null);
@@ -2157,6 +2210,7 @@ function MapPage(props: MapFeaturePageProps) {
           }}
           onChangeCalculatorOpacity={(id, opacity) => calculatorSessions?.setOpacity(id, opacity)}
           onEditCalculatorLayer={(id) => {
+            if (meshErrors.locked) return;
             calculatorSessions?.select(id);
             setSelectedFeature(null);
             setSelectedBackendNode(null);
@@ -2180,6 +2234,7 @@ function MapPage(props: MapFeaturePageProps) {
           onRemoveBackendNode={node => void removeBackendNodeFromMap(node)}
           onReconcileBackendNodeRemoval={() => void reconcileMapSourceRemoval()}
           onSelectLocalLayer={(id) => {
+            if (meshErrors.locked) return;
             setSelectedFeature(null);
             setSelectedBackendNode(null);
             calculatorSessions?.select(null);
@@ -2187,6 +2242,7 @@ function MapPage(props: MapFeaturePageProps) {
             if (layer) setUserViewport(fitExtent(layer.extent, size, 72));
           }}
           onSelectBackendNode={(node) => {
+            if (meshErrors.locked) return;
             setSelectedFeature(null);
             calculatorSessions?.select(null);
             setSelectedBackendNode({ owner, node: null, nodeID: node.id, name: node.name, sourceClass: node.sourceClass, diagnostic: node.diagnosticReadError ?? undefined });
@@ -2210,7 +2266,9 @@ function MapPage(props: MapFeaturePageProps) {
             </div>
             <span className="map-canvas-live-indicator"><i />{text(language, '就绪', 'Ready')}</span>
           </div>
-          <div className="map-viewport-shell" ref={viewportRef}>
+          <div className="map-viewport-shell" ref={viewportRef}
+            data-mesh-error-focus={meshErrors.current && meshErrorFocus?.captureKey === meshErrors.state.capture?.key
+              ? meshErrorFocus?.issueID : undefined}>
             <RasProjectMap
               layers={allMapLayers}
               images={mapImages}
@@ -2236,6 +2294,7 @@ function MapPage(props: MapFeaturePageProps) {
               }}
               onWheel={handleWheel}
               onFeatureSelect={(layer, feature) => {
+                if (meshErrors.locked) return;
                 setSelectedFeature({ owner, layerID: layer.id, featureID: feature.id });
                 setSelectedBackendNode(null);
                 calculatorSessions?.select(null);
@@ -2265,7 +2324,7 @@ function MapPage(props: MapFeaturePageProps) {
             <span>{copy.layers}: {layerCount}</span>
             <span>{copy.features}: {featureCount}</span>
           </div>
-          <MapTimeAxis language={language} controller={resultFrames} />
+          <MapTimeAxis language={language} controller={resultFrames} interactionDisabled={meshErrors.locked} />
           {selectedCalculatorLayer && calculatorSessions && <CalculatorProfileStateSlider language={language}
             layer={selectedCalculatorLayer}
             onSelectProfile={profileIndex => calculatorSessions.setProfile(selectedCalculatorLayer.id, profileIndex)} />}
@@ -2327,8 +2386,23 @@ function MapPage(props: MapFeaturePageProps) {
           </details>
           <RasLayerPropertiesPane language={language} featureSelection={selectedFeatureDetails}
             backendSelection={selectedBackend} canZoomBackend={Boolean(selectedBackend && loadedLayerExtent(selectedBackend.nodeID))}
-            onZoomFeature={fitFeature} onZoomBackend={zoomToLoadedLayer} />
-          {!mapRemovalNeedsReconcile && !mapDocumentNeedsReconcile && symbologySource && selectedBackend && activeDocument && <RasterSymbologyEditor
+            onZoomFeature={fitFeature} onZoomBackend={zoomToLoadedLayer}>
+            <MapMeshErrorProperties controller={meshErrors} language={language} onLocate={issue => {
+              const capture = meshErrors.state.capture;
+              if (!meshErrors.current || meshErrors.pending || !capture ||
+                  !meshErrors.state.snapshot?.issues.includes(issue)) return;
+              const extent = meshErrorZoomExtent(issue);
+              if (extent) setUserViewport(fitExtent(extent, size, 0));
+              else {
+                const offsetX = size.width / 2 - issue.node.x * viewport.scale;
+                const offsetY = size.height / 2 + issue.node.y * viewport.scale;
+                if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) return;
+                setUserViewport({ ...viewport, offsetX, offsetY });
+              }
+              setMeshErrorFocus({ captureKey: capture.key, issueID: issue.id });
+            }} />
+          </RasLayerPropertiesPane>
+          {!mapRemovalNeedsReconcile && !mapDocumentNeedsReconcile && !meshErrors.locked && symbologySource && selectedBackend && activeDocument && <RasterSymbologyEditor
             key={`${owner}:${selectedBackend.nodeID}`}
             backend={backend} context={context} language={language}
             source={symbologySource} viewport={resultViewport}

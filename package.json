@@ -24,7 +24,10 @@
     "test:context": "node scripts/verify-session-context.mjs",
     "test:cumulus-auth": "node scripts/verify-cumulus-authentication.mjs",
     "test:clipboard": "node scripts/verify-grid-clipboard.mjs",
-    "test:map-analysis": "node scripts/verify-map-analysis.mjs"
+    "test:map-analysis": "node scripts/verify-map-analysis.mjs",
+    "test:grid-selection": "node scripts/verify-grid-selection.mjs",
+    "test:topology-selection": "node scripts/verify-topology-selection.mjs",
+    "test:map-mesh-errors": "node scripts/verify-map-mesh-errors.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

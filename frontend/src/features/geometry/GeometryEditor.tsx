@@ -15,6 +15,7 @@ import type { GeometryFeatureKind, GeometryRow } from './geometryTypes';
 import { ArcImportDialog } from './ArcImportDialog';
 import { useGeometryWorkbench } from './useGeometryWorkbench';
 import { useGeometryTopologyMap } from './useGeometryTopologyMap';
+import type { TopologyDiagnosticLocator } from './geometryTopologySelection';
 
 type GeometryPageID = 'summary' | 'topologySummary' | 'nodes' | 'arcs' | 'regions' | 'mesh' | 'culverts';
 
@@ -74,7 +75,7 @@ export default function GeometryPage(props: FeaturePageProps) {
   const { language } = props;
   const workbenchBusy = !!workspace.busyOperation;
   const topologyMapWorkspace = useGeometryTopologyMap({
-    active: page === 'nodes' || page === 'arcs',
+    active: page === 'nodes' || page === 'arcs' || page === 'regions',
     owner: workspace.ownerKey,
     backend: props.backend,
     backendRevision: props.backendRevision,
@@ -87,6 +88,10 @@ export default function GeometryPage(props: FeaturePageProps) {
     onMapCommand: workspace.editTopologyMapCommand,
   });
   const busy = workbenchBusy || topologyMapWorkspace.interactionBusy;
+  const locateTopologyDiagnostic: TopologyDiagnosticLocator = (messageID, target) => {
+    const kind = topologyMapWorkspace.onLocateDiagnostic(messageID, target);
+    if (kind) setPage(kind === 'node' ? 'nodes' : kind === 'arc' ? 'arcs' : 'regions');
+  };
   useEffect(() => { setArcImportOpen(false); }, [workspace.ownerKey]);
   const validation = useMemo(() => localValidation(language, workspace.draft), [language, workspace.draft]);
   const displayedTopology = workspace.topology;
@@ -130,9 +135,8 @@ export default function GeometryPage(props: FeaturePageProps) {
     onApplyTopologyFactor: workspace.applyTopologyFactor,
     onArcPointCoordinateChange: workspace.editArcPointCoordinate,
     onApplyRecipe: workspace.applyTopologyRecipe,
-    ...((kind === 'node' || kind === 'arc') ? {
-      onSelectionChange: (rows: GeometryRow[]) => topologyMapWorkspace.onTableSelectionChange(kind, rows),
-    } : {}),
+    onSelectionChange: (rows: GeometryRow[]) => topologyMapWorkspace.onTableSelectionChange(kind, rows),
+    onLocateTopologyDiagnostic: locateTopologyDiagnostic,
     onTopologyResize: (featureKind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => {
       void workspace.resizeTopology(featureKind, row, operation, axis)
         .catch((error: unknown) => workspace.setError('topology', geometryDiagnosticMessage(error)));
@@ -145,10 +149,11 @@ export default function GeometryPage(props: FeaturePageProps) {
     switch (page) {
       case 'summary': return <GeometrySummaryPage language={language} asset={workspace.asset} projectPath={props.context.projectPath} sessionID={props.context.projectSessionID} topology={workspace.topology} mesh={workspace.mesh} culverts={workspace.culverts} parent={workspace.parent} loading={Object.values(workspace.loading).some(Boolean)} />;
       case 'topologySummary': return <GeometryTopologySummaryPage language={language} snapshot={displayedTopology} onNavigate={(target) => setPage(target)}
-        canEdit={!!workspace.topology?.canEdit && workspace.supports('topology.edit')} busy={busy} onApplyFactor={workspace.applyTopologyFactor} />;
+        canEdit={!!workspace.topology?.canEdit && workspace.supports('topology.edit')} busy={busy} onApplyFactor={workspace.applyTopologyFactor}
+        onLocateTopologyDiagnostic={locateTopologyDiagnostic} />;
       case 'nodes': return <GeometryTopologyNodesPage key={workspace.ownerKey} {...topologyPageProps('node')} mapWorkspace={topologyMapWorkspace} />;
       case 'arcs': return <GeometryTopologyArcsPage key={workspace.ownerKey} {...topologyPageProps('arc')} mapWorkspace={topologyMapWorkspace} />;
-      case 'regions': return <GeometryTopologyRegionsPage key={workspace.ownerKey} {...topologyPageProps('region')} />;
+      case 'regions': return <GeometryTopologyRegionsPage key={workspace.ownerKey} {...topologyPageProps('region')} mapWorkspace={topologyMapWorkspace} />;
       case 'mesh': return <GeometryMeshPage key={workspace.ownerKey}
         language={language}
         snapshot={displayedMesh}

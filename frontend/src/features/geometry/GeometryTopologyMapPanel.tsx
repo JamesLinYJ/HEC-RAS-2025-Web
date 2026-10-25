@@ -12,9 +12,10 @@ export interface GeometryTopologyMapPanelProps {
   language: Language;
   workspace: GeometryTopologyMapWorkspace;
   showArcTools?: boolean;
+  allowMapEditing?: boolean;
 }
 
-export function GeometryTopologyMapPanel({ language, workspace, showArcTools = false }: GeometryTopologyMapPanelProps) {
+export function GeometryTopologyMapPanel({ language, workspace, showArcTools = false, allowMapEditing = true }: GeometryTopologyMapPanelProps) {
   useEffect(() => {
     if (!showArcTools && workspace.activeTool !== 'select') workspace.onCancelDeepConnect();
   }, [showArcTools, workspace.activeTool, workspace.onCancelDeepConnect]);
@@ -54,6 +55,11 @@ export function GeometryTopologyMapPanel({ language, workspace, showArcTools = f
       {workspace.error && <GeometryError language={language} error={workspace.error}
         title={language === 'zh' ? '地图交互不可用' : 'Map interaction unavailable'} />}
       <div className="geometry-topology-map-controls">
+        <button type="button" className="geometry-secondary" data-testid="geometry-topology-zoom-selection"
+          disabled={!workspace.canZoomToSelection || workspace.canvasProps.busy}
+          onClick={workspace.onZoomToSelection}>
+          {language === 'zh' ? '缩放至选中要素' : 'Zoom to selected features'} ({workspace.selectedFeatureCount})
+        </button>
         <label className="geometry-form-field">{text.scope}<select value={workspace.selectionScope}
           onChange={(event) => workspace.onSelectionScopeChange(event.currentTarget.value as GeometryTopologyMapWorkspace['selectionScope'])}>
           <option value="All">{text.all}</option><option value="Arcs">{text.arcs}</option>
@@ -96,7 +102,8 @@ export function GeometryTopologyMapPanel({ language, workspace, showArcTools = f
         canInspect={workspace.vectorCanInspect} error={workspace.vectorError}
         onInspect={workspace.onInspectVectorSources} onSelectComponent={workspace.onSelectVectorComponent}
         onCancel={workspace.onCancelVectorSource} />}
-      <GeometryTopologyCanvas language={language} {...workspace.canvasProps} tool={canvasTool} />
+      <GeometryTopologyCanvas language={language} {...workspace.canvasProps} tool={canvasTool}
+        canMoveNodes={allowMapEditing && workspace.canvasProps.canMoveNodes} />
     </div>
   </section>;
 }

@@ -5,13 +5,14 @@ import { RasMapResultPicker } from './RasMapResultPicker';
 import { RasProfileStateSlider } from './RasProfileStateSlider';
 
 interface MapTimeAxisProps {
+  interactionDisabled?: boolean;
   language: 'zh' | 'en';
   /** The parent owns the single frame reader; this component only controls it. */
   controller?: MapResultFramesController;
 }
 
 /** Orchestrates map result selection, MultiResult controls, and the active profile timeline. */
-export function MapTimeAxis({ language, controller }: MapTimeAxisProps) {
+export function MapTimeAxis({ language, controller, interactionDisabled = false }: MapTimeAxisProps) {
   const zh = language === 'zh';
   const mapID = controller?.sources?.mapID ?? 'none';
   const hasSteps = Boolean(controller?.steps.length);
@@ -50,7 +51,7 @@ export function MapTimeAxis({ language, controller }: MapTimeAxisProps) {
             : null;
 
   return (
-    <section className="map-time-axis" aria-label={title} data-testid={`map-result-time-axis-${mapID}`}>
+    <section className="map-time-axis" aria-label={title} data-testid={`map-result-time-axis-${mapID}`} inert={interactionDisabled}>
       <div className="map-time-label">
         <span className="map-time-icon" aria-hidden="true">◷</span>
         <strong>{title}</strong>

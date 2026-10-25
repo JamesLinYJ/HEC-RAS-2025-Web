@@ -1,9 +1,6 @@
-import type { Language } from '../../shared/workbench';
-import { TopologyControl } from './TopologyControl';
-import type { GeometryTopologySnapshot } from './geometryTypes';
+import { TopologyControl, type TopologyControlProps } from './TopologyControl';
 
-export function GeometryTopologySummaryPage(props: { language: Language; snapshot?: GeometryTopologySnapshot; onNavigate: (page: 'nodes' | 'arcs' | 'regions') => void;
-  canEdit?: boolean; busy?: boolean; onApplyFactor?: (factor: number) => Promise<void> }) {
+export function GeometryTopologySummaryPage(props: TopologyControlProps) {
   return <TopologyControl {...props} />;
 }
 

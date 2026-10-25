@@ -12,6 +12,7 @@ export interface CalculatorSessionLayerState {
 }
 
 export interface MapLayerTreeProps {
+  interactionDisabled?: boolean;
   document: MapDocumentTab | null;
   localLayers: GeoJsonLayer[];
   selectedLocalLayerID: string | null;
@@ -45,6 +46,7 @@ export interface MapLayerTreeProps {
 }
 
 export function MapLayerTree({
+  interactionDisabled = false,
   document,
   localLayers,
   selectedLocalLayerID,
@@ -135,7 +137,7 @@ export function MapLayerTree({
       reconcileRemove: 'Reread and reconcile',
     };
   return (
-    <aside className="map-layer-pane" aria-label={copy.title}>
+    <aside className="map-layer-pane" aria-label={copy.title} inert={interactionDisabled}>
       <div className="map-pane-heading">
         <div>
           <span className="map-pane-kicker">01 / {copy.title}</span>

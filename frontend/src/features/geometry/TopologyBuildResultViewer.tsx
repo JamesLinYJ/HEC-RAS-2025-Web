@@ -1,8 +1,10 @@
 import type { Language } from '../../shared/workbench';
 import type { GeometryTopologySnapshot } from './geometryTypes';
+import { GeometryTopologyDiagnosticTargets } from './GeometryTopologyDiagnosticTargets';
+import type { TopologyDiagnosticLocator } from './geometryTopologySelection';
 
 /** Displays the retained build/completion diagnostics without translating source text or codes. */
-export function TopologyBuildResultViewer({ language, snapshot }: { language: Language; snapshot?: GeometryTopologySnapshot }) {
+export function TopologyBuildResultViewer({ language, snapshot, onLocate }: { language: Language; snapshot?: GeometryTopologySnapshot; onLocate?: TopologyDiagnosticLocator }) {
   const messages = snapshot?.completion?.messages ?? [];
   return <section className="geometry-panel" aria-label={language === 'zh' ? '拓扑构建结果' : 'Topology build result'}>
     <header className="geometry-panel-heading"><div>
@@ -16,7 +18,7 @@ export function TopologyBuildResultViewer({ language, snapshot }: { language: La
           <pre style={{ whiteSpace: 'pre-wrap' }}>{item.text}</pre>
           {!!item.logData?.length && <dl className="geometry-topology-log-data">{item.logData.map((entry, index) => <div key={`${entry.key}-${index}`}>
             <dt>{entry.key}</dt><dd>{entry.value}</dd></div>)}</dl>}
-          {item.targets?.length ? <div className="geometry-inline-help">{item.targets.map((target) => `${target.featureKind} ${target.fid} (${target.tableRowID})`).join(' · ')}</div> : null}
+          <GeometryTopologyDiagnosticTargets language={language} snapshot={snapshot} message={item} onLocate={onLocate} />
         </details>)}</div>}
   </section>;
 }

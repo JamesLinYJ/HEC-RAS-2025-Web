@@ -25,7 +25,8 @@ export function ConceptualMeshTopologyRegionsEditor({ selectedRows, ...props }: 
     <TopologyRecipeBuilder language={props.language} rows={selectedRows} snapshot={props.topologySnapshot}
       canEdit={props.canEdit} busy={props.busy} supported={!!props.canLoadRecipe}
       onLoadRecipe={props.onLoadRecipe} onApplyRecipe={props.onApplyRecipe} />
-    <TopologyFeatureErrorControl language={props.language} featureKind="region" rows={selectedRows} snapshot={props.topologySnapshot} />
+    <TopologyFeatureErrorControl language={props.language} featureKind="region" rows={selectedRows} snapshot={props.topologySnapshot}
+      onLocate={props.onLocateTopologyDiagnostic} />
   </div>;
 }
 

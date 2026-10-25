@@ -1,0 +1,14 @@
+.map-mesh-errors { margin-top: 14px; border-top: 1px solid var(--border-color, #d6dce3); padding-top: 12px; }
+.map-mesh-errors h3 { margin: 0 0 8px; font-size: 14px; }
+.map-mesh-errors p, .map-mesh-errors small, .map-mesh-errors [role="status"] { font-size: 12px; line-height: 1.55; }
+.map-mesh-errors-check { display: flex; align-items: center; gap: 7px; margin: 12px 0; }
+.map-mesh-errors-threshold { display: grid; gap: 6px; font-size: 12px; }
+.map-mesh-errors-threshold input { width: 100%; box-sizing: border-box; padding: 7px; }
+.map-mesh-errors-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.map-mesh-errors-actions button { padding: 6px 8px; font-size: 12px; }
+.map-mesh-errors-draft { color: var(--warning-color, #8a5900); }
+.map-mesh-errors-list { list-style: none; padding: 0; margin: 10px 0; max-height: 280px; overflow: auto; }
+.map-mesh-errors-list button { width: 100%; padding: 8px 6px; text-align: left; font-size: 12px; }
+.map-mesh-errors details { margin-top: 10px; font-size: 12px; }
+.map-mesh-errors dd { margin: 2px 0 7px; overflow-wrap: anywhere; }
+.map-mesh-errors pre { white-space: pre-wrap; overflow-wrap: anywhere; }

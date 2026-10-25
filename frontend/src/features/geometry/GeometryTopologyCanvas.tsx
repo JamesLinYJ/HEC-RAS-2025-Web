@@ -26,6 +26,7 @@ import {
   uniqueInternalArcPointHit,
 } from './geometryMapHitTesting';
 import { dedupeConsecutiveCoordinates, draftPathTolerance, toSvgPath } from './geometryMapDrawing';
+import { topologySelectionCamera, type TopologySelectionFocus } from './geometryTopologySelection';
 
 export interface GeometryTopologyViewportCapture {
   sourceKey: string;
@@ -115,6 +116,9 @@ export interface GeometryTopologyCanvasProps {
   arcPoints: GeometryTopologyArcPointsSnapshot | null;
   map: GeometryTopologyMap | null;
   selectedFIDByKind: { node: number[]; arc: number[]; region: number[] };
+  selectedMapFeatureIDs?: string[];
+  selectionSnapshotKey?: string | null;
+  selectionFocus?: TopologySelectionFocus | null;
   canSelect: boolean;
   canMoveNodes: boolean;
   canSmartAdd?: boolean;
@@ -200,6 +204,9 @@ export function GeometryTopologyCanvas({
   arcPoints,
   map,
   selectedFIDByKind,
+  selectedMapFeatureIDs,
+  selectionSnapshotKey = null,
+  selectionFocus = null,
   canSelect,
   canMoveNodes,
   canSmartAdd = false,
@@ -241,6 +248,7 @@ export function GeometryTopologyCanvas({
   } | null>(null);
   const previewRequestGenerationRef = useRef(0);
   const latestViewportRef = useRef('');
+  const appliedSelectionFocusRef = useRef('');
   const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 });
   const [cameraState, setCameraState] = useState<Camera | null>(null);
   const [cameraOwnerKey, setCameraOwnerKey] = useState<string | null>(null);
@@ -367,6 +375,19 @@ export function GeometryTopologyCanvas({
       storeCamera(fitCamera(extent, size));
     }
   }, [sourceKey, extentKey, size.width, size.height, extent, camera, storeCamera]);
+
+  useEffect(() => {
+    if (!selectionFocus || selectionFocus.snapshotKey !== selectionSnapshotKey || !camera ||
+        size.width < MIN_CANVAS_SIZE || size.height < MIN_CANVAS_SIZE) return;
+    const requestKey = JSON.stringify([sourceKey, selectionSnapshotKey, selectionFocus.requestID]);
+    if (appliedSelectionFocusRef.current === requestKey) return;
+    const next = topologySelectionCamera(selectionFocus.extent, topologyExtent, size);
+    if (!next) return;
+    appliedSelectionFocusRef.current = requestKey;
+    dragRef.current = null;
+    setSelectionBox(null);
+    storeCamera(next);
+  }, [sourceKey, selectionSnapshotKey, selectionFocus, topologyExtent, size, camera, storeCamera]);
 
   useEffect(() => {
     if (!map || !extent || !viewport || !(mapCellSize > 0) || !Number.isFinite(mapCellSize)) return;
@@ -1209,9 +1230,9 @@ export function GeometryTopologyCanvas({
 
   const paths = useMemo(() => map?.features.map((feature) => ({
     feature,
-    selected: isFeatureSelected(feature, selectedFIDByKind),
+    selected: selectedMapFeatureIDs ? selectedMapFeatureIDs.includes(feature.id) : isFeatureSelected(feature, selectedFIDByKind),
     path: feature.paths.map((points) => toSvgPath(points, feature.geometryType === 'polygon')).filter(Boolean).join(' '),
-  })) ?? [], [map, selectedFIDByKind]);
+  })) ?? [], [map, selectedFIDByKind, selectedMapFeatureIDs]);
 
   const shownArcDraft = arcDraft?.ownerKey === interactionKey && tool === 'addArc' ? arcDraft : null;
   const shownSmartAddDraft = arcDraft?.ownerKey === interactionKey && tool === 'smartAdd' ? arcDraft : null;
@@ -1254,7 +1275,8 @@ export function GeometryTopologyCanvas({
         : tool === 'insertArcPoint' ? '插入点：点击当前唯一选中弧段的线段内部；端点及现有顶点附近不会插入。'
           : tool === 'deleteArcPoint' ? '删除点：点击当前唯一选中弧段的内部点；首尾端点不可删除。'
             : tool === 'splitArc' ? `分割弧段：点击真实弧段线段；当前模式为${splitMode === 'AtVertex' ? '在内部顶点' : '任意位置'}。`
-              : '点按要素执行 Host 空间选择；拖动空白处框选，拖动节点提交 Host 节点移动。'
+              : canMoveNodes ? '点按要素执行 Host 空间选择；拖动空白处框选，拖动节点提交 Host 节点移动。'
+                : '点按要素执行空间选择；拖动空白处框选。此视图未启用地图编辑。'
     : tool === 'addArc' ? 'Draw an arc: click vertices, press Enter or double-click to submit, or Escape to cancel. The preview is not in the geometry draft.'
       : tool === 'smartAdd' ? 'Terrain trace: click a start point and waypoints, then press Enter or double-click to finish one arc. Press Escape to cancel. The Host supplies the read-only path preview.'
         : tool === 'deepConnect' ? deepConnectVectorComponent
@@ -1264,7 +1286,8 @@ export function GeometryTopologyCanvas({
         : tool === 'insertArcPoint' ? 'Insert point: click inside a segment of the uniquely selected arc; endpoints and nearby vertices are excluded.'
           : tool === 'deleteArcPoint' ? 'Delete point: click an internal point on the uniquely selected arc; endpoints cannot be deleted.'
             : tool === 'splitArc' ? `Split arc: click a real arc segment; mode is ${splitMode === 'AtVertex' ? 'at internal vertex' : 'anywhere'}.`
-              : 'Click for Host spatial selection; drag empty space to select an extent, or drag a node for a Host node move.';
+              : canMoveNodes ? 'Click for Host spatial selection; drag empty space to select an extent, or drag a node for a Host node move.'
+                : 'Click to select features or drag empty space to select an extent. Map editing is disabled in this view.';
   const toolDisabledReason = tool === 'smartAdd' && !canSmartAddMap
     ? language === 'zh' ? ' · 当前没有有效地形捕获、实测窗口或 Host 路径预览，SmartAdd 已停用。' : ' · SmartAdd is disabled without a current Terrain capture, measured window, and Host path preview.'
     : tool !== 'select' && !canEditMap
@@ -1280,7 +1303,7 @@ export function GeometryTopologyCanvas({
           ? language === 'zh' ? '当前 Host 路径预览失败；未提交输入仍保留。' : 'The current Host path preview failed; unsubmitted input is retained.'
           : language === 'zh' ? '添加途经点或锚点后，Host 会计算只读路径预览。' : 'The Host calculates a read-only path preview after waypoints or anchors are added.';
 
-  return <section className="editor-table-card" data-testid="geometry-topology-map-panel" aria-label={language === 'zh' ? '几何拓扑图' : 'Geometry topology map'}>
+  return <section className="editor-table-card geometry-topology-canvas-card" data-testid="geometry-topology-map-panel" aria-label={language === 'zh' ? '几何拓扑图' : 'Geometry topology map'}>
     <div className="editor-terrain-table-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
       <strong>{language === 'zh' ? `几何拓扑图 · ${activeToolLabel}` : `Geometry topology map · ${activeToolLabel}`}</strong>
       <div role="toolbar" aria-label={language === 'zh' ? '拓扑视图工具' : 'Topology view tools'} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -1441,6 +1464,23 @@ export function GeometryTopologyCanvas({
           pointerEvents="none"
           data-testid="geometry-topology-selection-box"
         />}
+        <g data-testid="geometry-topology-selection-overlay" pointerEvents="none" aria-hidden="true">
+          {paths.filter((item) => item.selected).map(({ feature, path }) => {
+            const isPoint = feature.geometryType.toLowerCase() === 'point';
+            const labelPoint = labelCoordinate(feature);
+            const fidLabel = feature.fid == null ? null
+              : `${feature.featureKind === 'node' ? 'N' : feature.featureKind === 'arc' ? 'A' : 'R'} ${feature.fid}`;
+            return <g key={feature.id} data-selected-topology-feature-id={feature.id}>
+              {isPoint ? feature.paths.map((points, index) => points[0] && <circle key={index}
+                cx={points[0].x} cy={-points[0].y} r={mapCellSize * 5.2} fill="#b42318" stroke="#fff"
+                strokeWidth={1.2} vectorEffect="non-scaling-stroke" />)
+                : <path d={path} fill="none" stroke="#b42318" strokeWidth={3.4} vectorEffect="non-scaling-stroke" />}
+              {fidLabel && labelPoint && <text x={labelPoint.x + mapCellSize * 6} y={-labelPoint.y - mapCellSize * 5}
+                fontSize={mapCellSize * 12} fontWeight={600} fill="#b42318" stroke="#f8fafb"
+                strokeWidth={mapCellSize * 3} paintOrder="stroke">{fidLabel}</text>}
+            </g>;
+          })}
+        </g>
       </svg> : <div className="editor-empty-state" data-testid="geometry-topology-empty" style={{ padding: 20 }}>
         {isEmptyMap
           ? language === 'zh' ? '当前 Host 拓扑快照没有可绘制的真实要素。' : 'The current Host topology snapshot has no drawable features.'

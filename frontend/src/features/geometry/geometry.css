@@ -27,6 +27,8 @@
 .geometry-panel-heading h2, .geometry-panel-heading h3 { margin: 0; font-size: 14px; font-weight: 630; letter-spacing: -.01em; }
 .geometry-panel-heading p { margin: 5px 0 0; color: var(--geo-muted); font-size: 11px; }
 .geometry-panel-body { padding: 15px 17px; }
+.geometry-topology-canvas-card { color: #17212b; background: #fff; }
+.geometry-topology-canvas-card .editor-field-muted { color: #536575; }
 .geometry-grid { display: grid; gap: 13px; }
 .geometry-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .geometry-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }

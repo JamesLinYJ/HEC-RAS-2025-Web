@@ -220,3 +220,75 @@
   min-height: 27px;
   padding: 4px 8px;
 }
+
+.ras-data-grid-actions-toggle {
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid #cbd7dc;
+  border-radius: 5px;
+  background: #fff;
+  color: #34515c;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ras-data-grid-actions-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ras-data-grid-context-menu {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  width: min(250px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid #bdced3;
+  border-radius: 7px;
+  background: #fff;
+  color: #203b48;
+  box-shadow: 0 6px 24px #20333b30;
+  font: 12px/1.4 system-ui, sans-serif;
+}
+
+.ras-data-grid-context-menu > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ras-data-grid-context-menu > button:hover:not(:disabled),
+.ras-data-grid-context-menu > button:focus-visible {
+  outline: 2px solid #126b73;
+  outline-offset: -2px;
+  background: #e6f4f3;
+}
+
+.ras-data-grid-context-menu > button:disabled {
+  color: #8a989f;
+  cursor: default;
+}
+
+.ras-data-grid-context-menu kbd {
+  color: #6f818a;
+  font: 10px/1.4 system-ui, sans-serif;
+}
+
+.ras-data-grid-context-menu [role="separator"] {
+  height: 1px;
+  margin: 4px 3px;
+  background: #dce5e8;
+}

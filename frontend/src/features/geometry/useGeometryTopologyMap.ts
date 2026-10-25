@@ -26,6 +26,8 @@ import { createPersistedVectorDeepConnectPreview, parseVectorDeepConnectPreview,
   deepConnectSourceEchoIdentity, persistedVectorSourceRevision, vectorDeepConnectComponentSelectionKey } from './geometryVectorDeepConnect';
 import type { PersistedVectorDeepConnectComponent, PersistedVectorDeepConnectPreview, PersistedVectorDeepConnectSource,
   VectorSourceInspectionCandidate } from './geometryVectorDeepConnect';
+import { emptyTopologySelection, resolveTopologyDiagnosticTarget, topologySelectionCamera, topologySelectionGeometry, topologySelectionSnapshotKey,
+  topologyTableSelection, type TopologyDiagnosticTarget, type TopologySelectionFocus, type TopologySelectionKind } from './geometryTopologySelection';
 
 interface MapTarget {
   key: string;
@@ -54,6 +56,7 @@ interface GeometryMapSelection {
 }
 
 interface OwnerValue<T> { owner: string; value: T }
+interface SelectionEntry extends OwnerValue<GeometryMapSelection> { version: number }
 interface ArcPointsCapture {
   owner: string;
   arcFID: number;
@@ -128,7 +131,13 @@ export interface GeometryTopologyMapWorkspace {
   pathPreview: GeometryTopologyPathPreview | null;
   draftReady: boolean;
   draftDirty: boolean;
-  onTableSelectionChange: (kind: 'node' | 'arc', rows: GeometryRow[]) => void;
+  selectionSnapshotKey: string | null;
+  selectionVersion: number;
+  selectedFeatureCount: number;
+  canZoomToSelection: boolean;
+  onZoomToSelection: () => void;
+  onLocateDiagnostic: (messageID: string, target: TopologyDiagnosticTarget) => TopologySelectionKind | null;
+  onTableSelectionChange: (kind: TopologySelectionKind, rows: GeometryRow[]) => number | void;
   onMapCommand: (command: GeometryTopologyMapCommand) => Promise<void>;
   canvasProps: Omit<GeometryTopologyCanvasProps, 'language'>;
 }
@@ -335,7 +344,7 @@ function selectionFromResult(result: GeometryTopologySpatialSelectionResult): Ge
 }
 
 function emptySelection(): GeometryMapSelection {
-  return { node: [], arc: [], region: [] };
+  return emptyTopologySelection();
 }
 
 export function useGeometryTopologyMap({ active, owner, backend, backendRevision, context, model, topology,
@@ -345,7 +354,10 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const [captureEntry, setCaptureEntry] = useState<OwnerValue<MapGeometryCapture> | null>(null);
   const [viewportCapture, setViewportCapture] = useState<GeometryTopologyViewportCapture | null>(null);
   const [measuredViewportCapture, setMeasuredViewportCapture] = useState<GeometryTopologyViewportCapture | null>(null);
-  const [selectionEntry, setSelectionEntry] = useState<OwnerValue<GeometryMapSelection> | null>(null);
+  const [selectionEntry, setSelectionEntry] = useState<SelectionEntry | null>(null);
+  const selectionVersionRef = useRef(0);
+  const [selectionFocus, setSelectionFocus] = useState<TopologySelectionFocus | null>(null);
+  const focusRequestRef = useRef(0);
   const [arcPointsEntry, setArcPointsEntry] = useState<ArcPointsCapture | null>(null);
   const [arcPointsLoading, setArcPointsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -388,30 +400,21 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   const ownerRef = useRef(owner); ownerRef.current = owner;
   const measuredViewportRef = useRef<GeometryTopologyViewportCapture | null>(null);
 
-  useEffect(() => {
-    if (!topology) return;
-    const current = selectionRef.current;
-    if (current?.owner !== owner) return;
-    const available = {
-      node: new Set(topology.nodes.rows.flatMap((row) => Number.isInteger(row.fid) && row.fid! >= 0 ? [row.fid!] : [])),
-      arc: new Set(topology.arcs.rows.flatMap((row) => Number.isInteger(row.fid) && row.fid! >= 0 ? [row.fid!] : [])),
-      region: new Set(topology.regions.rows.flatMap((row) => Number.isInteger(row.fid) && row.fid! >= 0 ? [row.fid!] : [])),
-    };
-    const value = {
-      node: current.value.node.filter((fid) => available.node.has(fid)),
-      arc: current.value.arc.filter((fid) => available.arc.has(fid)),
-      region: current.value.region.filter((fid) => available.region.has(fid)),
-    };
-    const unchanged = (kind: keyof GeometryMapSelection): boolean => value[kind].length === current.value[kind].length &&
-      value[kind].every((fid, index) => fid === current.value[kind][index]);
-    if (unchanged('node') && unchanged('arc') && unchanged('region')) return;
-    const entry = { owner, value };
-    selectionRef.current = entry;
-    setSelectionEntry(entry);
-  }, [owner, topology?.nodes.rows, topology?.arcs.rows, topology?.regions.rows]);
-
   const ownerContextKey = JSON.stringify([owner, context.projectRevision, context.projectXml,
     context.coreLayerContext ?? null, context.projectSessionID, context.projectPath]);
+  const selectionSnapshotKey = topologySelectionSnapshotKey(JSON.stringify([
+    ownerContextKey, backendRevision ?? null, model?.assetPath ?? null, model?.coreLayerContext ?? null,
+  ]), topology);
+  const selectionSnapshotKeyRef = useRef(selectionSnapshotKey); selectionSnapshotKeyRef.current = selectionSnapshotKey;
+  useEffect(() => {
+    if (selectionRef.current?.owner !== selectionSnapshotKey) {
+      const version = ++selectionVersionRef.current;
+      const next = selectionSnapshotKey ? { owner: selectionSnapshotKey, value: emptySelection(), version } : null;
+      selectionRef.current = next;
+      setSelectionEntry(next);
+    }
+    setSelectionFocus((current) => current?.snapshotKey === selectionSnapshotKey ? current : null);
+  }, [selectionSnapshotKey]);
   const mapContext = useMemo<WorkbenchContext>(() => ({
     projectSessionID: context.projectSessionID,
     projectPath: context.projectPath,
@@ -424,10 +427,12 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
 
   const targets = targetsEntry?.owner === ownerContextKey ? targetsEntry.value : [];
   const selectedTarget = targets.find((target) => target.key === selectedTargetKey) ?? targets[0];
-  const mapSourceKey = JSON.stringify([owner, selectedTarget?.key ?? null]);
+  const mapSourceKey = JSON.stringify([ownerContextKey, backendRevision ?? null, selectedTarget?.key ?? null]);
   const capture = captureEntry?.owner === ownerContextKey && captureEntry.value.targetKey === selectedTarget?.key
     ? captureEntry.value : undefined;
-  const selection = selectionEntry?.owner === owner ? selectionEntry.value : emptySelection();
+  const selection = selectionSnapshotKey && selectionEntry?.owner === selectionSnapshotKey ? selectionEntry.value : emptySelection();
+  const selectionGeometry = useMemo(() => topologySelectionGeometry(topology, selection), [topology, selection]);
+  const selectedFeatureCount = selection.node.length + selection.arc.length + selection.region.length;
   const draftIdentity = topology?.completion?.draftIdentity;
   const mapCaptureReady = !!active && !!capture && !!topology && !!draftIdentity &&
     topology.revision === capture.geometryRevision && sameRevision(topology.completion?.sourceRevision, topology.revision);
@@ -814,6 +819,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     if (!active || selectedArcFID == null || !topology || !draftIdentity) return;
     const expected = {
       owner,
+      selectionSnapshotKey,
       arcFID: selectedArcFID,
       revision: topology.revision,
       draftState: topology.draftState,
@@ -827,7 +833,8 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
         if (generation !== arcPointsGenerationRef.current || ownerRef.current !== expected.owner ||
             latest?.revision !== expected.revision || latest.draftState !== expected.draftState ||
             latest.completion?.draftIdentity !== expected.draftIdentity ||
-            latestSelection?.owner !== expected.owner || latestSelection.value.arc.length !== 1 ||
+            selectionSnapshotKeyRef.current !== expected.selectionSnapshotKey ||
+            latestSelection?.owner !== expected.selectionSnapshotKey || latestSelection.value.arc.length !== 1 ||
             latestSelection.value.arc[0] !== expected.arcFID) return;
         if (snapshot.arcFID !== expected.arcFID || snapshot.revision !== expected.revision ||
             snapshot.draftIdentity !== expected.draftIdentity || snapshot.rows.some((point) =>
@@ -845,7 +852,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     return () => {
       if (arcPointsGenerationRef.current === generation) arcPointsGenerationRef.current += 1;
     };
-  }, [active, draftIdentity, owner, selectedArcFID, topology?.draftState, topology?.revision]);
+  }, [active, draftIdentity, owner, selectedArcFID, selectionSnapshotKey, topology?.draftState, topology?.revision]);
 
   useEffect(() => {
     if (!active) return;
@@ -866,7 +873,6 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     setSelectedTargetKey('');
     setSmartAddOptions(TOPOLOGY_SMART_ADD_DEFAULT_OPTIONS);
     setDeepConnectProgressEntry(null);
-    setSelectionEntry((current) => current?.owner === owner ? current : { owner, value: emptySelection() });
     if (!model || !context.projectPath || !context.projectRevision) {
       setLoading(false);
       return () => { controller.abort(); };
@@ -1032,16 +1038,54 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     cancelPathPreview();
   }, [cancelPathPreview, progressKey, vectorSources.onSelectedComponentChange]);
 
-  const onTableSelectionChange = useCallback((kind: 'node' | 'arc', rows: GeometryRow[]): void => {
-    const fids = [...new Set(rows.flatMap((row) => Number.isInteger(row.fid) && row.fid! >= 0 ? [row.fid!] : []))];
-    const current = selectionRef.current?.owner === owner ? selectionRef.current.value : emptySelection();
-    const next = { ...current, [kind]: fids };
-    selectionRef.current = { owner, value: next };
-    setSelectionEntry({ owner, value: next });
-  }, [owner]);
+  const cancelSpatialSelection = useCallback((): void => {
+    spatialGenerationRef.current += 1;
+    spatialControllerRef.current?.abort();
+    spatialControllerRef.current = null;
+    setSpatialBusy(false);
+  }, []);
+
+  const onTableSelectionChange = useCallback((kind: TopologySelectionKind, rows: GeometryRow[]): number | void => {
+    const current = topologyRef.current;
+    if (!current || !selectionSnapshotKey || selectionSnapshotKeyRef.current !== selectionSnapshotKey) return;
+    cancelSpatialSelection();
+    // Source ActiveFeatures UI selection clears the other two feature kinds.
+    const entry = { owner: selectionSnapshotKey, value: topologyTableSelection(current, kind, rows), version: ++selectionVersionRef.current };
+    selectionRef.current = entry;
+    setSelectionEntry(entry);
+    setSelectionFocus(null);
+    return entry.version;
+  }, [cancelSpatialSelection, selectionSnapshotKey]);
+
+  const onZoomToSelection = useCallback((): void => {
+    if (!selectionSnapshotKey || selectionSnapshotKeyRef.current !== selectionSnapshotKey ||
+        selectionRef.current?.owner !== selectionSnapshotKey) return;
+    const geometry = topologySelectionGeometry(topologyRef.current, selectionRef.current.value);
+    if (geometry.extent) setSelectionFocus({ snapshotKey: selectionSnapshotKey, requestID: ++focusRequestRef.current, extent: geometry.extent });
+  }, [selectionSnapshotKey]);
+
+  const onLocateDiagnostic = useCallback((messageID: string, target: TopologyDiagnosticTarget): TopologySelectionKind | null => {
+    if (!selectionSnapshotKey || selectionSnapshotKeyRef.current !== selectionSnapshotKey) return null;
+    const resolved = resolveTopologyDiagnosticTarget(topologyRef.current, messageID, target);
+    if (!resolved) return null;
+    cancelSpatialSelection();
+    const entry = { owner: selectionSnapshotKey, value: resolved.selection, version: ++selectionVersionRef.current };
+    selectionRef.current = entry;
+    setSelectionEntry(entry);
+    setActiveTool('select');
+    setSelectionFocus({ snapshotKey: selectionSnapshotKey, requestID: ++focusRequestRef.current, extent: resolved.extent });
+    return resolved.kind;
+  }, [cancelSpatialSelection, selectionSnapshotKey]);
+
+  const onTargetChange = useCallback((key: string): void => {
+    if (key === selectedTarget?.key) return;
+    cancelSpatialSelection();
+    setSelectionFocus(null);
+    setSelectedTargetKey(key);
+  }, [cancelSpatialSelection, selectedTarget?.key]);
 
   const onSpatialSelect = useCallback((event: GeometryTopologySpatialSelection): void => {
-    if (!active || !mapCaptureReady || !model || !topology || !capture || !draftIdentity ||
+    if (!active || !mapCaptureReady || !model || !topology || !capture || !draftIdentity || !selectionSnapshotKey ||
         !backend.supports('topology.spatialSelect')) return;
     if (!Number.isFinite(event.mapCellSize) || event.mapCellSize <= 0) {
       setError('当前地图视野未能提供有效的源坐标单位/像素比例。');
@@ -1082,16 +1126,17 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
       .then((result) => {
         const latest = topologyRef.current;
         const currentCapture = captureRef.current;
-        if (generation !== spatialGenerationRef.current || ownerRef.current !== owner ||
+        if (generation !== spatialGenerationRef.current || ownerRef.current !== owner || selectionSnapshotKeyRef.current !== selectionSnapshotKey ||
             targetKeyRef.current !== selectedTargetKeyAtStart || latest?.revision !== expected.revision ||
             latest.draftState !== expected.draftState || latest.completion?.draftIdentity !== expected.draftIdentity ||
             currentCapture?.owner !== ownerContextKey || currentCapture.value.targetKey !== selectedTargetKeyAtStart ||
             result.requestID !== request.requestID || result.mapID !== mapOwner.mapID ||
             result.contextToken !== mapOwner.contextToken || result.geometryRevision !== mapOwner.geometryRevision ||
             result.revision !== expected.revision || result.draftIdentity !== expected.draftIdentity) return;
-        const entry = { owner, value: selectionFromResult(result) };
+        const entry = { owner: selectionSnapshotKey, value: selectionFromResult(result), version: ++selectionVersionRef.current };
         selectionRef.current = entry;
         setSelectionEntry(entry);
+        setSelectionFocus(null);
       })
       .catch((caught: unknown) => {
         if (generation === spatialGenerationRef.current && !(caught instanceof DOMException && caught.name === 'AbortError')) {
@@ -1105,14 +1150,14 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
         }
       });
   }, [active, backend, capture, draftIdentity, mapCaptureReady, marqueeHitMode, model, owner, ownerContextKey,
-    selection, selectionMode, selectionScope, selectedTarget?.key, topology]);
+    selection, selectionMode, selectionScope, selectionSnapshotKey, selectedTarget?.key, topology]);
 
   const runMapCommand = useCallback(async (command: GeometryTopologyMapCommand): Promise<void> => {
     const current = topologyRef.current;
     const currentCapture = captureRef.current?.owner === ownerContextKey &&
       captureRef.current.value.targetKey === targetKeyRef.current ? captureRef.current.value : undefined;
     const currentDraftIdentity = current?.completion?.draftIdentity;
-    const currentSelection = selectionRef.current?.owner === owner ? selectionRef.current.value : emptySelection();
+    const currentSelection = selectionRef.current?.owner === selectionSnapshotKeyRef.current ? selectionRef.current.value : emptySelection();
     if (!active || !canEdit || busy || spatialBusy || moveBusy || mapCommandInFlightRef.current || !current || !currentCapture || !currentDraftIdentity ||
         current.revision !== currentCapture.geometryRevision || !sameRevision(current.completion?.sourceRevision, current.revision)) {
       throw new DOMException('当前几何地图或拓扑草稿已过期，未提交地图操作。', 'AbortError');
@@ -1400,7 +1445,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     vectorSources.selectedComponent]);
 
   const onMoveNode = useCallback((event: GeometryTopologyNodeMove): void => {
-    const currentSelection = selectionRef.current?.owner === owner ? selectionRef.current.value : emptySelection();
+    const currentSelection = selectionRef.current?.owner === selectionSnapshotKeyRef.current ? selectionRef.current.value : emptySelection();
     const selectedNodeFIDs = currentSelection.node.includes(event.nodeFID) ? currentSelection.node : [event.nodeFID];
     const command: GeometryTopologyMapCommand = {
       action: 'moveNode', featureKind: 'node', featureIDs: [], nodeFID: event.nodeFID,
@@ -1410,7 +1455,7 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
   }, [owner, runMapCommand]);
 
   const canvasProps = useMemo<Omit<GeometryTopologyCanvasProps, 'language'>>(() => ({
-    sourceKey: JSON.stringify([owner, selectedTarget?.key ?? null]),
+    sourceKey: mapSourceKey,
     tool: activeTool,
     splitMode,
     currentDraftIdentity: draftIdentity ?? null,
@@ -1422,6 +1467,9 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     pathPreview,
     deepConnectVectorComponent: vectorSources.selectedComponent,
     selectedFIDByKind: selection,
+    selectedMapFeatureIDs: selectionGeometry.featureIDs,
+    selectionSnapshotKey,
+    selectionFocus: selectionFocus?.snapshotKey === selectionSnapshotKey ? selectionFocus : null,
     canSelect: backend.supports('topology.spatialSelect'),
     canMoveNodes: canEdit && mapCaptureReady,
     canSmartAdd,
@@ -1441,14 +1489,14 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     onDeepConnectProgress,
   }), [activeTool, arcPoints, arcPointsLoading, backend, canEdit, capturing, draftIdentity, loading, splitMode,
     canSmartAdd, mapCaptureReady, marqueeHitMode, moveBusy, onDeepConnect, onDeepConnectProgress, onMoveNode,
-    onSmartAdd, onPathPreview, cancelPathPreview, onViewportReady, onSpatialSelect, owner, runMapCommand, selection, selectionMode, selectionScope,
-    selectedTarget?.key, spatialBusy, topology?.map, busy, pathPreviewScopeKey, previewAvailable, previewState, pathPreview,
+    onSmartAdd, onPathPreview, cancelPathPreview, onViewportReady, onSpatialSelect, mapSourceKey, runMapCommand, selection, selectionMode, selectionScope,
+    selectionSnapshotKey, selectionFocus, selectionGeometry.featureIDs, spatialBusy, topology?.map, busy, pathPreviewScopeKey, previewAvailable, previewState, pathPreview,
     vectorSources.selectedComponent]);
 
   return {
     targets: targets.map(({ key, label }) => ({ key, label })),
     selectedTargetKey: selectedTarget?.key ?? '',
-    onTargetChange: setSelectedTargetKey,
+    onTargetChange,
     loading,
     capturing,
     interactionBusy: spatialBusy || moveBusy || arcPointsLoading,
@@ -1492,6 +1540,12 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     pathPreview,
     draftReady,
     draftDirty: !!topology?.isDirty,
+    selectionSnapshotKey,
+    selectionVersion: selectionEntry?.owner === selectionSnapshotKey ? selectionEntry.version : selectionVersionRef.current,
+    selectedFeatureCount,
+    canZoomToSelection: !!selectionGeometry.extent && !!topologySelectionCamera(selectionGeometry.extent, topology?.map?.extent ?? null, { width: 1, height: 1 }),
+    onZoomToSelection,
+    onLocateDiagnostic,
     onTableSelectionChange,
     onMapCommand: runMapCommand,
     canvasProps,

@@ -2,6 +2,7 @@ import type { Language } from '../../shared/workbench';
 import { GeometryFeatureTable } from './GeometryFeatureTable';
 import { gt } from './geometryText';
 import type { GeometryFeatureKind, GeometryField, GeometryRow, GeometryTable, GeometryTopologyArcPointsSnapshot, GeometryTopologyFactorSelection, GeometryTopologyFilterClause, GeometryTopologyFilterSnapshot, GeometryTopologyRecipeSnapshot, GeometryTopologySnapshot } from './geometryTypes';
+import type { TopologyDiagnosticLocator } from './geometryTopologySelection';
 
 export interface GeometryTopologyTablePageProps {
   language: Language;
@@ -27,7 +28,8 @@ export interface GeometryTopologyTablePageProps {
   onLoadRecipe?: (controlPointFIDs: number[], recipeText?: string) => Promise<GeometryTopologyRecipeSnapshot>;
   onApplyRecipe?: (controlPointFIDs: number[], recipeText: string, forceSet: boolean,
     expected: { revision: string; draftState: string; draftIdentity: string }) => Promise<void>;
-  onSelectionChange?: (rows: GeometryRow[]) => void;
+  onSelectionChange?: (rows: GeometryRow[]) => number | void;
+  onLocateTopologyDiagnostic?: TopologyDiagnosticLocator;
   onDelete: (rows: GeometryRow[]) => void;
   onLocalAdd: () => void;
 }

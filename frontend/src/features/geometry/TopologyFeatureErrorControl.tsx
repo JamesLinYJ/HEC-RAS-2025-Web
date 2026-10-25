@@ -1,19 +1,22 @@
 import type { Language } from '../../shared/workbench';
 import { gt } from './geometryText';
 import type { GeometryRow, GeometryTopologySnapshot } from './geometryTypes';
+import { GeometryTopologyDiagnosticTargets } from './GeometryTopologyDiagnosticTargets';
+import { topologyDiagnosticKind, topologySourceRows, type TopologyDiagnosticLocator } from './geometryTopologySelection';
 
 export interface TopologyFeatureErrorControlProps {
   language: Language;
   featureKind: 'node' | 'arc' | 'region';
   rows: GeometryRow[];
   snapshot?: GeometryTopologySnapshot;
+  onLocate?: TopologyDiagnosticLocator;
 }
 
-export function TopologyFeatureErrorControl({ language, featureKind, rows, snapshot }: TopologyFeatureErrorControlProps) {
-  const selected = rows.filter((row) => row.fid != null && row.fid >= 0);
+export function TopologyFeatureErrorControl({ language, featureKind, rows, snapshot, onLocate }: TopologyFeatureErrorControlProps) {
+  const selected = snapshot ? topologySourceRows(snapshot, featureKind, rows) : [];
   const matched = (snapshot?.completion?.messages ?? []).filter((message) =>
-    message.targets?.some((target) => selected.some((row) => target.featureKind.toLowerCase() === featureKind
-      && (target.fid === row.fid || target.tableRowID === row.id))),
+    message.targets?.some((target) => selected.some((row) => topologyDiagnosticKind(target.featureKind) === featureKind
+      && target.fid === row.fid && target.tableRowID === row.id)),
   );
 
   return (
@@ -34,7 +37,7 @@ export function TopologyFeatureErrorControl({ language, featureKind, rows, snaps
             <summary>{message.severity} · {message.code} · {message.text}</summary>
             <pre style={{ whiteSpace: 'pre-wrap' }}>{message.text}</pre>
             {!!message.logData?.length && <dl className="geometry-topology-log-data">{message.logData.map((entry, index) => <div key={`${entry.key}-${index}`}><dt>{entry.key}</dt><dd>{entry.value}</dd></div>)}</dl>}
-            {message.targets?.length ? <div className="geometry-inline-help">{message.targets.map((target) => `${target.featureKind} ${target.fid} (${target.tableRowID})`).join(' · ')}</div> : null}
+            <GeometryTopologyDiagnosticTargets language={language} snapshot={snapshot} message={message} onLocate={onLocate} />
           </details>)}
         </div>
       )}
