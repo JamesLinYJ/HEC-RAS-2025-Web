@@ -152,6 +152,11 @@ export default function GeometryPage(props: FeaturePageProps) {
       case 'mesh': return <GeometryMeshPage key={workspace.ownerKey}
         language={language}
         snapshot={displayedMesh}
+        context={props.context}
+        backend={props.backend}
+        backendRevision={props.backendRevision}
+        model={workspace.model}
+        topologySnapshot={workspace.topology}
         localRegionRows={[]}
         busy={busy}
         canEdit={!!workspace.mesh?.canEdit && workspace.supports('geometry.mesh.edit')}

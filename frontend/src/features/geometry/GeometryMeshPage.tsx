@@ -1,17 +1,23 @@
 import { useMemo, useState } from 'react';
-import type { Language } from '../../shared/workbench';
+import type { BackendGateway, Language, WorkbenchContext } from '../../shared/workbench';
 import { gt } from './geometryText';
 import { GeometryError } from './GeometryError';
 import { FlowAreaLayerActiveFeatures } from './FlowAreaLayerActiveFeatures';
 import { GeometryPrepareSummaryControl } from './GeometryPrepareSummaryControl';
 import { MeshDiagnostics } from './MeshDiagnostics';
+import { MeshElementInspector } from './MeshElementInspector';
 import { PatchEditor } from './PatchEditor';
 import { geometryDiagnosticMessage } from './geometryErrors';
-import type { GeometryField, GeometryMeshDegreeScan, GeometryMeshPatchEditContext, GeometryMeshPatchMutation, GeometryMeshSnapshot, GeometryRow, GeometryTable } from './geometryTypes';
+import type { GeometryField, GeometryMeshDegreeScan, GeometryMeshPatchEditContext, GeometryMeshPatchMutation, GeometryMeshSnapshot, GeometryModelRequest, GeometryRow, GeometryTable, GeometryTopologySnapshot } from './geometryTypes';
 
 export interface GeometryMeshPageProps {
   language: Language;
   snapshot?: GeometryMeshSnapshot;
+  context: WorkbenchContext;
+  backend: BackendGateway;
+  backendRevision?: number;
+  model: GeometryModelRequest | null;
+  topologySnapshot?: GeometryTopologySnapshot;
   localRegionRows: GeometryRow[];
   busy: boolean;
   canEdit: boolean;
@@ -69,7 +75,7 @@ function pretty(value: unknown): string {
 }
 
 export function GeometryMeshPage({
-  language, snapshot, localRegionRows, busy, canEdit, canGenerate, canPrepare, canDegreeScan, canPropertyTables,
+  language, snapshot, context, backend, backendRevision, model, topologySnapshot, localRegionRows, busy, canEdit, canGenerate, canPrepare, canDegreeScan, canPropertyTables,
   onFlowAreaChange, onRegionSelection, onPatchMutation, onPrepare, onGenerate, onDegreeScan, onPropertyTables,
 }: GeometryMeshPageProps) {
   const [maximumFaces, setMaximumFaces] = useState('8');
@@ -123,6 +129,16 @@ export function GeometryMeshPage({
       <GeometryPrepareSummaryControl language={language} summary={snapshot?.prepareSummary} pending={!!snapshot?.preparePending} />
       <PatchEditor language={language} snapshot={snapshot} localRows={localRegionRows} canEdit={canEdit} busy={busy}
         onRegionSelection={onRegionSelection} onMutation={onPatchMutation} />
+      <MeshElementInspector
+        language={language}
+        context={context}
+        backend={backend}
+        backendRevision={backendRevision}
+        model={model}
+        mesh={snapshot}
+        topology={topologySnapshot}
+        disabled={busy}
+      />
       <section className="geometry-panel">
         <header className="geometry-panel-heading"><div><h2>{gt(language, 'degreeScan')} / {gt(language, 'propertyTables')}</h2><p>{gt(language, 'validationNote')}</p></div></header>
         <div className="geometry-panel-body geometry-mesh-controls">

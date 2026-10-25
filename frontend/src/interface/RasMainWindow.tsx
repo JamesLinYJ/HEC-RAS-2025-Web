@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ContextChangeOptions, FeatureId, Language, MapVisualizationCommitReceipt, MapVisualizationTarget, ThemeMode, WorkbenchContext } from '../shared/workbench';
+import type { ContextChangeOptions, FeatureId, Language, MapVisualizationAcknowledgement, MapVisualizationTarget, ThemeMode, WorkbenchContext } from '../shared/workbench';
 import { assetKindLabel, message, text } from '../shared/workbench';
 import { ServerBackend } from '../platform/ServerBackend';
 import { sessionBackend } from '../platform/SessionBackend';
@@ -196,7 +196,7 @@ export function RasMainWindow() {
     return capture.id;
   }, []);
   const onCommitMapVisualization = useCallback((source: WorkbenchContext, target: MapVisualizationTarget,
-    receipt: MapVisualizationCommitReceipt, leaseID: string): boolean => {
+    receipt: MapVisualizationAcknowledgement, leaseID: string): boolean => {
     const lease = mapWriteLease.current;
     if (!lease || lease.capture.id !== leaseID ||
         !matchesMapVisualizationReceipt(lease.capture, contextRef.current, source, target, receipt)) return false;

@@ -75,6 +75,10 @@ export interface MapVisualizationTarget {
   name: string;
   mapType: string;
   visualizationRevision: string | null;
+  /** A document operation reserves its intended identity change with the old map. */
+  documentMutation?:
+    | { action: 'rename'; newName: string }
+    | { action: 'delete'; mapIndexChanges: MapDocumentIndexChange[] };
 }
 export interface MapVisualizationCommitReceipt {
   mapIndex: number;
@@ -83,6 +87,24 @@ export interface MapVisualizationCommitReceipt {
   previousVisualizationRevision: string | null;
   visualizationRevision: string;
 }
+export interface MapDocumentIndexChange {
+  previousMapIndex: number;
+  mapIndex: number;
+  mapName: string;
+  mapType: string;
+}
+export interface MapDocumentDeleteReceipt {
+  removedMapIndex: number;
+  removedMapName: string;
+  removedMapType: string;
+  previousVisualizationRevision: string | null;
+  visualizationRevision: string;
+  mapIndexChanges: MapDocumentIndexChange[];
+}
+/** Preserve the Host's actual document receipt rather than synthesizing a layer-write receipt. */
+export type MapVisualizationAcknowledgement = MapVisualizationCommitReceipt
+  | { documentAction: 'rename'; receipt: MapVisualizationCommitReceipt }
+  | { documentAction: 'delete'; receipt: MapDocumentDeleteReceipt };
 export interface FeaturePageProps {
   /** Live map calculator layers belong only to this open project session. */
   calculatorSessions?: import('./rasterCalculatorSession').RasterCalculatorSessions;
@@ -102,7 +124,7 @@ export interface FeaturePageProps {
   onEndSessionReferenceMutation?: (leaseID: string) => void;
   /** Reserve the current project while a tool writes to one exact saved map. */
   onBeginMapVisualizationMutation?: (source: WorkbenchContext, target: MapVisualizationTarget, draftOwner: string) => string | null;
-  onCommitMapVisualization?: (source: WorkbenchContext, target: MapVisualizationTarget, receipt: MapVisualizationCommitReceipt, leaseID: string) => boolean;
+  onCommitMapVisualization?: (source: WorkbenchContext, target: MapVisualizationTarget, receipt: MapVisualizationAcknowledgement, leaseID: string) => boolean;
   onEndMapVisualizationMutation?: (leaseID: string) => void;
   /** Preserve one editor's draft while committing an acknowledged project-only change. */
   onBeginProjectContextMutation?: (source: WorkbenchContext, draftOwner: string) => string | null;

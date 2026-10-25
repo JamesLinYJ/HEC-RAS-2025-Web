@@ -14,6 +14,7 @@ try {
       context: path.join(root, 'frontend/src/shared/sessionReferences.ts'),
       gateway: path.join(root, 'frontend/src/platform/SessionBackend.ts'),
       mapMutation: path.join(root, 'frontend/src/shared/mapVisualizationMutation.ts'),
+      mapDocuments: path.join(root, 'frontend/src/features/map/mapDocumentActionsWorkflow.ts'),
       projectMutation: path.join(root, 'frontend/src/shared/projectContextMutation.ts'),
       externalConnection: path.join(root, 'frontend/src/features/project/ExternalConnectionWorkflow.ts'),
     }, formats: ['es'], fileName: (_format, name) => `${name}.mjs` },
@@ -22,6 +23,8 @@ try {
   const { withSessionReferenceContext, mergeSessionReferenceContext } = await import(pathToFileURL(path.join(temporary, 'context.mjs')).href);
   const { sessionBackend } = await import(pathToFileURL(path.join(temporary, 'gateway.mjs')).href);
   const { captureMapVisualizationLease, matchesMapVisualizationReceipt } = await import(pathToFileURL(path.join(temporary, 'mapMutation.mjs')).href);
+  const { renameMapDocument, deleteMapDocument, MapDocumentRequestNotSubmittedError } =
+    await import(pathToFileURL(path.join(temporary, 'mapDocuments.mjs')).href);
   const { captureProjectContextLease, matchesProjectContextCommit } = await import(pathToFileURL(path.join(temporary, 'projectMutation.mjs')).href);
   const { ExternalConnectionCommittedContextError, inspectAndCommitExternalConnection } =
     await import(pathToFileURL(path.join(temporary, 'externalConnection.mjs')).href);
@@ -105,6 +108,90 @@ try {
   const changedTarget = { ...target, mapID: 'another-map' };
   assert.equal(matchesMapVisualizationReceipt(lease, active, active, changedTarget, mapReceipt), false,
     'Map IDs remain distinct even when names and indices match.');
+  let documentChecks = 0;
+  const verifyDocument = (value, expected, description) => { assert.equal(value, expected, description); documentChecks++; };
+  const renameTarget = { ...target, documentMutation: { action: 'rename', newName: '中文地图' } };
+  const renameLease = captureMapVisualizationLease(active, active, renameTarget, 'map.write:documents', new Set());
+  const renameAcknowledgement = { documentAction: 'rename', receipt: { ...mapReceipt, mapName: '中文地图' } };
+  verifyDocument(Boolean(renameLease), true, 'A document rename reserves its old identity and exact new name.');
+  verifyDocument(matchesMapVisualizationReceipt(renameLease, active, active, renameTarget, renameAcknowledgement), true,
+    'A real Host rename receipt is adopted with its new name, without fabricating an old-name receipt.');
+  verifyDocument(matchesMapVisualizationReceipt(renameLease, active, active, renameTarget, { ...renameAcknowledgement,
+    receipt: { ...renameAcknowledgement.receipt, mapName: 'unexpected' } }), false, 'An unrequested new name cannot be adopted.');
+  verifyDocument(matchesMapVisualizationReceipt(renameLease, active, active, renameTarget, { ...renameAcknowledgement,
+    receipt: { ...renameAcknowledgement.receipt, visualizationRevision: target.visualizationRevision } }), false,
+    'A changed map name requires a changed .vis revision.');
+  verifyDocument(matchesMapVisualizationReceipt(renameLease, active, active, renameTarget, mapReceipt), false,
+    'A regular layer-write receipt cannot acknowledge a reserved rename.');
+  verifyDocument(matchesMapVisualizationReceipt(lease, active, active, target, renameAcknowledgement), false,
+    'A layer-write lease cannot acknowledge a document rename.');
+  verifyDocument(matchesMapVisualizationReceipt(renameLease, active, active,
+    { ...renameTarget, documentMutation: { action: 'rename', newName: 'changed intent' } },
+    { ...renameAcknowledgement, receipt: { ...renameAcknowledgement.receipt, mapName: 'changed intent' } }), false,
+    'Changing both request and acknowledgement after reservation still fails the captured intention.');
+  const mapIndexChanges = [
+    { previousMapIndex: 0, mapIndex: 0, mapName: '保留首图', mapType: 'Project' },
+    { previousMapIndex: 2, mapIndex: 1, mapName: '保留末图', mapType: 'Buildable' },
+  ];
+  const deleteTarget = { ...target, mapIndex: 1, documentMutation: { action: 'delete', mapIndexChanges } };
+  const deleteLease = captureMapVisualizationLease(active, active, deleteTarget, 'map.write:documents', new Set());
+  const deleteAcknowledgement = { documentAction: 'delete', receipt: {
+    removedMapIndex: 1, removedMapName: target.name, removedMapType: target.mapType,
+    previousVisualizationRevision: target.visualizationRevision, visualizationRevision: 'b'.repeat(64), mapIndexChanges,
+  } };
+  verifyDocument(Boolean(deleteLease), true, 'Deleting a middle document reserves all surviving index identities.');
+  verifyDocument(matchesMapVisualizationReceipt(deleteLease, active, active, deleteTarget, deleteAcknowledgement), true,
+    'The actual deletion receipt carries the removed identity and complete survivor remap.');
+  for (const wrongChanges of [mapIndexChanges.slice(0, 1), [...mapIndexChanges].reverse(),
+    [mapIndexChanges[0], { ...mapIndexChanges[1], previousMapIndex: 1 }],
+    [mapIndexChanges[0], { ...mapIndexChanges[1], mapName: 'wrong sibling' }]]) {
+    verifyDocument(matchesMapVisualizationReceipt(deleteLease, active, active, deleteTarget,
+      { ...deleteAcknowledgement, receipt: { ...deleteAcknowledgement.receipt, mapIndexChanges: wrongChanges } }), false,
+      'Missing, reordered, stale-index or substituted survivors cannot acknowledge deletion.');
+  }
+  verifyDocument(matchesMapVisualizationReceipt(deleteLease, { ...active, projectSessionID: 'reopened' }, active,
+    deleteTarget, deleteAcknowledgement), false, 'A late document deletion cannot advance a newly opened session.');
+  verifyDocument(matchesMapVisualizationReceipt(deleteLease, active, active, deleteTarget,
+    { ...deleteAcknowledgement, receipt: { ...deleteAcknowledgement.receipt, previousVisualizationRevision: 'c'.repeat(64) } }), false,
+    'A deletion for another .vis revision cannot be adopted.');
+  verifyDocument(matchesMapVisualizationReceipt(deleteLease, active, active, deleteTarget,
+    { ...deleteAcknowledgement, receipt: { ...deleteAcknowledgement.receipt, visualizationRevision: target.visualizationRevision } }), false,
+    'A deletion must advance the .vis revision.');
+  verifyDocument(captureMapVisualizationLease(active, active,
+    { ...renameTarget, documentMutation: { action: 'rename', newName: 'bad\nname' } }, 'map.write:documents', new Set()), null,
+    'Control characters in a rename are rejected before a transaction is reserved.');
+  verifyDocument(captureMapVisualizationLease(active, active,
+    { ...deleteTarget, documentMutation: { action: 'delete', mapIndexChanges: [...mapIndexChanges].reverse() } },
+    'map.write:documents', new Set()), null, 'A malformed survivor remap cannot reserve a deletion.');
+  // Recovery must distinguish a proven pre-POST failure from a possibly committed request.
+  const documentTab = { ...target, id: target.mapID, roots: [] };
+  let documentPosts = 0;
+  const unavailableDocumentGateway = { supports: () => false, request: async () => { documentPosts++; } };
+  await assert.rejects(renameMapDocument(unavailableDocumentGateway, active, documentTab, '新地图'),
+    MapDocumentRequestNotSubmittedError);
+  documentChecks++;
+  const acceptingDocumentGateway = { supports: () => true, request: async () => { documentPosts++; return null; } };
+  await assert.rejects(renameMapDocument(acceptingDocumentGateway, { ...active, projectPath: null }, documentTab, '新地图'),
+    MapDocumentRequestNotSubmittedError);
+  documentChecks++;
+  await assert.rejects(deleteMapDocument(acceptingDocumentGateway, active, documentTab, []),
+    MapDocumentRequestNotSubmittedError);
+  documentChecks++;
+  verifyDocument(documentPosts, 0, 'Unsupported, invalid-context and invalid-remap failures never reach the gateway.');
+  const lostAcknowledgement = new Error('Connection lost after submitting the map operation');
+  const uncertainDocumentGateway = { supports: () => true, request: async () => { documentPosts++; throw lostAcknowledgement; } };
+  await assert.rejects(renameMapDocument(uncertainDocumentGateway, active, documentTab, '新地图'),
+    error => error === lostAcknowledgement && !(error instanceof MapDocumentRequestNotSubmittedError));
+  documentChecks++;
+  verifyDocument(documentPosts, 1, 'A failed transport after submission remains uncertain and is not retried.');
+  const mismatchedDocumentGateway = { supports: () => true, request: async () => {
+    documentPosts++;
+    return { ...mapReceipt, mapName: 'wrong returned identity' };
+  } };
+  await assert.rejects(renameMapDocument(mismatchedDocumentGateway, active, documentTab, '新地图'),
+    error => error instanceof Error && !(error instanceof MapDocumentRequestNotSubmittedError));
+  documentChecks++;
+  verifyDocument(documentPosts, 2, 'A rejected receipt is still a submitted operation and cannot unlock as a no-request failure.');
   const projectLease = captureProjectContextLease(active, active, 'bc-draft', new Set(['bc-draft']));
   assert.ok(projectLease, 'A project-only connection change may retain its originating boundary draft.');
   assert.equal(captureProjectContextLease(active, active, 'bc-draft', new Set(['bc-draft', 'other-model'])), null,
@@ -281,6 +368,6 @@ try {
   verify(staleSourceCalls.length === 0,
     'A stale source core capture produces no inspect or commit POST.');
 
-  console.log(JSON.stringify({ state: 'passed', checks: 41 + addedChecks,
+  console.log(JSON.stringify({ state: 'passed', checks: 41 + addedChecks + documentChecks,
     scope: 'session-reference-project-context-and-external-connection-ownership' }));
 } finally { await rm(temporary, { recursive: true, force: true }); }

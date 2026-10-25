@@ -1,0 +1,251 @@
+.geometry-panel.mesh-element-inspector {
+  overflow: hidden;
+  background: #0b2230;
+}
+
+.mesh-element-inspector__body {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.8fr) minmax(0, 1.6fr);
+  gap: 14px;
+  padding: 14px;
+}
+
+.mesh-element-inspector__controls,
+.mesh-element-inspector__preview {
+  min-width: 0;
+}
+
+.mesh-element-inspector__controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mesh-element-inspector__controls .geometry-form-field select,
+.mesh-element-inspector__controls .geometry-form-field input {
+  width: 100%;
+}
+
+.mesh-element-inspector__controls small {
+  color: var(--geo-muted, #91a8b4);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.mesh-element-inspector__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mesh-element-inspector__preview-heading,
+.mesh-element-inspector__curve-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--geo-text, #e6f0f4);
+  font-size: 12px;
+}
+
+.mesh-element-inspector__map {
+  display: block;
+  width: 100%;
+  min-height: 270px;
+  max-height: 460px;
+  border: 1px solid var(--geo-line, rgba(155, 189, 205, .14));
+  border-radius: 8px;
+  background: var(--surface-muted, #f7f9fc);
+}
+
+.mesh-element-inspector__cell {
+  fill: rgba(73, 132, 205, 0.17);
+  stroke: rgba(48, 99, 164, 0.62);
+  stroke-width: 0.7;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+  transition: fill 100ms ease, stroke 100ms ease;
+}
+
+.mesh-element-inspector__cell:focus {
+  /* SVG's default focus outline scales with source coordinates. Use the
+     non-scaling focus-visible stroke below for keyboard focus instead. */
+  outline: none;
+}
+
+.mesh-element-inspector__cell:hover,
+.mesh-element-inspector__cell:focus-visible {
+  fill: rgba(60, 142, 235, 0.42);
+  stroke: #1769bd;
+  stroke-width: 1.7;
+  outline: none;
+}
+
+.mesh-element-inspector__cell.is-selected {
+  fill: rgba(38, 153, 104, 0.36);
+  stroke: #11734a;
+  stroke-width: 1.6;
+}
+
+.mesh-element-inspector__located-cell {
+  fill: rgba(242, 154, 49, 0.18);
+  stroke: #e17b13;
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.mesh-element-inspector__located-face {
+  fill: none;
+  stroke: #df6c14;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.mesh-element-inspector__location-center {
+  fill: #db5b10;
+  stroke: white;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.mesh-element-inspector__notice,
+.mesh-element-inspector__empty,
+.mesh-element-inspector__status,
+.mesh-element-inspector__error {
+  margin: 8px 0 0;
+  color: var(--geo-muted, #91a8b4);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.mesh-element-inspector__notice.is-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 14px 14px;
+  padding: 11px 13px;
+  border: 1px solid rgba(205, 142, 33, 0.36);
+  border-radius: 8px;
+  background: rgba(243, 185, 71, 0.12);
+  color: var(--geo-text, #e6f0f4);
+}
+
+.mesh-element-inspector__error {
+  color: #ffc1bc;
+}
+
+.mesh-element-inspector__status {
+  padding: 0 14px 12px;
+}
+
+.mesh-element-inspector__curve {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--geo-line, rgba(155, 189, 205, .14));
+}
+
+.mesh-element-inspector__curve-heading {
+  align-items: flex-start;
+}
+
+.mesh-element-inspector__curve-heading h3 {
+  margin: 0 0 4px;
+  color: var(--geo-text, #e6f0f4);
+  font-size: 14px;
+}
+
+.mesh-element-inspector__curve-heading p {
+  margin: 0;
+  color: var(--geo-muted, #91a8b4);
+  font-size: 11px;
+}
+
+.mesh-element-inspector__chart {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  overflow: visible;
+}
+
+.mesh-element-inspector__axis {
+  stroke: var(--geo-muted, #91a8b4);
+  stroke-width: 1;
+}
+
+.mesh-element-inspector__curve-line {
+  fill: none;
+  stroke: var(--geo-accent, #63dfbc);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.mesh-element-inspector__curve-point {
+  fill: var(--geo-accent, #63dfbc);
+  stroke: #0b2230;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.mesh-element-inspector__axis-label {
+  fill: var(--geo-text, #e6f0f4);
+  font-size: 11px;
+}
+
+.mesh-element-inspector__data,
+.mesh-element-inspector__diagnostic {
+  margin-top: 8px;
+  color: var(--geo-text, #e6f0f4);
+  font-size: 12px;
+}
+
+.mesh-element-inspector__data summary,
+.mesh-element-inspector__diagnostic summary {
+  cursor: pointer;
+}
+
+.mesh-element-inspector__table-scroll {
+  max-height: 280px;
+  margin-top: 8px;
+  overflow: auto;
+  border: 1px solid var(--geo-line, rgba(155, 189, 205, .14));
+  border-radius: 6px;
+}
+
+.mesh-element-inspector__table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.mesh-element-inspector__table-scroll th,
+.mesh-element-inspector__table-scroll td {
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--geo-line, rgba(155, 189, 205, .14));
+  text-align: right;
+}
+
+.mesh-element-inspector__table-scroll th {
+  position: sticky;
+  top: 0;
+  background: #102d3b;
+}
+
+.mesh-element-inspector__diagnostic pre {
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .mesh-element-inspector__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

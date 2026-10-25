@@ -240,6 +240,32 @@
   flex: none;
 }
 
+.map-document-manager { position: relative; flex: none; }
+.map-document-manager > summary { list-style: none; cursor: pointer; padding: 6px 9px; border: 1px solid #d6e0e6;
+  border-radius: 5px; background: #fff; color: #526775; font-size: 11px; }
+.map-document-manager > summary::-webkit-details-marker { display: none; }
+.map-document-manager > summary:hover { background: #f5f9fb; color: #274f68; }
+.map-document-manager-panel { position: absolute; inset-inline-end: 0; top: calc(100% + 5px); z-index: 45; width: min(340px, calc(100vw - 36px));
+  display: grid; gap: 10px; padding: 12px; border: 1px solid #d6e0e6; border-radius: 7px; background: #fff;
+  box-shadow: 0 10px 26px #24394c30; color: #344b5a; font-size: 12px; }
+.map-document-manager-identity { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.map-document-manager-identity small { color: #758591; font-size: 10px; font-weight: 450; white-space: nowrap; }
+.map-document-manager-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.map-document-manager-actions button, .map-document-manager-notice button { min-height: 29px; padding: 5px 9px; border: 1px solid #d5e0e6;
+  border-radius: 5px; background: #f7fafc; color: #365469; font-size: 11px; cursor: pointer; }
+.map-document-manager-actions button[data-testid="map-document-delete-action"],
+.map-document-manager-actions button[data-testid="map-document-delete-confirm"] { color: #963f38; }
+.map-document-manager-actions button:disabled, .map-document-manager-notice button:disabled { opacity: .55; cursor: not-allowed; }
+.map-document-manager-form { display: grid; gap: 9px; padding-top: 9px; border-top: 1px solid #e8eef1; }
+.map-document-manager-form p, .map-document-manager-hint { margin: 0; line-height: 1.5; color: #5f707c; }
+.map-document-manager-form label { display: grid; gap: 5px; color: #657682; }
+.map-document-manager-form input { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid #cfdbe2; border-radius: 4px; color: #263f50; }
+.map-document-manager-error { color: #a33d36; font-size: 11px; }
+.map-document-manager-notice { display: grid; gap: 6px; padding: 9px; border-radius: 5px; background: #f1f7f4; color: #426352; line-height: 1.45; }
+.map-document-manager-notice.is-warning { background: #fff5e8; color: #825a24; }
+.map-document-manager-notice strong { font-size: 11px; }
+.map-document-manager-notice span { overflow-wrap: anywhere; }
+
 .map-new-document-control { margin-inline-start: auto; }
 .map-new-map-flyout { position: relative; }
 .map-new-map-flyout > summary { cursor: pointer; padding: 5px 7px; list-style: none; color: #627381; }
