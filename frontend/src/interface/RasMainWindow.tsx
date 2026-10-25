@@ -13,6 +13,7 @@ import { FramedContentDialog } from '../controls/FramedContentDialog';
 import { captureMapVisualizationLease, matchesMapVisualizationReceipt, type MapVisualizationLease } from '../shared/mapVisualizationMutation';
 import { captureProjectContextLease, matchesProjectContextCommit, type ProjectContextLease } from '../shared/projectContextMutation';
 import { useRasterCalculatorSessions } from '../shared/useRasterCalculatorSessions';
+import { clearPlanAnalysisDraftRegistry, emptyPlanAnalysisDraftRegistry, hasProtectedSourceWrite, matchesPlanSaveRecoveryAcknowledgement, publishPlanAnalysisDraft, type PlanAnalysisDraftPublication, type PlanSaveRecoveryAcknowledgement } from '../shared/planAnalysisDrafts';
 
 const features: { id: FeatureId; zh: string; en: string }[] = [
   { id: 'project', zh: '工程', en: 'Project' },
@@ -25,8 +26,6 @@ const features: { id: FeatureId; zh: string; en: string }[] = [
 ];
 const blankContext = (): WorkbenchContext => ({ projectSessionID: crypto.randomUUID(), projectPath: null, projectXml: null, projectRevision: null, selectedAsset: null });
 const identity = (value: WorkbenchContext) => JSON.stringify([value.projectSessionID, value.projectPath, value.selectedAsset?.path ?? null, value.selectedAsset?.revision ?? null]);
-const hasActiveMapWrite = (owners: ReadonlySet<string>): boolean => [...owners].some(owner =>
-  owner.startsWith('map.write:') || owner.startsWith('map.create:') || owner.startsWith('map.raster-write:'));
 const initialFeature = (): FeatureId => {
   const route = window.location.hash.replace(/^#\/?/, '');
   return features.some((feature) => feature.id === route) ? route as FeatureId : 'project';
@@ -67,6 +66,30 @@ export function RasMainWindow() {
   const [backendRevision, setBackendRevision] = useState(0);
   const [dirtyOwners, setDirtyOwners] = useState<Set<string>>(() => new Set());
   const dirtyOwnersRef = useRef(dirtyOwners);
+  const [planDraftRegistry, setPlanDraftRegistry] = useState(emptyPlanAnalysisDraftRegistry);
+  const planDraftRegistryRef = useRef(planDraftRegistry);
+  const acceptedPlanRecoveryAttempts = useRef(new Set<string>());
+  const planAnalysisDrafts = useMemo(() => {
+    const sessionBusy = referenceWriting || mapWriting || projectWriting;
+    return { ...planDraftRegistry, sessionBusy, captureKey: `${planDraftRegistry.captureKey}:busy:${sessionBusy}` };
+  }, [planDraftRegistry, referenceWriting, mapWriting, projectWriting]);
+  const onPlanAnalysisDraftChange = useCallback((editorID: string, publication: PlanAnalysisDraftPublication | null): void => {
+    const current = contextRef.current;
+    if (publication && (publication.source.projectSessionID !== current.projectSessionID
+      || publication.source.projectPath !== current.projectPath)) return;
+    const next = publishPlanAnalysisDraft(planDraftRegistryRef.current, editorID, publication);
+    planDraftRegistryRef.current = next;
+    setPlanDraftRegistry(next);
+  }, []);
+  useLayoutEffect(() => {
+    let next = planDraftRegistryRef.current;
+    for (const entry of next.entries) {
+      if (entry.source.projectSessionID !== context.projectSessionID || entry.source.projectPath !== context.projectPath)
+        next = publishPlanAnalysisDraft(next, entry.editorID, null);
+    }
+    planDraftRegistryRef.current = next;
+    setPlanDraftRegistry(next);
+  }, [context.projectSessionID, context.projectPath]);
   const [pendingContext, setPendingContext] = useState<{ target: WorkbenchContext; source: string; options?: ContextChangeOptions } | null>(null);
   const [showInspector, setShowInspector] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -102,14 +125,14 @@ export function RasMainWindow() {
   useEffect(() => () => transport.dispose(), [transport]);
 
   const onNavigate = useCallback((feature: FeatureId) => {
-    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current)) return;
     setActiveFeature(feature);
     window.history.replaceState(null, '', `#/${feature}`);
   }, []);
   const calculatorSessions = useRasterCalculatorSessions(context, onNavigate,
-    referenceWriting || mapWriting || projectWriting || hasActiveMapWrite(dirtyOwners));
+    referenceWriting || mapWriting || projectWriting || hasProtectedSourceWrite(dirtyOwners, planAnalysisDrafts));
   const onProjectCommand = useCallback((kind: 'open' | 'new') => {
-    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current)) return;
     setPendingProjectCommand({ id: crypto.randomUUID(), kind });
     onNavigate('project');
   }, [onNavigate]);
@@ -139,7 +162,7 @@ export function RasMainWindow() {
     else onNavigate('editors');
   }, [onNavigate]);
   const onContextChange = useCallback((incoming: WorkbenchContext, options?: ContextChangeOptions) => {
-    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current)) return;
     let next: WorkbenchContext;
     try { next = mergeSessionReferenceContext(incoming, contextRef.current); }
     catch (error) { setRuntimeError(message(error)); return; }
@@ -149,20 +172,27 @@ export function RasMainWindow() {
     }
     commitContext(next, options);
   }, [commitContext]);
-  const onContextCommit = useCallback((source: WorkbenchContext, committed: WorkbenchContext): boolean => {
+  const onContextCommit = useCallback((source: WorkbenchContext, committed: WorkbenchContext, recovery?: PlanSaveRecoveryAcknowledgement): boolean => {
     const current = contextRef.current;
-    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return false;
+    const recoveryKey = recovery ? JSON.stringify(recovery) : null;
+    if (recovery && (acceptedPlanRecoveryAttempts.current.has(recoveryKey!)
+      || !planDraftRegistryRef.current.entries.some(entry => matchesPlanSaveRecoveryAcknowledgement(entry, source, recovery)))) return false;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current, source, recovery)) return false;
     if (sessionReferenceIdentity(source) !== sessionReferenceIdentity(current) || identity(source) !== identity(current) || source.projectXml !== current.projectXml || source.projectRevision !== current.projectRevision
       || source.selectedAsset?.kind !== current.selectedAsset?.kind
       || source.projectSessionID !== committed.projectSessionID || source.projectPath !== committed.projectPath
       || source.selectedAsset?.path !== committed.selectedAsset?.path
       || source.selectedAsset?.kind !== committed.selectedAsset?.kind) return false;
-    try { commitContext(mergeSessionReferenceContext(committed, current, true)); }
+    try {
+      const next = mergeSessionReferenceContext(committed, current, true);
+      if (recoveryKey) acceptedPlanRecoveryAttempts.current.add(recoveryKey);
+      commitContext(next);
+    }
     catch (error) { setRuntimeError(message(error)); return false; }
     return true;
   }, [commitContext]);
   const onBeginSessionReferenceMutation = useCallback((source: WorkbenchContext): string | null => {
-    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || dirtyOwnersRef.current.size || !source.projectPath ||
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current) || dirtyOwnersRef.current.size || !source.projectPath ||
         sessionReferenceSourceIdentity(source) !== sessionReferenceSourceIdentity(contextRef.current)) return null;
     const id = crypto.randomUUID();
     referenceWriteLease.current = { id, source: sessionReferenceSourceIdentity(source) };
@@ -188,7 +218,7 @@ export function RasMainWindow() {
     setReferenceWriting(false);
   }, []);
   const onBeginMapVisualizationMutation = useCallback((source: WorkbenchContext, target: MapVisualizationTarget, draftOwner: string): string | null => {
-    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current) return null;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current)) return null;
     const capture = captureMapVisualizationLease(contextRef.current, source, target, draftOwner, dirtyOwnersRef.current);
     if (!capture) return null;
     mapWriteLease.current = { capture, receipt: null };
@@ -217,7 +247,7 @@ export function RasMainWindow() {
     setMapWriting(false);
   }, []);
   const onBeginProjectContextMutation = useCallback((source: WorkbenchContext, draftOwner: string): string | null => {
-    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current) return null;
+    if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current)) return null;
     const lease = captureProjectContextLease(contextRef.current, source, draftOwner, dirtyOwnersRef.current);
     if (!lease) return null;
     projectWriteLease.current = lease;
@@ -253,7 +283,7 @@ export function RasMainWindow() {
     catch (error) { setRuntimeState('failed'); setRuntimeError(message(error)); }
   }, [backend]);
   useEffect(() => { void connect(); }, [connect]);
-  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, calculatorSessions, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting || projectWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, onBeginProjectContextMutation, onCommitProjectContextMutation, onEndProjectContextMutation, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
+  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, calculatorSessions, planAnalysisDrafts, onPlanAnalysisDraftChange, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting || projectWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, onBeginProjectContextMutation, onCommitProjectContextMutation, onEndProjectContextMutation, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
   const title = context.selectedAsset?.name ?? context.projectPath?.split(/[\\/]/).at(-1) ?? t('尚未打开工程', 'No project open');
 
   return <main className="ras-main-window">
@@ -264,7 +294,7 @@ export function RasMainWindow() {
       <RasContent activeFeature={activeFeature} {...props} />
       {showInspector && <aside className="ras-inspector" aria-label={t('属性', 'Properties')}><h2>{t('属性', 'Properties')}</h2>{context.selectedAsset ? <><dl><dt>{t('名称', 'Name')}</dt><dd>{context.selectedAsset.name}</dd><dt>{t('类型', 'Type')}</dt><dd>{assetKindLabel(context.selectedAsset.kind, language)}</dd><dt>{t('文件', 'File')}</dt><dd>{context.selectedAsset.path}</dd></dl><button onClick={() => onNavigate(context.selectedAsset?.kind.toLowerCase().includes('geometry') ? 'geometry' : 'editors')}>{t('打开编辑器', 'Open editor')}</button></> : <p>{t('选择工程中的对象查看属性。', 'Select a project object to inspect its properties.')}</p>}{runtimeError && <details className="ras-runtime-error"><summary>{t('服务连接失败', 'Server connection failed')}</summary><p>{t('无法连接 C# 服务，请确认服务已启动且当前地址可访问。', 'Cannot connect to the C# server. Confirm that it is running and reachable.')}</p><pre>{runtimeError}</pre></details>}</aside>}
     </div>
-    <footer className="ras-statusbar"><span role="status">{projectWriting ? t('正在更新工程连接…', 'Updating a project connection…') : mapWriting ? t('正在加入地图图层…', 'Adding a map layer…') : hasActiveMapWrite(dirtyOwners) ? t('正在保存地图…', 'Saving the map…') : referenceWriting ? t('正在提交外部来源…', 'Committing external source…') : dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
+    <footer className="ras-statusbar"><span role="status">{projectWriting ? t('正在更新工程连接…', 'Updating a project connection…') : mapWriting ? t('正在加入地图图层…', 'Adding a map layer…') : hasProtectedSourceWrite(dirtyOwners, planAnalysisDrafts) ? t('文件写入尚未确认完成…', 'File write is awaiting completion…') : referenceWriting ? t('正在提交外部来源…', 'Committing external source…') : dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
     <ConfirmActionControlDialog
       open={pendingContext !== null}
       title={t('保留未保存的修改？', 'Keep unsaved changes?')}
@@ -276,8 +306,10 @@ export function RasMainWindow() {
       autoFocusCancel
       onCancel={() => setPendingContext(null)}
       onContinue={() => {
-        if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasActiveMapWrite(dirtyOwnersRef.current)) return;
+        if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current)) return;
         if (!pendingContext || pendingContext.source !== identity(contextRef.current)) { setPendingContext(null); return; }
+        const clearedRegistry = clearPlanAnalysisDraftRegistry(planDraftRegistryRef.current, true);
+        planDraftRegistryRef.current = clearedRegistry; setPlanDraftRegistry(clearedRegistry);
         dirtyOwnersRef.current = new Set(); setDirtyOwners(dirtyOwnersRef.current); commitContext(pendingContext.target, pendingContext.options); setPendingContext(null);
       }}
     />

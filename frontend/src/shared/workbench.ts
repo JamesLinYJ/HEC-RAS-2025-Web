@@ -35,6 +35,8 @@ export type BackendTransportState =
 export interface BackendGateway {
   supports(method: string): boolean;
   request<T = unknown>(method: string, parameters: unknown, options?: BackendRequestOptions): Promise<T>;
+  /** Follow an accepted HTTP task without posting it again. An explicit abort requests cancellation and still tracks its terminal state. */
+  resumeOperation?<T = unknown>(operationId: string, options?: BackendRequestOptions): Promise<T>;
   /** Fires after the advertised operation set changes, without replacing the gateway instance. */
   subscribeCapabilities?(listener: (revision: number) => void): () => void;
   /** Upload a workspace archive/directory through the host's dedicated import endpoint. */
@@ -116,7 +118,8 @@ export interface FeaturePageProps {
   backend: BackendGateway;
   onContextChange: (context: WorkbenchContext, options?: ContextChangeOptions) => void;
   /** Adopt an acknowledged save only while its source is still the active context. */
-  onContextCommit?: (source: WorkbenchContext, committed: WorkbenchContext) => boolean;
+  onContextCommit?: (source: WorkbenchContext, committed: WorkbenchContext,
+    recovery?: import('./planAnalysisDrafts').PlanSaveRecoveryAcknowledgement) => boolean;
   onNavigate: (feature: FeatureId) => void;
   /** Reserve the current clean project while adding a source to a saved map. */
   onBeginSessionReferenceMutation?: (source: WorkbenchContext) => string | null;
@@ -138,6 +141,9 @@ export interface FeaturePageProps {
   hasUnsavedDrafts?: boolean;
   /** Exact draft owners allow a save to exclude its own draft, while guarding other editors. */
   dirtyOwners?: ReadonlySet<string>;
+  /** Immutable, source-bound Plan editor publications for read-only analysis and matrix generation. */
+  planAnalysisDrafts?: import('./planAnalysisDrafts').PlanAnalysisDraftRegistry;
+  onPlanAnalysisDraftChange?: (editorID: string, publication: import('./planAnalysisDrafts').PlanAnalysisDraftPublication | null) => void;
 }
 export class BackendOperationUnavailableError extends Error {
   readonly code = 'operationUnavailable';

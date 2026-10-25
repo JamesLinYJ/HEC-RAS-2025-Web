@@ -1,0 +1,21 @@
+.geometry-panel.mesh-shapefile-export { color: var(--geo-text); background: #0b2230; margin-block: 14px; }
+.mesh-shapefile-export .geometry-panel-heading p, .mesh-shapefile-export .geometry-inline-help { color: var(--geo-muted); }
+.mesh-shapefile-export__form { display: grid; gap: 12px; }
+.mesh-shapefile-export__form .geometry-form-field { display: grid; gap: 6px; }
+.mesh-shapefile-export__form input, .mesh-shapefile-export__form select { width: 100%; }
+.mesh-shapefile-export__form p { margin: 0; }
+.mesh-shapefile-export__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.mesh-shapefile-export__identity { display: grid; grid-template-columns: minmax(120px, auto) 1fr; gap: 6px 14px; }
+.mesh-shapefile-export__identity dt { color: var(--geo-muted); }
+.mesh-shapefile-export__identity dd { margin: 0; overflow-wrap: anywhere; }
+.mesh-shapefile-export__task { padding-block: 10px; border-bottom: 1px solid var(--geo-line); }
+.mesh-shapefile-export__task summary { cursor: pointer; }
+.mesh-shapefile-export__task pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mesh-shapefile-export__progress { display: flex; align-items: center; gap: 10px; margin-block: 12px; }
+.mesh-shapefile-export__files { overflow-x: auto; }
+.mesh-shapefile-export__files table { width: 100%; border-collapse: collapse; }
+.mesh-shapefile-export__files th, .mesh-shapefile-export__files td { text-align: left; padding: 8px; border: 1px solid var(--geo-line); overflow-wrap: anywhere; }
+.mesh-shapefile-export__files th { color: var(--geo-text); background: #102d3b; }
+.mesh-shapefile-export__files td:first-child { min-width: 240px; }
+.mesh-shapefile-export__files td:last-child { font-family: monospace; max-width: 330px; }
+@media (max-width: 700px) { .mesh-shapefile-export__identity { grid-template-columns: 1fr; } }

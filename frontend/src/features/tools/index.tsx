@@ -6,11 +6,13 @@ import { ImportExportToolControl } from './ImportExportToolControl';
 import { RasterCalculatorEditor } from './RasterCalculatorEditor';
 import { SelectProjectionPage } from './SelectProjectionPage';
 const SourceManagerControl = lazy(() => import('./SourceManagerControl').then(module => ({ default: module.SourceManagerControl })));
+const PlanDiffView = lazy(() => import('./plan-analysis/PlanDiffView').then(module => ({ default: module.PlanDiffView })));
+const R2RMatrixView = lazy(() => import('./plan-analysis/R2RMatrixView').then(module => ({ default: module.R2RMatrixView })));
 import { WilcockMainControl } from './hydraulics/WilcockMainControl';
 import { UnitCalculatorPage } from './hydraulics/UnitCalculatorPage';
 import { USGSTerrainImportControl } from './usgs/USGSTerrainImportControl';
 
-type ToolsPage = 'geoprocessing' | 'import-export' | 'raster-calculator' | 'projection' | 'sources' | 'wilcock' | 'unit-calculator' | 'usgs-terrain';
+type ToolsPage = 'geoprocessing' | 'import-export' | 'raster-calculator' | 'projection' | 'sources' | 'wilcock' | 'unit-calculator' | 'usgs-terrain' | 'plan-diff' | 'r2r-matrix';
 
 const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
   { id: 'geoprocessing', zh: '地理处理', en: 'Geoprocessing', mark: '⌁' },
@@ -21,6 +23,8 @@ const pages: Array<{ id: ToolsPage; zh: string; en: string; mark: string }> = [
   { id: 'wilcock', zh: 'Wilcock 输沙', en: 'Wilcock transport', mark: '≈' },
   { id: 'unit-calculator', zh: '单位计算器', en: 'Unit calculator', mark: '↔' },
   { id: 'usgs-terrain', zh: 'USGS 地形', en: 'USGS terrain', mark: '⌖' },
+  { id: 'plan-diff', zh: '计划对比', en: 'Plan comparison', mark: '≠' },
+  { id: 'r2r-matrix', zh: '参数矩阵', en: 'Parameter matrix', mark: '▦' },
 ];
 
 /** Web and Electron entry point for the tools workspace. */
@@ -48,7 +52,7 @@ export default function ToolsPageView(props: FeaturePageProps) {
             <h1>{zh ? '工具' : 'Tools'}</h1>
           </div>
         </div>
-        <p>{zh ? '地理处理、导入导出、栅格表达式与坐标参考系。' : 'Geoprocessing, data exchange, raster expressions, and coordinate reference systems.'}</p>
+        <p>{zh ? '地理处理、导入导出、栅格表达式、坐标参考系与计划参数分析。' : 'Geoprocessing, data exchange, raster expressions, coordinate reference systems, and plan parameter analysis.'}</p>
       </header>
 
       <nav className={styles.toolsWorkspaceNav} aria-label={zh ? '工具页面' : 'Tools pages'} role="tablist">
@@ -97,6 +101,16 @@ export default function ToolsPageView(props: FeaturePageProps) {
         </section>
         <section id="tools-panel-usgs-terrain" role="tabpanel" aria-labelledby="tools-tab-usgs-terrain" hidden={active !== 'usgs-terrain'}>
           {mountedPages.has('usgs-terrain') && <USGSTerrainImportControl {...props} />}
+        </section>
+        <section id="tools-panel-plan-diff" role="tabpanel" aria-labelledby="tools-tab-plan-diff" hidden={active !== 'plan-diff'}>
+          {mountedPages.has('plan-diff') && <Suspense fallback={<p role="status">{zh ? '正在加载计划对比…' : 'Loading plan comparison…'}</p>}>
+            <PlanDiffView {...props} />
+          </Suspense>}
+        </section>
+        <section id="tools-panel-r2r-matrix" role="tabpanel" aria-labelledby="tools-tab-r2r-matrix" hidden={active !== 'r2r-matrix'}>
+          {mountedPages.has('r2r-matrix') && <Suspense fallback={<p role="status">{zh ? '正在加载参数矩阵…' : 'Loading parameter matrix…'}</p>}>
+            <R2RMatrixView {...props} />
+          </Suspense>}
         </section>
       </div>
     </div>

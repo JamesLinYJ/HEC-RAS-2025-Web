@@ -27,7 +27,11 @@
     "test:map-analysis": "node scripts/verify-map-analysis.mjs",
     "test:grid-selection": "node scripts/verify-grid-selection.mjs",
     "test:topology-selection": "node scripts/verify-topology-selection.mjs",
-    "test:map-mesh-errors": "node scripts/verify-map-mesh-errors.mjs"
+    "test:map-mesh-errors": "node scripts/verify-map-mesh-errors.mjs",
+    "test:mesh-export": "node scripts/verify-mesh-export.mjs",
+    "test:plan-diff": "node scripts/verify-plan-diff.mjs",
+    "test:r2r-matrix": "node scripts/verify-r2r-matrix.mjs",
+    "test:plan-analysis-drafts": "node scripts/verify-plan-analysis-drafts.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

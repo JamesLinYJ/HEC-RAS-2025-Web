@@ -194,6 +194,16 @@ export class ServerBackend implements BackendGateway {
     return await this.runOperation<T>(method, parameters, options);
   }
 
+  /** Rejoin a previously accepted task without submitting its write request again. */
+  async resumeOperation<T = unknown>(operationId: string, options?: BackendRequestOptions): Promise<T> {
+    if (this.disposed) throw new ServerBackendError('CLIENT_DISPOSED', 'The server gateway has been disposed.');
+    if (options?.signal?.aborted) throw abortError(options.signal.reason);
+    if (!/^[a-f0-9]{32}$/i.test(operationId)) {
+      throw new ServerBackendError('INVALID_REQUEST', 'Expected the exact HTTP operation id returned by the server.');
+    }
+    return await this.trackOperation<T>(operationId, options);
+  }
+
   async uploadWorkspace(files: File[], options?: Pick<BackendRequestOptions, 'signal'>): Promise<WorkspaceUploadResult> {
     if (options?.signal?.aborted) throw abortError(options.signal.reason);
     if (files.length === 0) throw new ServerBackendError('EMPTY_UPLOAD', 'Choose at least one workspace file.', { fileCount: 0 });
@@ -307,6 +317,10 @@ export class ServerBackend implements BackendGateway {
         { stage: 'acceptance', method, response: accepted }, { operation: method, terminalConfirmed: false });
     }
 
+    return await this.trackOperation<T>(id, options);
+  }
+
+  private async trackOperation<T>(id: string, options?: BackendRequestOptions): Promise<T> {
     const signal = options?.signal;
     let cancelRequested = false;
     let trackingEnded = false;
@@ -316,6 +330,7 @@ export class ServerBackend implements BackendGateway {
       try { options?.onTransportState?.(state); }
       catch { /* Transport observers must not change operation semantics. */ }
     };
+    reportTransport({ state: 'connected', operationId: id, recoveredAfterAttempt: 0 });
     const reportCancelFailure = (error: unknown): void => {
       const normalized = error instanceof ServerBackendError ? error : undefined;
       reportTransport({
@@ -423,7 +438,9 @@ export class ServerBackend implements BackendGateway {
               new ServerBackendError('INVALID_OPERATION_RESPONSE', 'The server marked the operation completed but omitted its result.', poll, { operation: id, operationId: id }),
               consecutivePollFailures);
           }
-          if (poll.state === 'canceled' && cancelRequested && !Object.hasOwn(poll, 'result')) throw abortError(signal?.reason);
+          if (poll.state === 'canceled' && !Object.hasOwn(poll, 'result')) {
+            throw Object.assign(abortError(signal?.reason), { operationId: id, terminalConfirmed: true });
+          }
           return poll.result as T;
         }
 

@@ -16,6 +16,8 @@ import { ArcImportDialog } from './ArcImportDialog';
 import { useGeometryWorkbench } from './useGeometryWorkbench';
 import { useGeometryTopologyMap } from './useGeometryTopologyMap';
 import type { TopologyDiagnosticLocator } from './geometryTopologySelection';
+import { useMeshShapefileExport } from './useMeshShapefileExport';
+import { MeshShapefileExportTasks } from './MeshShapefileExportTasks';
 
 type GeometryPageID = 'summary' | 'topologySummary' | 'nodes' | 'arcs' | 'regions' | 'mesh' | 'culverts';
 
@@ -74,6 +76,10 @@ export default function GeometryPage(props: FeaturePageProps) {
   const workspace = useGeometryWorkbench(props);
   const { language } = props;
   const workbenchBusy = !!workspace.busyOperation;
+  const exportSource = { context: props.context, model: workspace.model, mesh: workspace.mesh,
+    topology: workspace.topology, localOnly: workspace.localOnly };
+  const exportWorkspace = useMeshShapefileExport(exportSource, props.backend,
+    workbenchBusy || Object.values(workspace.loading).some(Boolean), props.onDirtyStateChange);
   const topologyMapWorkspace = useGeometryTopologyMap({
     active: page === 'nodes' || page === 'arcs' || page === 'regions',
     owner: workspace.ownerKey,
@@ -83,11 +89,11 @@ export default function GeometryPage(props: FeaturePageProps) {
     model: workspace.model,
     topology: workspace.topology,
     canEdit: !!workspace.topology?.canEdit && workspace.supports('topology.edit'),
-    busy: workbenchBusy,
+    busy: workbenchBusy || exportWorkspace.pending,
     onLoadArcPoints: workspace.loadArcPoints,
     onMapCommand: workspace.editTopologyMapCommand,
   });
-  const busy = workbenchBusy || topologyMapWorkspace.interactionBusy;
+  const busy = workbenchBusy || topologyMapWorkspace.interactionBusy || exportWorkspace.pending;
   const locateTopologyDiagnostic: TopologyDiagnosticLocator = (messageID, target) => {
     const kind = topologyMapWorkspace.onLocateDiagnostic(messageID, target);
     if (kind) setPage(kind === 'node' ? 'nodes' : kind === 'arc' ? 'arcs' : 'regions');
@@ -162,6 +168,8 @@ export default function GeometryPage(props: FeaturePageProps) {
         backendRevision={props.backendRevision}
         model={workspace.model}
         topologySnapshot={workspace.topology}
+        exportSource={exportSource}
+        exportWorkspace={exportWorkspace}
         localRegionRows={[]}
         busy={busy}
         canEdit={!!workspace.mesh?.canEdit && workspace.supports('geometry.mesh.edit')}
@@ -235,6 +243,7 @@ export default function GeometryPage(props: FeaturePageProps) {
       {errorPanel(language, pageError)}
       {workspace.localOnly && <div className="geometry-local-banner">{gt(language, 'saveBlocked')}</div>}
       {workspace.dirty && !workspace.localOnly && !workspace.supports('model.save') && <div className="geometry-local-banner">{gt(language, 'saveUnavailable')}</div>}
+      <MeshShapefileExportTasks language={language} workspace={exportWorkspace} />
       {renderFeature()}
       <section className="geometry-panel" style={{ marginTop: 14 }}>
         <header className="geometry-panel-heading"><div><h2>{gt(language, 'validation')}</h2><p>{gt(language, 'validationNote')}</p></div><span className={`geometry-status-pill ${validation.length ? 'is-dirty' : 'is-clean'}`}>{validation.length ? `${validation.length} ${gt(language, 'validationCount')}` : gt(language, 'valid')}</span></header>

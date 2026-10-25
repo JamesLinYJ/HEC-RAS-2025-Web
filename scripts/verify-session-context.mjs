@@ -56,6 +56,21 @@ try {
   const calls = [];
   const transport = { supports: () => true, request: async (method, parameters, options) => { calls.push({ method, parameters, options }); return parameters; } };
   const gateway = sessionBackend(transport, active);
+  assert.equal(gateway.resumeOperation, undefined, 'A session cannot invent resume support for a transport that lacks it.');
+  const resumeCalls = [];
+  const resumableTransport = { ...transport, resumeOperation: async function (operationId, options) {
+    assert.equal(this, resumableTransport, 'The session must preserve the gateway receiver when resuming.');
+    resumeCalls.push({ operationId, options });
+    return { operationId, state: 'completed' };
+  } };
+  const resumeOptions = { signal: new AbortController().signal, onProgress: () => {} };
+  const resumeID = 'ab'.repeat(16);
+  const resumeReceipt = await sessionBackend(resumableTransport, active).resumeOperation(resumeID, resumeOptions);
+  assert.equal(resumeReceipt.operationId, resumeID);
+  assert.equal(resumeCalls.length, 1);
+  assert.equal(resumeCalls[0].operationId, resumeID, 'Resuming keeps the exact accepted HTTP operation identity.');
+  assert.equal(resumeCalls[0].options, resumeOptions, 'Resuming preserves cancellation and progress callbacks without a new request payload.');
+  assert.equal(calls.length, 0, 'A resumed session operation must not submit a new request.');
   const parameters = { map: { projectPath: source.projectPath }, model: { projectPath: source.projectPath }, source: { projectPath: source.projectPath } };
   const options = { signal: new AbortController().signal };
   await gateway.request('map.layer.inspect', parameters, options);
@@ -368,6 +383,6 @@ try {
   verify(staleSourceCalls.length === 0,
     'A stale source core capture produces no inspect or commit POST.');
 
-  console.log(JSON.stringify({ state: 'passed', checks: 41 + addedChecks + documentChecks,
+  console.log(JSON.stringify({ state: 'passed', checks: 48 + addedChecks + documentChecks,
     scope: 'session-reference-project-context-and-external-connection-ownership' }));
 } finally { await rm(temporary, { recursive: true, force: true }); }

@@ -49,7 +49,9 @@ For the real project-file HTTP solve and HDF readback, see [ServerChecks](backen
 
 Set `HECRAS_VERIFY_CANCEL_PROJECT` to a separate long-running fixture created with ServerChecks `--create-cancel-fixture` to also test real CPU cancellation twice. That browser check injects one temporary poll failure and one temporary DELETE failure, verifies recovery against the same operation, and requires a fresh source inspection before running again.
 
-`npm run test:gateway` checks the production HTTP gateway with controlled transport responses: temporary poll and cancellation failures, paged terminal events, completion during cancellation backoff, and unknown operation status. This protocol regression is separate from the real C# and UI solve checks.
+`npm run test:gateway` checks the production HTTP gateway with controlled transport responses: temporary poll and cancellation failures, paged terminal events, completion during cancellation backoff, unknown operation status, and resuming an accepted task without submitting its write request again. This protocol regression is separate from the real C# and UI solve checks.
+
+`npm run test:plan-analysis-drafts`, `npm run test:plan-diff`, `npm run test:r2r-matrix` and `npm run test:mesh-export` check the corresponding source captures, draft ownership and response contracts. The real matrix export and input-isolation check is documented in [ServerChecks](backend/ServerChecks/README.md#ready-to-run-matrix-source-isolation).
 
 `HECRAS_VERIFY_WORKSPACE_ZIP` enables the real browser workspace check against `HECRAS_VERIFY_SERVER_URL`. Use an absolute path to a disposable ZIP containing one ServerChecks fixture project and no saved maps. The check uploads and opens it, creates two maps, closes/reopens the project, and downloads the updated workspace. It verifies that archive entries match the actual saved `.ras` and `.vis` bytes. This check uses the `unzip` command to read and validate the downloaded archive.
 

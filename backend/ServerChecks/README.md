@@ -212,3 +212,13 @@ The runner creates a fresh project fixture with two existing polygon modificatio
 ### Classification and Manning editor round trip
 
 `--run-classification-manning-http <loopback-base-url> <new-output-directory>` creates an isolated project with real classification and Manning HDF files and a small classification raster. It exercises fixed-identity raster mapping edits, rejection of inserted/deleted/key-mutated mapping rows, polygon undo/redo, NLCD interpretation defaults and N-Value preview, then saves and reopens both surface layers. The directory must be new and outside the repository; this runner contacts an existing loopback service and does not launch one. These HTTP/HDF checks are separate from browser interaction.
+
+### Ready-to-run matrix source isolation
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- \
+  --run-plan-matrix-isolation-http http://127.0.0.1:5080 \
+  /tmp/hecras-plan-matrix-isolation
+```
+
+This check creates its own fresh project and exports two `.r2r.h5` files through the running HTTP service. It verifies unchanged input file hashes, actual property-table and initial-condition preparation, Plan draft values and associations in the exported HDF, existing-file skips, stale dependency rejection, cancellation and cleanup after output or partial-copy failures. It does not invoke the solver. Use a new output directory outside the repository. Run the server and the check with the same isolated temporary directory (`TMPDIR` on macOS/Linux, or `TEMP`/`TMP` on Windows), without concurrent matrix exports there, so cleanup checks can account for every preparation workspace. Browser interaction requires separate verification.

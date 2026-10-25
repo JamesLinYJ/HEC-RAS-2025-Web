@@ -6,6 +6,9 @@ import { FlowAreaLayerActiveFeatures } from './FlowAreaLayerActiveFeatures';
 import { GeometryPrepareSummaryControl } from './GeometryPrepareSummaryControl';
 import { MeshDiagnostics } from './MeshDiagnostics';
 import { MeshElementInspector } from './MeshElementInspector';
+import { FlowAreaLayerBehaviors } from './FlowAreaLayerBehaviors';
+import { meshShapefileExportMethod, type MeshExportSource } from './meshShapefileExport';
+import type { MeshShapefileExportWorkspace } from './useMeshShapefileExport';
 import { PatchEditor } from './PatchEditor';
 import { geometryDiagnosticMessage } from './geometryErrors';
 import type { GeometryField, GeometryMeshDegreeScan, GeometryMeshPatchEditContext, GeometryMeshPatchMutation, GeometryMeshSnapshot, GeometryModelRequest, GeometryRow, GeometryTable, GeometryTopologySnapshot } from './geometryTypes';
@@ -18,6 +21,8 @@ export interface GeometryMeshPageProps {
   backendRevision?: number;
   model: GeometryModelRequest | null;
   topologySnapshot?: GeometryTopologySnapshot;
+  exportSource: MeshExportSource;
+  exportWorkspace: MeshShapefileExportWorkspace;
   localRegionRows: GeometryRow[];
   busy: boolean;
   canEdit: boolean;
@@ -75,7 +80,7 @@ function pretty(value: unknown): string {
 }
 
 export function GeometryMeshPage({
-  language, snapshot, context, backend, backendRevision, model, topologySnapshot, localRegionRows, busy, canEdit, canGenerate, canPrepare, canDegreeScan, canPropertyTables,
+  language, snapshot, context, backend, backendRevision, model, topologySnapshot, exportSource, exportWorkspace, localRegionRows, busy, canEdit, canGenerate, canPrepare, canDegreeScan, canPropertyTables,
   onFlowAreaChange, onRegionSelection, onPatchMutation, onPrepare, onGenerate, onDegreeScan, onPropertyTables,
 }: GeometryMeshPageProps) {
   const [maximumFaces, setMaximumFaces] = useState('8');
@@ -127,6 +132,8 @@ export function GeometryMeshPage({
         {taskError && <GeometryError language={language} error={taskError} style={{ margin: 13 }} />}
       </FlowAreaLayerActiveFeatures>
       <GeometryPrepareSummaryControl language={language} summary={snapshot?.prepareSummary} pending={!!snapshot?.preparePending} />
+      <FlowAreaLayerBehaviors language={language} source={exportSource} workspace={exportWorkspace}
+        available={backend.supports(meshShapefileExportMethod)} busy={busy} />
       <PatchEditor language={language} snapshot={snapshot} localRows={localRegionRows} canEdit={canEdit} busy={busy}
         onRegionSelection={onRegionSelection} onMutation={onPatchMutation} />
       <MeshElementInspector

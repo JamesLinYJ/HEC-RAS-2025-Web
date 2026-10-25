@@ -105,7 +105,8 @@ async function verifyPollRecoveryAndTerminalPagination(ServerBackend) {
     assert.deepEqual(requestedCursors, ['0', '0', '1']);
     assert.equal(progressEvents.length, 1);
     assert.deepEqual(progressEvents[0], { fraction: 0.5, message: 'first page' });
-    assert.deepEqual(transportStates.map((state) => state.state), ['reconnecting', 'connected']);
+    assert.deepEqual(transportStates.map((state) => state.state), ['connected', 'reconnecting', 'connected']);
+    assert.deepEqual(transportStates[0], { state: 'connected', operationId: testOperationId, recoveredAfterAttempt: 0 });
   } finally {
     backend.dispose();
   }
@@ -162,12 +163,14 @@ async function verifyCancelRetryAndConfirmedCanceled(ServerBackend) {
     controller.abort();
     await withTimeout(cancelAcknowledged, 'successful cancellation acknowledgment');
     assert.equal(deleteCalls, 2, 'the failed DELETE must be resent');
-    assert.deepEqual(transportStates.map((state) => state.state), ['cancelRequested', 'cancelRetrying', 'cancelSent']);
+    assert.deepEqual(transportStates.map((state) => state.state), ['connected', 'cancelRequested', 'cancelRetrying', 'cancelSent']);
     assert.equal(transportStates.at(-1).accepted, true);
     await sleep(75);
     assert.equal(requestSettled, false, 'DELETE acknowledgment must not be treated as terminal cancellation');
     await assert.rejects(withTimeout(request, 'server-confirmed canceled terminal state'), (error) => {
       assert.equal(error.name, 'AbortError');
+      assert.equal(error.terminalConfirmed, true);
+      assert.equal(error.operationId, testOperationId);
       return true;
     });
     assert.ok(pollCalls >= 2, 'the client must keep polling after DELETE acknowledgment');
@@ -313,6 +316,85 @@ async function verifyFailedTerminalPagination(ServerBackend) {
   }
 }
 
+async function verifyResumeAfterUnknownWithoutAnotherWrite(ServerBackend) {
+  const id = '1a'.repeat(16);
+  let recovered = false;
+  let posts = 0;
+  let resumedPolls = 0;
+  const states = [], cursors = [], progress = [];
+  const backend = await createBackend(ServerBackend, async (input, init = {}) => {
+    const { url, method } = requestDetails(input, init);
+    if (url.pathname === '/api/runtime') return jsonResponse({ mode: 'server', runtime: {}, operations: [testMethod] });
+    if (url.pathname === '/api/operations' && method === 'POST') { posts++; return jsonResponse({ id }, 202); }
+    assert.equal(url.pathname, '/api/operations/' + id);
+    assert.equal(method, 'GET', 'resuming must not submit another operation or silently cancel it');
+    if (!recovered) return jsonResponse({ error: { code: 'notFound' } }, 404);
+    resumedPolls++; cursors.push(url.searchParams.get('after'));
+    return jsonResponse(resumedPolls === 1
+      ? { id, state: 'completed', cursor: 2, hasMore: true, events: [{ sequence: 2, progress: { fraction: 1 } }] }
+      : { id, state: 'completed', cursor: 2, hasMore: false, events: [{ sequence: 2, progress: { fraction: 1 } }], result: { files: ['original-output.shp'] } });
+  });
+  try {
+    await assert.rejects(backend.request(testMethod, { outputPath: 'original-output.shp' }, {
+      onTransportState: state => states.push(state),
+    }), error => error.operationId === id && error.terminalConfirmed === false);
+    assert.equal(states[0]?.operationId, id, 'the accepted id must be exposed even before the first successful poll');
+    recovered = true;
+    const receipt = await backend.resumeOperation(id, { onProgress: item => progress.push(item) });
+    assert.deepEqual(receipt, { files: ['original-output.shp'] });
+    assert.equal(posts, 1, 'an unknown readback must never become another write request');
+    assert.deepEqual(cursors, ['0', '2']);
+    assert.deepEqual(progress, [{ fraction: 1 }], 'duplicate progress pages must not repeat notifications');
+  } finally { backend.dispose(); }
+}
+
+async function verifyResumeCancellationAndReceiptRace(ServerBackend) {
+  for (const completed of [false, true]) {
+    const id = (completed ? '2b' : '3c').repeat(16);
+    const controller = new AbortController();
+    let deletes = 0, polls = 0;
+    const backend = new ServerBackend('/api', async (input, init = {}) => {
+      const { url, method } = requestDetails(input, init);
+      assert.equal(url.pathname, '/api/operations/' + id);
+      assert.notEqual(method, 'POST');
+      if (method === 'DELETE') { deletes++; return jsonResponse({ id, cancelRequested: true }); }
+      assert.equal(method, 'GET'); polls++;
+      if (polls === 1) { controller.abort(); return jsonResponse({ id, state: 'running', cursor: 0, hasMore: false, events: [] }); }
+      assert.equal(deletes, 1);
+      return jsonResponse({ id, state: completed ? 'completed' : 'canceled', cursor: 0, hasMore: false, events: [],
+        ...(completed ? { result: { files: ['already-written.r2r.h5'] } } : {}) });
+    });
+    try {
+      const resumed = backend.resumeOperation(id, { signal: controller.signal });
+      if (completed) assert.deepEqual(await resumed, { files: ['already-written.r2r.h5'] });
+      else await assert.rejects(resumed, error => error.name === 'AbortError' && error.operationId === id && error.terminalConfirmed === true);
+      assert.equal(polls, 2, 'DELETE acknowledgement cannot substitute for the actual terminal poll');
+    } finally { backend.dispose(); }
+  }
+}
+
+async function verifyResumeRejectionBoundaries(ServerBackend) {
+  const id = '4d'.repeat(16);
+  let calls = 0;
+  const backend = new ServerBackend('/api', async (input, init = {}) => {
+    calls++;
+    const { method } = requestDetails(input, init);
+    assert.equal(method, 'GET');
+    return jsonResponse({ id: '5e'.repeat(16), state: 'completed', cursor: 0, hasMore: false, events: [], result: { wrong: true } });
+  });
+  try {
+    await assert.rejects(backend.resumeOperation('../operations'), error => error.code === 'INVALID_REQUEST');
+    const aborted = new AbortController(); aborted.abort();
+    await assert.rejects(backend.resumeOperation(id, { signal: aborted.signal }), error => error.name === 'AbortError');
+    assert.equal(calls, 0);
+    await assert.rejects(backend.resumeOperation(id), error => error.operationId === id && error.terminalConfirmed === false);
+    assert.equal(calls, 1, 'an unrelated receipt must not be adopted or retried as a write');
+    backend.dispose();
+    await assert.rejects(backend.resumeOperation(id), error => error.code === 'CLIENT_DISPOSED');
+    assert.equal(calls, 1);
+  } finally { backend.dispose(); }
+}
+
 async function main() {
   const bundleDirectory = path.join(temporaryDirectory, 'bundle');
   await build({
@@ -352,6 +434,15 @@ async function main() {
 
   await verifyFailedTerminalPagination(ServerBackend);
   console.log('PASS failed state throws only after final page with confirmed terminal');
+
+  await verifyResumeAfterUnknownWithoutAnotherWrite(ServerBackend);
+  console.log('PASS initial acceptance id and resume after unknown without a second POST');
+
+  await verifyResumeCancellationAndReceiptRace(ServerBackend);
+  console.log('PASS resumed cancellation terminal and completion receipt winning a cancel race');
+
+  await verifyResumeRejectionBoundaries(ServerBackend);
+  console.log('PASS invalid, aborted, mismatched and disposed resume boundaries');
 }
 
 try {

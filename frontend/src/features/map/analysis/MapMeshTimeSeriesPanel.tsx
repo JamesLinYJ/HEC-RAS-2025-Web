@@ -302,8 +302,7 @@ export function MapMeshTimeSeriesPanel({ backend, language, capture, meshHit }: 
         },
         onTransportState: (state) => {
           if (generation !== executionGeneration.current || ownerIdentityRef.current !== ownerIdentity) return;
-          // ServerBackend first reveals the operation ID with cancelRequested, which arrives
-          // after AbortController is signalled. Retain it for the terminal cancellation receipt.
+          // Keep the accepted HTTP task identity through reconnects and cancellation.
           executionTransportID.current = state.operationId;
           setExecutionState((previous) => previous?.ownerIdentity === ownerIdentity && previous.requestKey === requestKey && previous.phase === 'running'
             ? { ...previous, transport: state, cancelRequested: previous.cancelRequested || controller.signal.aborted || state.state === 'cancelRequested' || state.state === 'cancelRetrying' || state.state === 'cancelSent' }

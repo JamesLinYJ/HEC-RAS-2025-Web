@@ -1,7 +1,10 @@
 import { isPolygonTerrainInputType } from './terrainTopologyTypes';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { BackendGateway, BackendRequestOptions, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { message, text } from '../../shared/workbench';
+import { capturePlanAnalysisSource, planAnalysisBackendIdentity, planAnalysisValueKey, type PlanAnalysisDraftPublication, type PlanAnalysisDraftSource, type PlanSaveRecoveryAcknowledgement } from '../../shared/planAnalysisDrafts';
+import { capturePlanEditorDraft } from '../../shared/planAnalysisDraftCapture';
+import { capturePlanSaveRecovery, isConfirmedPlanSaveTerminal, matchesPlanDiscardTransition, resumeCapturedPlanSave, trackPlanSaveOperation, type PlanDiscardTransition, type PlanSaveRecovery } from '../../shared/planAnalysisDraftLifecycle';
 import { BoundaryConditionEditor, BOUNDARY_EDITOR_PAGE_IDS } from './BoundaryConditionEditor';
 import { ClassificationEditor } from './ClassificationEditor';
 import { EditorCatalogBrowser } from './EditorCatalogBrowser';
@@ -18,7 +21,7 @@ import { walkCatalogTree } from '../project/CatalogTreeSnapshot';
 import type { CatalogTreeSnapshot } from '../project/CatalogTreeSnapshot';
 import type { BoundaryInitialConditionsInspection, BoundaryInitialConditionsOperationState, BoundaryInitialConditionsReceipt, BoundaryInitialConditionsStatus, BoundaryInitialConditionsWorkflow, BoundaryResultCatalogItem } from './model';
 import type { CumulusEnvironmentOption, CumulusGridFootprintResult, CumulusGridImportCommand, CumulusGridSourceOption, CumulusImportWorkflow, CumulusProductOption } from './cumulusTypes';
-import { AttachInitialConditionsDialog } from './AttachInitialConditionsDialog';
+const AttachInitialConditionsDialog = lazy(() => import('./AttachInitialConditionsDialog').then(module => ({ default: module.AttachInitialConditionsDialog })));
 import { ModelAssociationsPanel } from './associations/ModelAssociationsPanel';
 import type { TerrainMapProjectOwner, TerrainMapViewport, TerrainTopologyResponse } from './terrainTopologyTypes';
 import { projectXmlSha } from '../map/ProjectTreeListener';
@@ -63,7 +66,7 @@ interface BoundaryInitialConditionsOperation {
 }
 
 export default function EditorWorkbench(props: FeaturePageProps) {
-  const { backend, backendRevision, language, onContextChange, onContextCommit, onDirtyStateChange } = props;
+  const { backend, backendRevision, language, onContextChange, onContextCommit, onDirtyStateChange, onPlanAnalysisDraftChange } = props;
   const [source, setSource] = useState<SourceContext>(() => sourceFor(props.context));
   const [editorMountKey, setEditorMountKey] = useState(source.owner);
   const activeOwner = useRef(source.owner);
@@ -108,6 +111,30 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const classificationImportUncertainOwners = useRef(new Set<string>());
   const acceptedReceipt = useRef<{ owner: string; snapshot: ModelSnapshot } | null>(null);
   const loadedOwner = useRef<string | null>(null);
+  const [analysisEditorID] = useState(() => crypto.randomUUID());
+  const analysisLoadedSource = useRef<{ owner: string; source: PlanAnalysisDraftSource } | null>(null);
+  const [analysisUncertainOwners, setAnalysisUncertainOwners] = useState<ReadonlySet<string>>(() => new Set());
+  const analysisDraftIdentity = useRef({ snapshot, draft, owner: source.owner, revision: 0 });
+  if (analysisDraftIdentity.current.snapshot !== snapshot || analysisDraftIdentity.current.draft !== draft
+    || analysisDraftIdentity.current.owner !== source.owner) {
+    analysisDraftIdentity.current = { snapshot, draft, owner: source.owner, revision: analysisDraftIdentity.current.revision + 1 };
+  }
+  const analysisDiscardRevision = useRef(props.planAnalysisDrafts?.discardRevision ?? 0);
+  const analysisDiscardTransition = useRef<PlanDiscardTransition | null>(null);
+  const [planSaveRecovery, setPlanSaveRecovery] = useState<PlanSaveRecovery<ModelSnapshot> | null>(null);
+  const planSaveRecoveryRef = useRef(planSaveRecovery);
+  const updatePlanSaveRecovery = (next: PlanSaveRecovery<ModelSnapshot> | null): void => {
+    planSaveRecoveryRef.current = next; setPlanSaveRecovery(next);
+  };
+  const clearAnalysisUncertain = (owner: string): void => {
+    setAnalysisUncertainOwners(current => { const next = new Set(current); next.delete(owner); return next; });
+    if (planSaveRecoveryRef.current?.ownerContextID === owner) updatePlanSaveRecovery(null);
+  };
+  const markAnalysisUncertain = (owner: string): void => {
+    const recovery = planSaveRecoveryRef.current;
+    if (recovery?.ownerContextID === owner) updatePlanSaveRecovery({ ...recovery, phase: 'uncertain', attemptID: undefined });
+    setAnalysisUncertainOwners(current => current.has(owner) ? current : new Set([...current, owner]));
+  };
   const [initialConditionsOperation, setInitialConditionsOperation] = useState<BoundaryInitialConditionsOperation | null>(() =>
     restoreInitialConditionsOperation(props.context, source.owner));
   const initialConditionsOperationRef = useRef<BoundaryInitialConditionsOperation | null>(null);
@@ -149,6 +176,8 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   }, [snapshot, draft]);
   const asset = source.context.selectedAsset;
   const hasUnsavedEditorState = dirty || payloadForms.size > 0 || payloadConnectionState !== 'idle';
+  const planSaveBlocked = asset?.kind === 'Plan' && analysisUncertainOwners.has(source.owner);
+  const renderedDiscardRevision = props.planAnalysisDrafts?.discardRevision ?? 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -161,10 +190,14 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   }, []);
 
   useEffect(() => {
+    if (matchesPlanDiscardTransition(analysisDiscardTransition.current, renderedDiscardRevision, source.owner, desiredSource.owner)) {
+      analysisDiscardTransition.current = null;
+      return;
+    }
     if (desiredSource.owner === source.owner || pending?.kind === 'source') return;
     if (hasUnsavedEditorState) setPending({ kind: 'source', source: desiredSource });
     else acceptSource(desiredSource);
-  }, [desiredSource, hasUnsavedEditorState, pending?.kind, source.owner]);
+  }, [desiredSource, hasUnsavedEditorState, pending?.kind, source.owner, renderedDiscardRevision]);
 
   useEffect(() => {
     const operation = initialConditionsOperationRef.current;
@@ -197,6 +230,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     const receipt = acceptedReceipt.current;
     if (receipt?.owner === source.owner) {
       loadedOwner.current = source.owner;
+      analysisLoadedSource.current = { owner: source.owner, source: capturePlanAnalysisSource(source.context, backend, backendRevision) };
       setSnapshot(receipt.snapshot);
       setDraft(createModelDraft(receipt.snapshot));
       setLoadState({ status: 'ready' });
@@ -222,6 +256,13 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       if (generation.current !== current || controller.signal.aborted) return;
       assertModelSnapshot(result);
       loadedOwner.current = source.owner;
+      analysisLoadedSource.current = { owner: source.owner, source: capturePlanAnalysisSource({
+        ...source.context, coreLayerContext: coreLayerContext(source.context, activeAsset) ?? null,
+      }, backend, backendRevision) };
+      setAnalysisUncertainOwners(current => {
+        if (!current.has(source.owner)) return current;
+        const next = new Set(current); next.delete(source.owner); return next;
+      });
       setSnapshot(result);
       setDraft(createModelDraft(result));
       setLoadState({ status: 'ready' });
@@ -288,8 +329,58 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     ...validateChangedSamples(validationSnapshot ?? snapshot, draft, language),
   ] : [];
 
+  // Publications always belong to the retained editor source, never the root's latest selection.
+  const analysisPublication: PlanAnalysisDraftPublication | null = (() => {
+    if (!asset || asset.kind !== 'Plan') return null;
+    const loaded = analysisLoadedSource.current;
+    const boundSource = loaded?.owner === source.owner ? loaded.source
+      : capturePlanAnalysisSource(source.context, backend, backendRevision);
+    const capturedSource = boundSource.backendIdentity === planAnalysisBackendIdentity(backend)
+      ? { ...boundSource, backendRevision: backendRevision ?? 0 } : boundSource;
+    const writePending = activeSave.current?.owner === source.owner;
+    const entry: PlanAnalysisDraftPublication = {
+      editorID: analysisEditorID, ownerContextID: source.owner, source: capturedSource,
+      assetPath: asset.path, revision: snapshot?.revision ?? asset.revision ?? null,
+      dirty: hasUnsavedEditorState, valid: false, busy: false, writePending,
+      draftRevision: analysisDraftIdentity.current.revision, status: 'unavailable',
+      ...(planSaveRecovery?.ownerContextID === source.owner ? { saveOperationID: planSaveRecovery.operationID,
+        recoveryAttemptID: planSaveRecovery.phase === 'resuming' ? planSaveRecovery.attemptID : undefined } : {}),
+    };
+    if (analysisUncertainOwners.has(source.owner)) return { ...entry, status: 'uncertain', writePending: false, busy: planSaveRecovery?.phase === 'resuming',
+      reason: '计算计划保存结果尚未确认，请先核对来源和同一操作的终态。' };
+    if (writePending || busy || payloadConnectionCreating || classificationImportRunning)
+      return { ...entry, busy: true, status: 'busy', reason: '计算计划编辑器正在处理请求，请等待完成。' };
+    if (!snapshot || !draft || loadedOwner.current !== source.owner || loaded?.owner !== source.owner || loadState.status !== 'ready')
+      return { ...entry, busy: loadState.status === 'loading', reason: '计算计划尚未完整载入，不能捕获草稿。' };
+    if (catalogError || !['PlanSettingsPage', 'PlanComputeSettingsPage'].every(id => catalog.schemas.some(schema => schema.id === id)))
+      return { ...entry, reason: '计算计划字段验证规则尚未完整载入，请稍后重试。' };
+    if (validations.length) return { ...entry, status: 'invalid', reason: '计算计划草稿含无效字段，请先返回编辑器修正。' };
+    if (payloadForms.size || payloadConnectionState !== 'idle' || (dirty && !snapshot.canEdit))
+      return { ...entry, status: 'unsupported', reason: '计算计划仍有无法完整捕获的编辑状态，请先处理后再分析。' };
+    if (!dirty) return { ...entry, valid: true, status: 'clean' };
+    const capture = capturePlanEditorDraft({ editorID: analysisEditorID, ownerContextID: source.owner,
+      assetPath: asset.path, snapshot, baseline: createModelDraft(snapshot), draft,
+      sourceStateFallback: sourceStateFor(asset) ?? null });
+    if (!capture.planDraft) return { ...entry, status: 'unsupported', reason: capture.unsupportedReason };
+    return { ...entry, valid: true, status: 'draft', planDraft: capture.planDraft };
+  })();
+  const analysisPublicationKey = planAnalysisValueKey(analysisPublication);
+  useLayoutEffect(() => {
+    onPlanAnalysisDraftChange?.(analysisEditorID, analysisPublication);
+  }, [analysisEditorID, analysisPublicationKey, onPlanAnalysisDraftChange]);
+  useLayoutEffect(() => () => onPlanAnalysisDraftChange?.(analysisEditorID, null), [analysisEditorID, onPlanAnalysisDraftChange]);
+  useLayoutEffect(() => {
+    const revision = props.planAnalysisDrafts?.discardRevision ?? 0;
+    if (analysisDiscardRevision.current === revision) return;
+    analysisDiscardRevision.current = revision;
+    if (asset?.kind !== 'Plan' || analysisUncertainOwners.has(source.owner) || activeSave.current) return;
+    analysisDiscardTransition.current = { revision, sourceOwner: source.owner, targetOwner: desiredSource.owner };
+    if (desiredSource.owner !== source.owner) acceptSource(desiredSource);
+    else if (snapshot) setDraft(createModelDraft(snapshot));
+  }, [props.planAnalysisDrafts?.discardRevision, desiredSource, source.owner]);
+
   const onFieldChange = (fieldID: string, value: string): void => {
-    if (!snapshot?.canEdit || activeSave.current) return;
+    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked) return;
     setDraft((current) => {
       if (!current) return current;
       const next = { ...current, fields: { ...current.fields, [fieldID]: value } };
@@ -304,12 +395,12 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     setSaveMessage('');
   };
   const onImagesChange = (fieldID: string, images: ModelDraft['images'][string]): void => {
-    if (!snapshot?.canEdit || activeSave.current || activeOwner.current !== source.owner) return;
+    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked || activeOwner.current !== source.owner) return;
     setDraft((current) => current ? { ...current, images: { ...current.images, [fieldID]: images } } : current);
     setSaveMessage('');
   };
   const onRowCellChange = (tableID: string, rowID: string, columnID: string, value: string): void => {
-    if (!snapshot?.canEdit || activeSave.current) return;
+    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked) return;
     setDraft((current) => {
       if (!current) return current;
       const rows = current.rows[tableID] ?? [];
@@ -320,7 +411,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     setSaveMessage('');
   };
   const onSampleChange: PageProps['onSampleChange'] = (seriesID, sampleID, column, value) => {
-    if (!snapshot?.canEdit || activeSave.current) return;
+    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked) return;
     setDraft((current) => {
       if (!current) return current;
       const boundary = current.boundaryView ?? snapshot.boundary;
@@ -2378,9 +2469,73 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     else acceptSource(next.source);
   };
 
+  const adoptSavedModel = (original: SourceContext, originalAsset: NonNullable<WorkbenchContext['selectedAsset']>,
+    result: ModelSnapshot, originalBackend: BackendGateway, originalBackendRevision: number | undefined,
+    recovery?: PlanSaveRecoveryAcknowledgement): boolean => {
+    assertModelSnapshot(result);
+    const tracking = planSaveRecoveryRef.current;
+    if (tracking?.ownerContextID === original.owner) updatePlanSaveRecovery({ ...tracking, receipt: result });
+    const nextContext = updatedContext(original.context, originalAsset, result);
+    const nextSource = sourceFor(nextContext);
+    acceptedReceipt.current = { owner: nextSource.owner, snapshot: result };
+    if (onContextCommit && !onContextCommit(original.context, nextContext, recovery)) {
+      acceptedReceipt.current = null;
+      return false;
+    }
+    onDirtyStateChange?.(original.owner, false);
+    activeOwner.current = nextSource.owner;
+    analysisLoadedSource.current = { owner: nextSource.owner, source: capturePlanAnalysisSource(nextContext, originalBackend, originalBackendRevision) };
+    setSnapshot(result); setDraft(createModelDraft(result)); setSource(nextSource);
+    if (originalAsset.kind === 'Plan') clearAnalysisUncertain(original.owner);
+    setSaveMessage(text(language, '已从后端保存回执刷新模型。', 'The model was refreshed from the backend save receipt.'));
+    if (!onContextCommit) onContextChange(nextContext);
+    return true;
+  };
+
+  const resumePlanSave = async (): Promise<void> => {
+    const original = planSaveRecoveryRef.current;
+    if (!original || original.phase !== 'uncertain' || !original.operationID || activeSave.current
+      || original.ownerContextID !== source.owner || !original.backend.resumeOperation) return;
+    const attemptID = crypto.randomUUID();
+    const recovery = { ...original, phase: 'resuming' as const, attemptID };
+    updatePlanSaveRecovery(recovery);
+    const requestState = { owner: original.ownerContextID, controller: new AbortController() };
+    activeSave.current = requestState; setBusy(true); setSaveErrorDetails('');
+    // Keep uncertain protection in place. Only this exact attempt's synchronous acknowledgement may pass it.
+    if (analysisPublication) onPlanAnalysisDraftChange?.(analysisEditorID, { ...analysisPublication,
+      status: 'uncertain', valid: false, busy: true, writePending: false,
+      saveOperationID: original.operationID, recoveryAttemptID: attemptID });
+    let received = false;
+    try {
+      const result = await resumeCapturedPlanSave(recovery, { signal: requestState.controller.signal });
+      received = true;
+      if (activeSave.current !== requestState || activeOwner.current !== original.ownerContextID)
+        throw new Error('原保存回执已返回，但编辑器来源已经变化；保留原任务等待核对。');
+      const acknowledgement = { editorID: analysisEditorID, ownerContextID: original.ownerContextID,
+        operationID: original.operationID, attemptID };
+      if (!adoptSavedModel({ context: original.source, owner: original.ownerContextID }, original.asset, result,
+        original.backend, original.backendRevision, acknowledgement)) throw new Error('原保存任务已完成，但当前工程未接纳其精确来源回执。');
+    } catch (error) {
+      if (!received && isConfirmedPlanSaveTerminal(error)) {
+        clearAnalysisUncertain(original.ownerContextID);
+        setSaveMessage(text(language, '服务端已确认原保存任务失败或取消；当前草稿仍保留，可核对后重新保存。', 'The server confirmed that the original save failed or was cancelled. The draft is retained.'));
+      } else {
+        markAnalysisUncertain(original.ownerContextID);
+        setSaveMessage(text(language, '原保存任务尚未完成回执核对；保留草稿和来源保护。', 'The original save is still unconfirmed; the draft and source protection are retained.'));
+      }
+      setSaveErrorDetails(message(error));
+    } finally {
+      if (activeSave.current === requestState) { activeSave.current = null; setBusy(false); }
+    }
+  };
+
   const save = async (): Promise<boolean> => {
     setSaveErrorDetails('');
     if (activeSave.current) return false;
+    if (asset?.kind === 'Plan' && analysisUncertainOwners.has(source.owner)) {
+      setSaveMessage(text(language, '此前保存结果尚未确认，请先核对来源，不会重复提交保存。', 'The previous save is unconfirmed. Verify the source before submitting again.'));
+      return false;
+    }
     if (payloadConnectionState !== 'idle' || payloadForms.size > 0) {
       setSaveMessage(text(language, '请先完成或取消载荷表单，并完成工程连接选项刷新，再保存边界条件。', 'Finish or cancel the payload form and complete connection-choice refresh before saving boundary conditions.'));
       return false;
@@ -2414,11 +2569,13 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     setBusy(true);
     const requestState = { owner: source.owner, controller: new AbortController() };
     activeSave.current = requestState;
+    if (asset.kind === 'Plan') updatePlanSaveRecovery(capturePlanSaveRecovery<ModelSnapshot>(source.owner, source.context, backend, backendRevision));
     const isCurrentSave = () => activeSave.current === requestState
       && activeOwner.current === requestState.owner && !requestState.controller.signal.aborted;
     setSaveMessage('');
     setSaveErrors([]);
     setSaveErrorDetails('');
+    let receivedPlanSave = false;
     try {
       const planFields = snapshot.planTimeWindowFieldIDs;
       const planIDs = planFields ? [planFields.mode, planFields.start, planFields.end] : [];
@@ -2452,25 +2609,24 @@ export default function EditorWorkbench(props: FeaturePageProps) {
         tableSelections,
         changedCells: changedModelCells(draft, snapshotRows(snapshot)),
       };
-      const result = await backend.request<ModelSnapshot>('model.save', request, { signal: requestState.controller.signal });
-      if (!isCurrentSave()) return false;
-      assertModelSnapshot(result);
-      const nextContext = updatedContext(source.context, asset, result);
-      const nextSource = sourceFor(nextContext);
-      acceptedReceipt.current = { owner: nextSource.owner, snapshot: result };
-      if (onContextCommit && !onContextCommit(source.context, nextContext)) {
-        acceptedReceipt.current = null;
+      const result = await backend.request<ModelSnapshot>('model.save', request, { signal: requestState.controller.signal,
+        onTransportState: state => {
+          const tracking = planSaveRecoveryRef.current;
+          if (asset.kind !== 'Plan' || tracking?.ownerContextID !== source.owner) return;
+          updatePlanSaveRecovery(trackPlanSaveOperation(tracking, state.operationId));
+        },
+      });
+      receivedPlanSave = asset.kind === 'Plan';
+      if (!isCurrentSave()) { if (receivedPlanSave) markAnalysisUncertain(source.owner); return false; }
+      if (!adoptSavedModel(source, asset, result, backend, backendRevision)) {
+        if (asset.kind === 'Plan') markAnalysisUncertain(source.owner);
         return false;
       }
-      onDirtyStateChange?.(source.owner, false);
-      activeOwner.current = nextSource.owner;
-      setSnapshot(result);
-      setDraft(createModelDraft(result));
-      setSource(nextSource);
-      setSaveMessage(text(language, '已从后端保存回执刷新模型。', 'The model was refreshed from the backend save receipt.'));
-      if (!onContextCommit) onContextChange(nextContext);
       return true;
     } catch (error) {
+      if (asset.kind === 'Plan' && (receivedPlanSave || (error && typeof error === 'object'
+        && 'terminalConfirmed' in error && error.terminalConfirmed === false))) markAnalysisUncertain(source.owner);
+      else if (asset.kind === 'Plan') updatePlanSaveRecovery(null);
       if (isCurrentSave()) {
         setSaveMessage(text(language, '保存失败。', 'Save failed.'));
         setSaveErrorDetails(message(error));
@@ -2485,6 +2641,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   };
 
   const discard = (): void => {
+    if (planSaveBlocked || activeSave.current) return;
     if (pending?.kind === 'source') {
       acceptSource(pending.source);
       return;
@@ -2615,7 +2772,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   } : undefined;
 
   const pageProps: EditorPageProps | null = snapshot && draft && asset ? {
-    backend, language, asset, snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
+    backend, language, asset, snapshot: planSaveBlocked ? { ...snapshot, canEdit: false } : snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
     pageId: activePageID, onPageChange: (next) => requestTransition({ kind: 'page', pageID: next }),
     onFieldChange, onImagesChange, onRowCellChange, onSampleChange,
     ...(boundaryInitialConditionsWorkflow ? { boundaryInitialConditions: boundaryInitialConditionsWorkflow } : {}),
@@ -2649,7 +2806,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       && !dirty && !busy && backend.supports('nvalue.preview'),
     ...(!!source.context.projectPath && !!source.context.projectRevision && backend.supports('nvalue.preview') ? { onNValuePreview } : {}),
   } : null;
-  const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy && !initialConditionsBlocksDraft && payloadConnectionState === 'idle' && payloadForms.size === 0;
+  const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy && !planSaveBlocked && !initialConditionsBlocksDraft && payloadConnectionState === 'idle' && payloadForms.size === 0;
 
   return (
     <main className="editor-workbench">
@@ -2670,10 +2827,20 @@ export default function EditorWorkbench(props: FeaturePageProps) {
           {view === 'model' && classificationImportRunning && <button type="button" className="editor-button" data-testid="classification-import-cancel" onClick={cancelClassificationImport}>{text(language, '请求取消分类导入', 'Request classification import cancellation')}</button>}
           <button type="button" className={view === 'model' ? 'editor-button editor-button-selected' : 'editor-button'} disabled={!asset} onClick={() => requestTransition({ kind: 'view', view: 'model' })}>{text(language, '模型页面', 'Model')}</button>
           <button type="button" className={view === 'catalog' ? 'editor-button editor-button-selected' : 'editor-button'} onClick={() => requestTransition({ kind: 'view', view: 'catalog' })}>{text(language, '控件目录 · 开发预览', 'Control catalog · preview')}</button>
-          {view === 'model' && <button type="button" className="editor-button" disabled={!dirty || busy || !snapshot || payloadConnectionState !== 'idle' || payloadForms.size > 0} onClick={discard}>{text(language, '丢弃草稿', 'Discard draft')}</button>}
+          {view === 'model' && <button type="button" className="editor-button" disabled={!dirty || busy || planSaveBlocked || !snapshot || payloadConnectionState !== 'idle' || payloadForms.size > 0} onClick={discard}>{text(language, '丢弃草稿', 'Discard draft')}</button>}
           {view === 'model' && <button type="submit" form="source-model-editor-form" className="editor-button editor-button-primary" disabled={!canSave}>{payloadConnectionCreating ? text(language, '连接处理中…', 'Updating connection…') : busy ? text(language, '保存中…', 'Saving…') : text(language, '保存', 'Save')}</button>}
         </div>
       </header>
+
+      {planSaveBlocked && <div className="editor-validation-summary" role="alert" data-testid="plan-save-recovery">
+        <strong>{text(language, '计算计划保存结果尚未确认', 'Plan save result is unconfirmed')}</strong>
+        <p>{planSaveRecovery?.operationID
+          ? text(language, '草稿与原来源已保留。继续核对只会查询原任务，不会再次提交保存。', 'The draft and original source are retained. Continue tracking the original task without saving again.')
+          : text(language, '服务未返回可追踪任务编号，无法自动续查。草稿与原来源已保留；请核对服务器任务和文件，不会重复提交。', 'No trackable task ID was returned. The draft and original source are retained; verify the server task and file. No save will be resubmitted.')}</p>
+        {planSaveRecovery?.operationID && <code data-testid="plan-save-operation-id">{planSaveRecovery.operationID}</code>}
+        <button type="button" className="editor-button" data-testid="plan-save-resume" disabled={busy || !planSaveRecovery?.operationID || !planSaveRecovery.backend.resumeOperation}
+          onClick={() => void resumePlanSave()}>{busy ? text(language, '正在核对原任务…', 'Checking the original task…') : text(language, '继续核对原保存', 'Continue checking the original save')}</button>
+      </div>}
 
       {asset && <div className="editor-status-strip" role="status">
         <span className={loadState.status === 'ready' ? 'editor-status-dot editor-status-ready' : 'editor-status-dot'} />
@@ -2704,7 +2871,9 @@ export default function EditorWorkbench(props: FeaturePageProps) {
               {validations.length > 0 && dirty && <section className="editor-validation-summary" aria-live="polite"><h2>{text(language, '需要修正', 'Needs attention')}</h2><ul>{validations.slice(0, 20).map((error) => <li key={error.fieldID}><strong>{error.title}</strong> · {error.message} <code>{error.fieldID}</code></li>)}</ul>{validations.length > 20 && <small>{text(language, `另有 ${validations.length - 20} 项`, `${validations.length - 20} more issues`)}</small>}</section>}
             </div>}
             {asset?.kind === 'Boundary Conditions' && activePageID === 'BoundaryConditionsSummary' &&
-              <AttachInitialConditionsDialog language={language} boundaryInitialConditions={boundaryInitialConditionsWorkflow} />}
+              <Suspense fallback={<p role="status">{text(language, '正在加载初始条件工具…', 'Loading initial-condition tools…')}</p>}>
+                <AttachInitialConditionsDialog language={language} boundaryInitialConditions={boundaryInitialConditionsWorkflow} />
+              </Suspense>}
             {asset && !snapshot && loadState.status !== 'loading' && <div className="editor-no-snapshot"><div className="editor-empty-state">{text(language, '尚无可编辑的模型快照。', 'There is no editable model snapshot.')}</div><button type="button" className="editor-button" onClick={() => setView('catalog')}>{text(language, '浏览原始控件配置', 'Browse source control metadata')}</button></div>}
             {saveMessage && <div className={saveErrorDetails ? 'editor-inline-error' : 'editor-save-notice'} role="status">{saveMessage}{saveErrorDetails && <details><summary>{text(language, '错误详情', 'Error details')}</summary><pre>{saveErrorDetails}</pre></details>}</div>}
             {saveErrors.length > 0 && <ul className="editor-validation-summary">{saveErrors.slice(0, 12).map((error) => <li key={error.fieldID}>{error.title}: {error.message} <code>{error.fieldID}</code></li>)}</ul>}

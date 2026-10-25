@@ -10,6 +10,17 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-plan-matrix-isolation-http", string matrixBase, string matrixOutput])
+            {
+                TextWriter protocol = Console.Out;
+                PlanMatrixIsolationReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunPlanMatrixIsolationAsync(
+                    new Uri(EnsureTrailingSlash(matrixBase)), matrixOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-boundary-inline-connection-http", string boundaryConnectionBase, string boundaryConnectionOutput])
             {
                 TextWriter protocol = Console.Out;

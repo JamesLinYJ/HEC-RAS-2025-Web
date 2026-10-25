@@ -1,0 +1,62 @@
+.plan-diff {
+  min-width: 0;
+  padding: 22px;
+  color: var(--app-text);
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+}
+.plan-diff__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.plan-diff__eyebrow { color: var(--mint); font-size: 10px; letter-spacing: .08em; }
+.plan-diff h2 { margin: 7px 0 8px; font-size: 22px; color: var(--app-text); }
+.plan-diff__heading p, .plan-diff__semantics { margin: 0; color: var(--app-muted); font-size: 12px; line-height: 1.6; }
+.plan-diff__semantics { margin-top: 14px; padding: 11px 13px; border-left: 2px solid var(--aqua); background: var(--app-canvas); }
+.plan-diff button, .plan-diff select {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-surface-raised);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 12px;
+}
+.plan-diff button { cursor: pointer; white-space: nowrap; }
+.plan-diff button:hover:not(:disabled) { border-color: var(--mint); }
+.plan-diff button:disabled, .plan-diff select:disabled { opacity: .5; cursor: default; }
+.plan-diff button:focus-visible, .plan-diff select:focus-visible, .plan-diff input:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.plan-diff__sources { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; margin-top: 20px; }
+.plan-diff__source { min-width: 0; }
+.plan-diff__source > label { display: block; margin-bottom: 7px; font-size: 12px; font-weight: 600; }
+.plan-diff__source select { width: 100%; text-overflow: ellipsis; }
+.plan-diff__source-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 9px; font-size: 11px; color: var(--app-muted); }
+.plan-diff__source-detail code { display: block; max-width: 100%; overflow-wrap: anywhere; font-size: 10px; line-height: 1.5; }
+.plan-diff__source-detail small { font: 10px ui-monospace, monospace; }
+.plan-diff__kind { color: var(--aqua); }
+.plan-diff details { max-width: 100%; }
+.plan-diff summary { cursor: pointer; }
+.plan-diff__toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 20px 0 12px; padding-top: 15px; border-top: 1px solid var(--app-border); }
+.plan-diff__filter { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; }
+.plan-diff__filter input { accent-color: var(--mint); }
+.plan-diff__counts { font-size: 11px; color: var(--app-muted); }
+.plan-diff__toolbar > button { margin-left: auto; }
+.plan-diff__status, .plan-diff__empty { margin: 12px 0; color: var(--app-muted); font-size: 12px; line-height: 1.6; }
+.plan-diff__blocked, .plan-diff__error { margin: 14px 0; padding: 12px 14px; border: 1px solid var(--amber); border-radius: 6px; color: var(--app-text); font-size: 12px; line-height: 1.6; }
+.plan-diff__blocked p, .plan-diff__error p { margin: 5px 0; }
+.plan-diff__error { border-color: var(--red); }
+.plan-diff__error pre { overflow: auto; max-height: 230px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--app-muted); }
+.plan-diff__table-wrap { overflow: auto; max-height: 65vh; border: 1px solid var(--app-border); border-radius: 7px; }
+.plan-diff__table-wrap table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 12px; }
+.plan-diff__table-wrap th, .plan-diff__table-wrap td { padding: 10px 12px; border-bottom: 1px solid var(--app-border); vertical-align: top; text-align: left; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+.plan-diff__table-wrap thead th { position: sticky; top: 0; z-index: 1; color: var(--app-text); background: var(--app-surface-raised); font-weight: 600; }
+.plan-diff__table-wrap th:first-child { width: 28%; }
+.plan-diff__table-wrap tbody th { color: var(--app-muted); font-weight: 500; font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; }
+.plan-diff__table-wrap td { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; }
+.plan-diff__table-wrap td.is-different { background: color-mix(in srgb, var(--amber) 14%, var(--app-surface)); box-shadow: inset 2px 0 var(--amber); }
+.plan-diff__table-wrap .plan-diff__empty { padding: 0 12px; }
+@media (max-width: 720px) {
+  .plan-diff { padding: 15px; }
+  .plan-diff__heading { flex-direction: column; gap: 12px; }
+  .plan-diff__sources { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .plan-diff__table-wrap table { min-width: 560px; }
+}

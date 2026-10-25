@@ -22,6 +22,7 @@ export function sessionBackend(backend: BackendGateway, context: WorkbenchContex
     supports: method => backend.supports(method),
     request: <T = unknown>(method: string, parameters: unknown, options?: BackendRequestOptions) =>
       backend.request<T>(method, method === 'project.open' || method === 'project.create' ? parameters : inject(parameters, 0), options),
+    ...(backend.resumeOperation ? { resumeOperation: backend.resumeOperation.bind(backend) } : {}),
     ...(backend.subscribeCapabilities ? { subscribeCapabilities: backend.subscribeCapabilities.bind(backend) } : {}),
     ...(backend.uploadWorkspace ? { uploadWorkspace: backend.uploadWorkspace.bind(backend) } : {}),
     ...(backend.workspaceArchiveUrl ? { workspaceArchiveUrl: backend.workspaceArchiveUrl.bind(backend) } : {}),

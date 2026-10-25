@@ -16,8 +16,8 @@ namespace Ras.Backend;
 
 /// <summary>
 /// Portable host endpoints for the retained PlanDiffView and R2RMatrixView.
-/// All drafts are replayed into disposable in-memory source models; only the
-/// ready-to-run emitter is allowed to create output files.
+/// All drafts are replayed into disposable source models. Ready-to-run preparation
+/// writes only private dependency copies and the requested output files.
 /// </summary>
 public static partial class ModelEditorAdapter
 {
@@ -189,12 +189,16 @@ public static partial class ModelEditorAdapter
             };
             PlanEmitSummary summary = await Task.Run(() =>
             {
+                using var workspace = new PlanMatrixPreparationWorkspace();
                 using ModelContext context = OpenAnalysisPlan(prepared.Capture, prepared.PlanPath,
                     prepared.PlanRevision, ValidateOptionalDraft(prepared.Capture, prepared.PlanPath,
                         prepared.PlanRevision, request.Preview.PlanDraft));
                 if (context.Layer is not Plan plan) throw new ArgumentException("The selected source is not a Plan.");
                 ValidatePlanReadyToRunOwner(context.Project, plan);
                 VerifyFileRevision(prepared.PlanPath, prepared.PlanRevision);
+                VerifyPlanMatrixDependencies(prepared.Dependencies);
+                workspace.Stage(context.Project, plan);
+                VerifyPlanMatrixDependencies(prepared.Dependencies);
                 return PlanReadyToRunEmitter.EmitAll(plan, prepared.Response.OutputDirectory,
                     prepared.Combinations, emitOptions,
                     combination =>
@@ -223,7 +227,8 @@ public static partial class ModelEditorAdapter
             }).ConfigureAwait(false);
 
             bool sourcesStillCurrent = IsPlanAnalysisCaptureCurrent(prepared.Capture) &&
-                IsFileRevisionCurrent(prepared.PlanPath, prepared.PlanRevision);
+                IsFileRevisionCurrent(prepared.PlanPath, prepared.PlanRevision) &&
+                prepared.Dependencies.All(source => IsFileRevisionCurrent(source.Path, source.Revision));
             PlanMatrixEmitFile[] files = prepared.Combinations.Select((combination, index) =>
             {
                 if (combination.IsExcluded)
@@ -258,7 +263,7 @@ public static partial class ModelEditorAdapter
 
     private sealed record PreparedPlanMatrix(PlanAnalysisProjectCapture Capture,
         string PlanPath, string PlanRevision, List<PlanSweepCombination> Combinations,
-        PlanMatrixPreviewResponse Response);
+        PlanMatrixDependency[] Dependencies, PlanMatrixPreviewResponse Response);
 
     private static PreparedPlanMatrix BuildPlanMatrix(PlanMatrixPreviewRequest request)
     {
@@ -272,6 +277,7 @@ public static partial class ModelEditorAdapter
         if (context.Layer is not Plan plan || plan.IsResult)
             throw new ArgumentException("Ready-to-run matrix requires a source Plan.");
         ValidatePlanReadyToRunOwner(context.Project, plan);
+        PlanMatrixDependency[] dependencies = CapturePlanMatrixDependencies(plan);
 
         var axes = new List<PlanSweepAxis>();
         var seenProperties = new HashSet<string>(StringComparer.Ordinal);
@@ -316,7 +322,7 @@ public static partial class ModelEditorAdapter
                 : Path.GetFullPath(defaultOutputDirectory))
             : Path.GetFullPath(request.OutputDirectory);
         string inspectionID = MatrixInspectionID(capture, planPath, planRevision, draft,
-            axes, rules, request.CollapseIrrelevant, outputDirectory);
+            axes, rules, request.CollapseIrrelevant, outputDirectory, dependencies);
         int writeCount = combinations.Count(combination => !combination.IsExcluded);
         int collapsedCount = combinations.Count(combination => combination.IsCollapsed);
         int illegalCount = combinations.Count - writeCount - collapsedCount;
@@ -336,7 +342,8 @@ public static partial class ModelEditorAdapter
             outputDirectory, writeCount, string.Join(" · ", summaryParts), hint, rows);
         EnsurePlanAnalysisSourcesCurrent(capture);
         VerifyFileRevision(planPath, planRevision);
-        return new(capture, planPath, planRevision, combinations, response);
+        VerifyPlanMatrixDependencies(dependencies);
+        return new(capture, planPath, planRevision, combinations, dependencies, response);
     }
 
     private static string BuildInertAxisHint(IReadOnlyList<PlanSweepAxis> axes,
@@ -359,11 +366,13 @@ public static partial class ModelEditorAdapter
 
     private static string MatrixInspectionID(PlanAnalysisProjectCapture capture, string planPath,
         string planRevision, PlanAnalysisPlanDraft? draft, IReadOnlyList<PlanSweepAxis> axes,
-        IReadOnlyList<PlanCombinationRule> rules, bool collapseIrrelevant, string outputDirectory)
+        IReadOnlyList<PlanCombinationRule> rules, bool collapseIrrelevant, string outputDirectory,
+        PlanMatrixDependency[] dependencies)
     {
         var identity = new
         {
             capture.ProjectPath, capture.ProjectRevision, capture.ProjectXmlFingerprint,
+            dependencies,
             planPath, planRevision,
             draft?.Fields,
             draft?.SourceState,

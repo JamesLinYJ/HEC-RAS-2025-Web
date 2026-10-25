@@ -21,7 +21,7 @@
 
 `WorkbenchContext.projectRevision` 标识 `.ras` 文件，`selectedAsset.revision` 标识模型或结果；保存工程不能覆盖模型修订。`onContextCommit` 只允许活动上下文采纳对应源的保存回执。`onDirtyStateChange` 汇总草稿所有者，工程切换与关闭须经过相应处理。
 
-HTTP 操作的受理 ID、传输状态、求解器进度与终态分别管理。终态仍可能带有未读 `hasMore` 分页，网关须排空后才能读取结果或错误。取消请求的 HTTP 回执只证明请求已送达；只有后续操作终态能确认取消。状态失联时保留操作 ID，不能显示计算已取消或重新提交同一个任务。
+HTTP 操作的受理 ID、传输状态、领域任务 ID、进度与终态分别管理。终态仍可能带有未读 `hasMore` 分页，网关须排空后才能读取结果或错误。取消请求的 HTTP 回执只证明请求已送达；只有后续操作终态能确认取消。`BackendGateway.resumeOperation → ServerBackend.trackOperation` 只用已受理的 HTTP ID 继续轮询，`SessionBackend` 原样转发该能力，不重发原写入 POST。mesh 导出保留领域 operation ID 与 HTTP tracking ID 的对应关系；前者用于源捕获/领域回执，后者用于传输恢复，不能互换。R2R 的本地任务 ID、检查用 `inspectionID` 和 HTTP ID 也各有独立职责。mesh/R2R 导出在状态失联、受理响应缺少 ID 或领域回执无法验证时保留原捕获及写入保护；没有 HTTP ID 就不能安全恢复查询。`terminalConfirmed` 区分已确认失败/取消与未知状态，取消竞态仍可收到并采用真实完成回执，不能凭取消按钮宣称回滚。
 
 当前地图由 `MapFeaturePage` 持有地图文档和画布相机，`usePersistedVectorLayers`、`usePersistedRasterLayers`、`useMapResultFrames` 分别读取已勾选的真实矢量、栅格与结果。C# 返回的工程坐标与浏览器直接读取的源坐标具有不同标记；未确认坐标系的本地预览不能与工程图层错误叠加。手动 Fit visible layers 使用可见矢量/GDB 几何范围、持久栅格和关联图层的来源范围及实际 Result 源范围，不以渲染图像 viewport 作为数据范围。 相机按工程会话、工程路径和地图 owner 记录用户控制：手动定位、缩放、适配、平移或开始地图编辑后，后台 Result/来源就绪不再触发自动适配覆盖当前视角；切换工程或地图后恢复首次自动适配。持久化矢量与 GDB 图层由 `useMapVectorRendering` 按精确来源和当前视口请求 C# 绘图，再由 `RasProjectMap` 将 RGBA 帧和返回标签覆盖在透明源几何 hit targets 上；其它实际要素与图像仍在同一工程坐标画布。`MapTimeAxis` 控制同一份结果读取状态，不再创建第二个结果会话。Result 首帧读取全幅范围，之后才按相机视口请求；时刻采用原生 profile 索引与时间，播放等待上一帧确认完成。结果历史路径与修订是当前会话的显式选择，不因 `.vis` 保存就假定为持久化选择。`ResultsWorkspace` 的 `ResultProfileMeshPicker` 通过 `result.profileMap` 读取当前 Result HDF 的嵌入 cell/face 几何；选择保持原 Result 内部 ordinal，再交给已有 `result.profile` 读取该元素的时间序列，不以工程 Geometry 替代，也不写模型或地图。
 
@@ -174,6 +174,46 @@ HTTP 操作的受理 ID、传输状态、求解器进度与终态分别管理。
 Host 以捕获的源模型及子草稿读取真实 CellVolume/CellElevation 或 FaceArea/FaceElevation 属性表，前端用返回的物理单位绘制库容—高程或过水面积—高程，并提供可展开的中文数值表。`ready` 必须有真实有限点；`requiresPropertyTables/cancelled` 必须没有点，不显示合成、示例或沿用旧曲线。缺表时提示用户经现有 Geometry 属性表计算区生成后重新选择。检查器不追加 `computePropertyTables` 意图，也不写源 HDF；若草稿已有该计算意图，Host 可在隔离的临时 `ModelContext` 内重放真实计算再读表。草稿计算和父 `model.save` 的持久化边界保持原有归属。
 
 原 C# `Ras.Visual.WinUI.Controls/MeshErrorProperties.cs` 的关系是 `FlowAreaLayerVisualContext.MeshErrors → MeshNodeDegreeError → MeshErrorList_ItemClick → CellsExtent/NodePoint → ZoomToPoint.ZoomToExtent`，用于 degree error 列表与定位，没有此属性曲线入口。`MeshElementInspector` 和 `meshElementInspectorData` 是使用现有真实 Host 服务的新 React 胶水，不是原 `MeshErrorProperties` 已有图表的同名迁移，也不增加原 UI inventory 项。
+
+### 当前 Geometry 网格 Shapefile 导出
+
+`GeometryEditor → useMeshShapefileExport → MeshShapefileExportController` 在网格子页之外保留导出任务；`GeometryMeshPage → FlowAreaLayerBehaviors` 选择当前真实 Flow Area、导出类型和服务器绝对 `.shp` 路径，`MeshShapefileExportTasks` 展示原捕获、进度、终态及文件回执。原 `FlowAreaLayerBehaviors.cs` 的两个导出 action 提供职责依据；当前同名 React 控件只接单元中心与外围面导出，不代表原类其他动作或 Windows 文件管理器行为已迁移。它明确选择一个 Flow Area，而非沿用原 action 的首个要素假设。
+
+`meshShapefileExport` 捕获工程会话、路径/XML/修订/Core、Geometry model 与源修订、Flow Area ID/名称、完整 mesh/topology 草稿原文及 SHA-256；未进入 Host 子草稿的本地表格修改会阻止导出。同步登记 `geometry.mesh-export:<operationID>` 后才计算摘要并发送 `geometry.mesh.exportShapefile`，摘要完成前再次核对来源和后端。写入期间保留原任务上下文，切网格子页不丢失任务，来源改变也不会将旧回执应用到新对象。
+
+Host 在临时模型中重放现有拓扑和网格变更，导出过程不重放属性表计算。`CellCenters` 使用完整真实 `mesh.CellCenters`，不从有限地图预览取样；`PerimeterFaces` 遍历原 `mesh.Faces`，仅导出一侧 cell 为负的真实外围折线，并保留零基 `Face`、`CellA`、`CellB` 与实际 `Length`。输出目录须已存在，同名 `.shp/.shx/.dbf/.prj/.cpg` 任一文件均禁止覆盖；暂存写入、完整文件族验证、源修订复核后才发布。投影来自实际工程 WKT，Local 坐标不编造 `.prj`。该操作只写用户指定的服务器 Shapefile 文件族，不保存 Geometry 草稿、工程或地图。
+
+完成回执须匹配领域 operation ID、源路径/修订、Flow Area、导出类型、双草稿 SHA、目标路径、要素数及文件族；每件产物保留 Host 返回的路径、字节数和 SHA-256。领域取消回执必须为零要素、空产物和空输出路径。传输或解析状态未知时，controller 保留 dirty owner 并阻止新导出及放弃未决任务；有原 HTTP ID 时仅恢复该任务轮询。取消表示请求停止，收到已完成回执仍按完成处理。页面展示的是服务器产物回执，不表示浏览器已下载文件。
+
+### 当前 Plan 分析草稿桥
+
+`EditorWorkbench → capturePlanEditorDraft → onPlanAnalysisDraftChange → RasMainWindow` 发布保留中的 Plan 编辑器来源，`planAnalysisDrafts.resolveAnalysisDrafts` 为 PlanDiff 与 R2R 提供同一份可核对捕获。registry 记录 editor ID、精确 dirty owner、工程会话/路径/XML/修订/Core、后端实例/能力版本、Plan 路径/源修订、草稿代次与可用状态；它不随根工作区的最新资产选择改写原编辑器身份。`captureKey` 只作内存一致性比较，含源 XML 和原始值，不写日志或持久化草稿存储。
+
+捕获沿用父 `model.save` 合同：只传相对快照实际变化的字段，排除只读字段与独立时间窗字段；保留原始字符串、精确 `sourceState`，按 mode/start/end 的父保存次序生成实际变化的 `planTimeWindowEdits`。图像、表格、samples 或尚未提交的时序文本变化无法由此合同完整表达，会阻止分析；验证规则/快照未就绪、无效草稿、处理中的操作、来源或修订不匹配、重复 Plan/dirty owner、未捕获的其他 dirty owner 同样阻止。不能移除某个 dirty 标志后改读已保存 Plan；R2R 仅能排除自身表单/导出 owner，不能绕过已发布的 Plan owner。
+
+父层按 editor ID 原子替换并冻结 publication，每次变化推进 registry 修订；普通卸载移除该 publication，已提交保存仍在途或结果未知时则保留 `uncertain` 记录。`hasProtectedSourceWrite` 将地图写入、`geometry.mesh-export:*`、`tools.r2r-export:*` 及 Plan 的 `writePending/uncertain` 纳入根页面导航、工程切换与放弃保护；真实保存回执经独立 `onContextCommit` 路径采纳。
+
+`EditorWorkbench → planAnalysisDraftLifecycle` 固定原 gateway、后端能力版本、源上下文、Plan asset、dirty owner、已受理 HTTP ID 和已收到的保存回执。“继续核对原保存”只通过原 gateway 的 `resumeOperation` 续查同一 HTTP 任务；已有回执则重新核对并申请采纳，不重发 `model.save`。没有原 HTTP ID 时保留草稿和保护，不能自动续查或重新提交。仅在尚未收到完成回执、且服务端明确确认失败或取消时解除 `uncertain`，保留当前草稿；未知状态或回执未获采纳继续保留原捕获和来源保护。
+
+续查前同步发布 `uncertain + busy`，同时登记原 HTTP ID 与本次 `attemptID`。`RasMainWindow` 仅允许 editor ID、dirty owner、HTTP ID、attempt ID 和精确源上下文全部匹配的真实回执通过一次；其他写入保护仍生效。该路径不先异步清除 guard，根页面采纳后才更新编辑器基线并解除原保存的不确定状态。显式放弃由 `discardRevision` 通知恢复基线或接受新来源、重置矩阵设置；`matchesPlanDiscardTransition` 只消费与该 revision、旧 source owner、目标 owner 全部相同的旧 effect，防止它再次建立已放弃的 pending 来源切换。registry、捕获/生命周期 helper 与 root 接线均是 Web 胶水；草稿持久化仍归既有父保存，分析接口只在私有 Plan 实例重放捕获。
+
+### 当前 Plan 属性比较
+
+`ToolsPageView → PlanDiffView → PlanDiffOption / planDiffWorkflow` 通过 `plan.analysis.diffOptions` 读取真实来源目录，再以选中的两个完整 option 与当前可捕获的 Plan 草稿调用 `plan.analysis.diff`。原 `PlanDiffView.cs` 的双来源选择、KEY/左右原值、差异标记和仅差异过滤继续分别保留；Host 按原规则反射简单公开 Plan 属性并排序、格式化，React 保留原始属性键、字符串值及错误/null 文本，只对差异行作本地过滤和高亮。
+
+原 `PlanDiffOption.ForResult` 使用 `result.Plan.Plan`，因此 Result 选项比较其关联 Plan，所带草稿也按同一规范 Plan 路径/修订匹配。当前 Host 的 `resultRevision` 为 null，不能据此声称校验了 Result HDF 的内容修订；不可用 Result 也可保留 `resultPath=null` 的独立 option ID。前端校验可空字段实际存在，并要求回执完整匹配左右 ID、Plan 路径/修订、Result 字段、标签及类型，不把缺失的 Result 修订补成 Plan SHA。
+
+目录与比较各有请求代次。工程会话/路径/XML/修订/Core、活动资产、服务实例/能力版本、左右来源或共享草稿捕获变化，会使旧比较立即不可展示并取消其请求；切回相同来源也不能复活旧响应。`resolveAnalysisDrafts` 未能完整捕获当前相关草稿时显示阻止原因，不退回已保存文件冒充当前编辑。比较只在临时 Plan 上应用草稿并读取属性，不写工程、Plan、Result 或其他模型文件。
+
+### 当前 R2R 参数矩阵
+
+`ToolsPageView → R2RMatrixView → R2RMatrixVM → r2rMatrixWorkflow` 使用 `plan.r2rMatrix.options/preview/emit`，分别对应原 `R2RMatrixVM` 的参数轴、非法组合规则、不适用参数折叠、组合表及显式 emitter 职责。选项来自所选源 Plan 和当前可捕获草稿，保留原 `PropertyName`、枚举原值及候选顺序；中文标签独立于服务值。轴不能重复，候选可选中/移除，自由值由原 C# 解析并按解析结果去重；来源、草稿、轴/值顺序、规则、折叠或输出设置变化使旧预览失效。Host 返回实际组合文件名、每项适用性/原因及可写数量，组合上限为 2048；前端不自行模拟水力规则。
+
+`tools.r2r-form:*` 只保护当前矩阵设置。真正导出先冻结来源、草稿、预览、表单和原网关，同步登记 `tools.r2r-export:pending-<localID>`；获得 HTTP ID 后先登记对应任务 owner 再释放临时 owner，保护不中断。`inspectionID` 由 Host 绑定工程路径/修订/XML 摘要、Plan 路径/修订、原始字段/sourceState/有序时间窗编辑、规范化轴值及顺序、规则顺序、折叠、输出目录和已捕获依赖路径/修订。它不代替编辑器会话/owner 校验，也不是文件产物回执。`emit` 重建并核对同一检查身份后才执行，不能拿旧预览提交新参数。
+
+`PlanAnalysisService → PlanMatrixPreparationWorkspace → PlanReadyToRunEmitter` 保留原 `TryPrepareCompute` 的准备行为，同时隔离其写入：以有效内存模型 `SaveAs` 出私有 Geometry 与存在的 BC HDF，重新绑定临时 Plan 关联，保留实际 Terrain/NValue 关联和外部连接解析。属性表/准备摘要只在私有 Geometry 中保存；临时模型释放并关闭原生句柄后清理工作目录。缺失 BC 不被构造为虚假默认源，仍由原计算前检查返回诊断。预览及提交前后核对已捕获的已保存 Geometry、BC、Terrain、NValue 核心 HDF 修订；这些路径/修订也进入检查身份。终态 `sourcesStillCurrent` 合并工程、Plan 与该依赖集合，不代表对任意外部栅格或 sidecar 的无限递归清单验证。该入口生成服务器 `.r2r.h5`，不启动求解器、不保存源 Plan/工程或覆盖这些输入 HDF。
+
+导出沿原 emitter 逐文件返回 Written/Skipped/Failed/Excluded/Cancelled/NotRun、路径、字节数和诊断。覆盖开关只决定同名 R2R HDF 的处理；`writeManifest` 会生成或更新同目录同计划 CSV，独立于 HDF 覆盖开关。前端核对来源、检查身份、组合顺序/文件名、目录、逐文件状态与汇总计数，不将进度事件当终态，也不替没有完整文件回执的失败/取消补造文件清单。部分文件可在失败或取消前已经写出，取消不回滚它们。未知传输/无效回执保留原捕获、原始响应及写保护；有 HTTP ID 时通过捕获的网关恢复同一任务，无 ID 时禁止重发。任务回执始终属于提交时来源，表单、目录选项或后续选择不能改写它。
 
 `currentImplementation` 与本表只记录当前源码中的组件挂载、操作名、状态所有者和持久化边界；这是静态关系图，不代表构建成功、浏览器/Electron 交互、Host 实际运行或真实文件路径验收。旧 C#/SwiftUI 内容仍是来源契约，模块存在、来源契约或预览草稿不代表完整交互或持久化。旧 `VectorSymbologyEditor` 仍只是条件求值预览；独立的图层样式编辑器和 C# 地图绘图链路已在上表记录源码接线，但仍需单独运行验收。
 
