@@ -13,7 +13,6 @@ import type { AppliedRasterLegend } from './symbology/RasterSymbologyEditor';
 import { RasMapElementsOverlay } from './RasMapElementsOverlay';
 import { ScaleBar, projectScaleUnitSystem } from './ScaleBar';
 import { MapViewsPanel } from './views/MapViewsPanel';
-import { VectorSymbologyEditor } from './vector-symbology/VectorSymbologyEditor';
 import { GlobalSymbologyEditorPage } from './global-symbology/GlobalSymbologyEditorPage';
 import { DEFAULT_MAP_DISPLAY_SETTINGS } from './MapSettings';
 import type { MapDisplaySettings } from './MapSettings';
@@ -60,7 +59,8 @@ import { useTerrainElevationMeasurement } from './measure/useTerrainElevationMea
 import { rgbaFrameImage } from './mapImages';
 import { importMapSources } from './importMapSources';
 import { MapSourceImportControl } from './MapSourceImportControl';
-import { RasBackgroundMaps } from './RasBackgroundMaps';
+import { useBackgroundMapRendering } from './background/useBackgroundMapRendering';
+import { readBackgroundMapProjection } from './background/protocol';
 import { RasMapPositionIndicator } from './RasMapPositionIndicator';
 import { RasMapUndoRedo } from './RasMapUndoRedo';
 import { ZoomToPointDialog } from './ZoomToPointDialog';
@@ -83,6 +83,10 @@ import { useMapMeshErrors } from './mesh-errors/useMapMeshErrors';
 import type { MapMeshErrorGuard } from './mesh-errors/useMapMeshErrors';
 import './map.css';
 
+const RasBackgroundMaps = lazy(() => import('./RasBackgroundMaps')
+  .then(module => ({ default: module.RasBackgroundMaps })));
+const VectorSymbologyEditor = lazy(() => import('./vector-symbology/VectorSymbologyEditor')
+  .then(module => ({ default: module.VectorSymbologyEditor })));
 const MapMeshTimeSeriesPanel = lazy(() => import('./analysis/MapMeshTimeSeriesPanel')
   .then(module => ({ default: module.MapMeshTimeSeriesPanel })));
 const MapCulvertAnalysisPanel = lazy(() => import('./analysis/MapCulvertAnalysisPanel')
@@ -902,6 +906,9 @@ function MapPage(props: MapFeaturePageProps) {
   ], [associatedLayers.layers, calculatorReadyImages, persistedRasters.layers, resultImages.layers]);
   const visibleLayers = allMapLayers.filter((layer) => layer.visible);
   const mapImagesVisible = visibleLayers.length === 0 || visibleLayers[visibleLayers.length - 1]?.coordinateSpace === 'project';
+  const backgroundRendering = useBackgroundMapRendering({ backend, backendRevision, context,
+    document: activeDocument, camera: viewport, size, settings: backgroundSettings,
+    coordinatesAreProject: mapImagesVisible, language });
   const currentHoverPointer = hoverPointer && hoverPointer.screen[0] >= 0 && hoverPointer.screen[0] <= size.width &&
     hoverPointer.screen[1] >= 0 && hoverPointer.screen[1] <= size.height
     ? { screen: hoverPointer.screen, project: screenToWorld(hoverPointer.screen, viewport) }
@@ -2016,7 +2023,14 @@ function MapPage(props: MapFeaturePageProps) {
   const layerCount = visibleLayers.length + mapImages.length;
   const featureCount = visibleLayers.reduce((sum, layer) => sum + layer.features.length, 0);
   const zoomPercent = Number.isFinite(viewport.scale) ? Math.round(viewport.scale * 100) : 100;
-  const sourceCRS = mapCRS(language, visibleLayers[visibleLayers.length - 1]?.crs ?? text(language, '无坐标系', 'No CRS'));
+  const backgroundCRS = useMemo(() => {
+    if (!backgroundRendering.projectionResolved || !mapImagesVisible) return null;
+    const projection = readBackgroundMapProjection(context.projectXml).projection;
+    if (!projection) return null;
+    return projection.type === 'EPSG' ? `EPSG:${projection.value.trim().replace(/^EPSG:/i, '')}`
+      : text(language, `工程投影（${projection.type}）`, `Project projection (${projection.type})`);
+  }, [backgroundRendering.projectionResolved, mapImagesVisible, context.projectXml, language]);
+  const sourceCRS = mapCRS(language, visibleLayers[visibleLayers.length - 1]?.crs ?? backgroundCRS ?? text(language, '无坐标系', 'No CRS'));
   const projectCoordinates = Boolean(activeDocument) && visibleLayers.every(layer => layer.coordinateSpace === 'project');
   const scaleUnitSystem = useMemo(() => projectScaleUnitSystem(context.projectXml, projectCoordinates), [context.projectXml, projectCoordinates]);
   const copy = {
@@ -2274,6 +2288,8 @@ function MapPage(props: MapFeaturePageProps) {
               images={mapImages}
               vectorFrames={vectorRendering.frames}
               velocityField={velocityField}
+              backgroundFrame={backgroundRendering.frame}
+              backgroundCRS={backgroundCRS}
               viewport={viewport}
               onViewportChange={setUserViewport}
               size={size}
@@ -2319,7 +2335,7 @@ function MapPage(props: MapFeaturePageProps) {
           </div>
           <div className="map-canvas-status">
             <RasMapPositionIndicator point={cursorCoordinate} crs={sourceCRS} language={language} />
-            <span>{copy.source}: {sourceCRS}</span>
+            <span>{backgroundCRS ? text(language, '工程坐标', 'Project coordinates') : copy.source}: {sourceCRS}</span>
             <span>{copy.zoom}: {zoomPercent}%</span>
             <span>{copy.layers}: {layerCount}</span>
             <span>{copy.features}: {featureCount}</span>
@@ -2470,13 +2486,13 @@ function MapPage(props: MapFeaturePageProps) {
               language={language} onDirtyStateChange={onDirtyStateChange}
               onSaved={() => setVectorSettingsEpoch(value => value + 1)} />
           </details>
-          {selectedVectorFile?.revision && selectedBackend && activeDocument && <VectorSymbologyEditor
+          {selectedVectorFile?.revision && selectedBackend && activeDocument && <Suspense fallback={<p role="status">{text(language, '正在加载矢量样式编辑器…', 'Loading vector style editor…')}</p>}><VectorSymbologyEditor
             backend={backend} context={context} language={language}
             vectorPath={selectedVectorFile.path} revision={selectedVectorFile.revision}
             ownerID={JSON.stringify([projectContextKey, activeDocument.id,
               activeDocument.visualizationRevision, selectedBackend.nodeID])}
             onDirtyStateChange={onDirtyStateChange}
-          />}
+          /></Suspense>}
           {settings.showVelocityArrows && <p className="map-velocity-status" role="status" data-testid="map-velocity-status">
             {velocityField.loading ? text(language, '正在读取当前时刻的速度场…', 'Reading velocity at the current output time…')
               : velocityField.capture ? text(language,
@@ -2484,14 +2500,19 @@ function MapPage(props: MapFeaturePageProps) {
                 `Current output: ${velocityField.vectors.filter((vector) => vector.vx !== 0 || vector.vy !== 0).length} nonzero velocity samples`)
                 : text(language, '选择已完成计算的结果后显示速度箭头。', 'Select a completed Result to display velocity arrows.')}
           </p>}
+          <Suspense fallback={<p role="status">{text(language, '正在加载底图设置…', 'Loading background map settings…')}</p>}>
           <RasBackgroundMaps
+            backend={backend}
+            backendRevision={backendRevision}
+            rendering={backgroundRendering}
             state={backgroundSettings}
             onDraftChange={updateBackgroundDraft}
             crs={sourceCRS}
             backendRenderMethodAvailable={backend.supports('map.background.render')}
-            overlayRendererConnected={false}
+            overlayRendererConnected={backgroundRendering.rendererConnected}
             language={language}
           />
+          </Suspense>
         </aside>
       </div>
       <footer className="map-workspace-footer">

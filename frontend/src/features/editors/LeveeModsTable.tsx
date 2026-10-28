@@ -33,12 +33,13 @@ export function LeveeModsTable({ tableID, title, table, rows, language, canEdit,
       <h5>{title}</h5>
       <span>{rows.length} {language === 'zh' ? '行' : 'rows'}</span>
     </div>
-    {selectionMode !== 'none' && <fieldset className="editor-field editor-terrain-row-selection" disabled={!enabled}>
+    {selectionMode !== 'none' && <fieldset className="editor-terrain-row-selection" disabled={!enabled}>
       <legend>{language === 'zh' ? '选择要素' : 'Select features'}</legend>
-      {rows.map((row, index) => <label key={row.id}>
+      {rows.map((row, index) => <label key={row.id} className="editor-toggle editor-terrain-row-option">
         <input
           type={selectionMode === 'single' ? 'radio' : 'checkbox'}
           name={selectionMode === 'single' ? `terrain-selection-${tableID}` : undefined}
+          value={row.id}
           checked={selected.has(row.id)}
           onChange={(event) => changeSelection(event, row.id)}
         />

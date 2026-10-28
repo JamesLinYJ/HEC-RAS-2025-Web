@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { extentOfPositions, isKnownCrs, pathsInGeometry, pointsInGeometry, positionsInGeometry } from './geoJson';
 import { mapCRS } from './mapText';
@@ -12,11 +13,16 @@ import { ToolTipAnnotation } from './ToolTipAnnotation';
 import type { MapHoverTooltip } from './useMapHoverIdentify';
 import { RasMapMinimap } from './RasMapMinimap';
 import type { MapVectorFrame } from './useMapVectorRendering';
+import type { BackgroundMapFrame } from './background/types';
+
+const BackgroundMapScene = lazy(() => import('./background/BackgroundMapScene').then(module => ({ default: module.BackgroundMapScene })));
 
 export interface RasProjectMapProps {
   layers: GeoJsonLayer[];
   images?: MapImageLayer[];
   vectorFrames?: MapVectorFrame[];
+  backgroundFrame?: BackgroundMapFrame | null;
+  backgroundCRS?: string | null;
   velocityField?: MapVelocityFieldState;
   viewport: MapViewport;
   size: { width: number; height: number };
@@ -174,6 +180,8 @@ export function RasProjectMap({
   layers,
   images = [],
   vectorFrames = [],
+  backgroundFrame = null,
+  backgroundCRS = null,
   velocityField,
   viewport,
   size,
@@ -201,6 +209,7 @@ export function RasProjectMap({
   const activeCRS = activeLayer ? coordinateKey(activeLayer) : null;
   const compatibleLayers = uniqueCRS.length <= 1 ? visibleLayers : visibleLayers.filter((layer) => coordinateKey(layer) === activeCRS);
   const visibleImages = activeCRS === null || activeCRS === 'project' ? images : [];
+  const visibleBackground = activeCRS === null || activeCRS === 'project' ? backgroundFrame : null;
   const crsMismatch = uniqueCRS.length > 1;
   const note = language === 'zh'
     ? {
@@ -222,8 +231,8 @@ export function RasProjectMap({
   return (
     <div className="map-canvas-wrap">
       <div className="map-canvas-badges">
-        <span className="map-canvas-crs">{mapCRS(language, compatibleLayers[compatibleLayers.length - 1]?.crs ?? (language === 'zh' ? '无坐标系' : 'No CRS'))}</span>
-        <span className="map-canvas-coordinate-tag">{activeCRS === 'project' || visibleImages.length > 0 ? (language === 'zh' ? '工程坐标' : 'Project coordinates') : (language === 'zh' ? '源坐标' : 'Source coordinates')}</span>
+        <span className="map-canvas-crs">{mapCRS(language, compatibleLayers[compatibleLayers.length - 1]?.crs ?? (visibleBackground ? backgroundCRS : null) ?? (language === 'zh' ? '无坐标系' : 'No CRS'))}</span>
+        <span className="map-canvas-coordinate-tag">{activeCRS === 'project' || visibleImages.length > 0 || visibleBackground ? (language === 'zh' ? '工程坐标' : 'Project coordinates') : (language === 'zh' ? '源坐标' : 'Source coordinates')}</span>
       </div>
       <svg
         className={'map-canvas' + (activeTool === 'pan' ? ' is-panning' : activeTool.startsWith('draw') || activeTool.startsWith('measure') ? ' is-drawing' : ' is-selecting')}
@@ -243,6 +252,9 @@ export function RasProjectMap({
         onWheel={onWheel}
       >
         <rect className="map-canvas-surface" x="0" y="0" width={size.width} height={size.height} />
+        {visibleBackground && <Suspense fallback={null}>
+          <BackgroundMapScene frame={visibleBackground} viewport={viewport} size={size} />
+        </Suspense>}
         {visibleImages.map((image) => {
           const [x, y] = worldToScreen([image.extent.minX, image.extent.maxY], viewport);
           return <image key={image.id} data-testid="map-backend-image" data-source-kind={image.sourceKind}
@@ -311,7 +323,7 @@ export function RasProjectMap({
       {settings.IsMapOverlayVisible && onViewportChange && (compatibleLayers.length > 0 || visibleImages.length > 0) &&
         <RasMapMinimap layers={compatibleLayers} images={visibleImages} viewport={viewport} size={size}
           language={language} onViewportChange={onViewportChange} />}
-      {compatibleLayers.length === 0 && visibleImages.length === 0 && (
+      {compatibleLayers.length === 0 && visibleImages.length === 0 && !visibleBackground && (
         <div className="map-empty-state">
           <span className="map-empty-glyph" aria-hidden="true"><i /><i /><i /></span>
           <strong>{language === 'zh' ? '地图画布' : 'Map canvas'}</strong>

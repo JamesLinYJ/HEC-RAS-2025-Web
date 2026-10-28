@@ -417,7 +417,7 @@ public sealed class OperationManager : IHostedService
 
     private async Task ReadWorkerProtocolAsync(OperationRecord operation, Process process)
     {
-        int maximumLineCharacters = operation.Method is "map.resultRender" or "map.associations.load"
+        int maximumLineCharacters = operation.Method is "map.resultRender" or "map.associations.load" or "map.background.render"
             or "topology.mapCommand.preview" or "topology.vectorSource.inspect"
             ? MaximumLargeResultLineCharacters : MaximumProtocolLineCharacters;
         var lines = new BoundedProtocolLineReader(process.StandardOutput, maximumLineCharacters);

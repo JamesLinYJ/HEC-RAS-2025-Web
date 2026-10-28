@@ -18,7 +18,8 @@
       "resultHoverIdentity": "frontend/src/features/map/mapResultHoverIdentity.ts",
       "sourceImport": "frontend/src/features/map/importMapSources.ts",
       "canvas": "frontend/src/features/map/RasProjectMap.tsx",
-      "timeControls": "frontend/src/features/map/MapTimeAxis.tsx"
+      "timeControls": "frontend/src/features/map/MapTimeAxis.tsx",
+      "background": "frontend/src/features/map/background/useBackgroundMapRendering.ts"
     },
     "featureEntries": {
       "project": "frontend/src/features/project/index.tsx",
@@ -1826,6 +1827,33 @@
           "developer.projectArchive.cleanup"
         ],
         "writeBoundary": "Preparation copies the included project-directory files to a private workspace, preserves saved external connection metadata without following those sources, and invokes retained Project.ZipFullProject on the staged project. Source directory inventory is rechecked; the ZIP is verified against staged files. Source .ras SHA, archived .ras SHA after staged Project.Save, and inventory SHA have distinct meanings; inventory SHA is not a ZIP byte hash. Retained CoreLayerBase restores a disk model name from its filename after metadata loading; a resulting NeedsSave can update staged HDF Name and Date Last Modified through Project.Save. Archived model bytes therefore need not equal source bytes, but this does not license arbitrary dataset changes; source files remain outside the staged save. A private .pending ZIP becomes the downloadable token-named ZIP only after verification, staged-resource disposal and cleanup succeed. Only a canonical UUID maps to the completed archive under the private root; the HTTP endpoint accepts no arbitrary path, serves application/zip with no-store and rejects missing/unsafe files. A download click requests browser transfer and does not prove a local file was saved. Explicit cleanup uses the captured token/backend, removes only that artifact and supports retry after an unconfirmed cleanup; downloading or navigation does not auto-delete it. Cancellation waits for actual terminal state and may race a completed ZIP. Unknown transport and returned-but-unverified receipts retain source protection, raw response and original-ID reconciliation without duplicate preparation. This adapts only DevHomePage.UploadCurrentSubmit_Click archive preparation plus UploadResults; it does not implement S3 upload, generated upload URLs, remote model lookup/download/open, or the whole DevHomePage. Browser ZIP transfer and workflow/transport helpers are new Web glue, not the original DownloadModel action or additional original UI inventory items."
+      },
+      {
+        "id": "web-background-map-rendering",
+        "mount": "MapFeaturePage → RasBackgroundMaps → OSMStylePicker; useBackgroundMapRendering → RasProjectMap → BackgroundMapScene",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/RasProjectMap.tsx",
+          "frontend/src/features/map/RasBackgroundMaps.tsx",
+          "frontend/src/features/map/OSMStylePicker.tsx",
+          "frontend/src/features/map/BackgroundMapsVM.ts",
+          "frontend/src/features/map/background/types.ts",
+          "frontend/src/features/map/background/protocol.ts",
+          "frontend/src/features/map/background/useBackgroundMapRendering.ts",
+          "frontend/src/features/map/background/sceneGeometry.ts",
+          "frontend/src/features/map/background/BackgroundMapScene.tsx",
+          "backend/Host/BackgroundMapContracts.cs",
+          "backend/Host/BackgroundMapService.cs",
+          "backend/Server/OperationManager.cs"
+        ],
+        "stateOwner": "Each saved map owns local background settings. The reader captures project session/path/XML/revision, saved map identity/revision, backend instance/capability epoch, settings and camera. It reads the XML Projection and requires CSharp projection.evaluate to confirm a projected CRS; a translated CRS badge or untransformed local layer never authorizes an overlay. Source changes synchronously hide old frames; camera changes cancel and debounce requests while an existing correctly georeferenced frame can remain visible.",
+        "readActions": [
+          "projection.evaluate",
+          "map.background.render",
+          "map.background.styles",
+          "map.background.cache"
+        ],
+        "writeBoundary": "Background settings apply only to the current view and do not save .ras/.vis. Actual CSharp RGBA frames and OSM vector paths/labels render below project content. The result parser checks request/map/session/viewport, source status, geometry and pixel bounds; disabled/failed sources never manufacture imagery. Styles and previews come from the service. Cache inspection and explicit clear act on the CSharp server cache; a successful matching clear receipt refreshes the current view. The server uses its existing finite 64 × 1024 × 1024 character terminal-result budget for background renders while progress and ordinary results retain their limits. Browser SVG preserves reported project geometry, clipping, colors, line gaps, text placement and halo settings; exact native font rasterization and collision layout are not claimed."
       }
     ],
     "stateInvariants": [
@@ -3650,7 +3678,7 @@
     },
     {
       "id": "packaged-macho-dependencies",
-      "source": "backend/MacRuntime.targets/configure_tool_libraries.py",
+      "source": "backend/Tools/configure_tool_libraries.py",
       "target": "Backend and CLI native output roots",
       "cardinality": "one-unique-contained-ABI-compatible-packaged-target-per-absolute-nonsystem-load-dependency",
       "semantics": "Distinguish actual LC_LOAD dependencies from the image own LC_ID_DYLIB. Resolve non-system absolute references only to unique contained candidates with equal compatibility/current versions and supported family/version aliases, then rewrite to relative loader paths and re-sign/strict-verify changed images. Missing, ambiguous or escaping targets fail the build. GDAL tool rpaths and existing ABI aliases remain active; no installed machine library is copied as a fallback."
