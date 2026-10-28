@@ -233,6 +233,24 @@ public static partial class ModelEditorAdapter
         private sealed record ChannelFeatureDraft(string? Name, DraftLine? Line, DraftProfile Profile);
         private sealed record ChannelDraftData(string TinMaxSegmentLength, string ModificationType, ChannelFeatureDraft[] Features,
             TerrainChannelGeometryPayload[]? ImportedGeometryPayloads = null);
+        public static bool ReferencesChannelGeometryPayload(ModelSaveRequest model,
+            ChannelV6GeometryImportCleanup cleanup)
+        {
+            if (model.SourceState is null) return false;
+            DraftState draft = JsonSerializer.Deserialize<DraftState>(model.SourceState, BackendJson.Options)
+                ?? throw new ArgumentException("Missing terrain draft state.");
+            if (draft.Kind != "Terrain" || draft.Asset != Path.GetFullPath(model.AssetPath) || draft.Revision != model.Revision)
+                throw new ArgumentException("The terrain draft belongs to another model revision.");
+            if (draft.ImportDraftToken is null || !StringComparer.Ordinal.Equals(
+                TerrainInputImportService.NormalizeToken(draft.ImportDraftToken, "terrain import draft"),
+                TerrainInputImportService.NormalizeToken(cleanup.DraftToken, "terrain import draft"))) return false;
+            // Payloads remain owned even while the import mutation is on the
+            // redo stack. Loading the parent draft verifies every retained HDF.
+            return draft.ChannelDrafts?.Values.Any(channel => channel.ImportedGeometryPayloads?
+                    .Any(payload => StringComparer.Ordinal.Equals(payload.Id, cleanup.PayloadId)) == true) == true
+                || draft.TopologyDrafts?.Values.Any(history => history.Mutations.Concat(history.RedoMutations)
+                    .Any(mutation => StringComparer.Ordinal.Equals(mutation.ImportPayloadID, cleanup.PayloadId))) == true;
+        }
         private sealed record LeveeFeatureDraft(string? Name, string? PropertyName, DraftLine? Line, DraftProfile Profile);
         private sealed record LeveePropertyDraft(string? Name, string Mode, string TopWidth, string LeftWidth,
             string RightWidth, string LeftGrade, string RightGrade, string ModificationType);
@@ -995,7 +1013,7 @@ public static partial class ModelEditorAdapter
             return TopologyData(inputID, session.Features(), []);
         }
         public TerrainTopologyData ImportChannelV6Geometry(string inputID, string migratedPath,
-            string sourceSHA256, string expectedDraftIdentity, out string stagedPayloadPath)
+            string sourceSHA256, string expectedDraftIdentity, out ChannelV6GeometryImportCleanup cleanup)
         {
             if (selected != inputID || !inputs.TryGetValue(inputID, out ITerrainInput? input)
                 || input is not ChannelModTerrainInput channel || channel.Features.Count != 0)
@@ -1005,13 +1023,13 @@ public static partial class ModelEditorAdapter
                 throw new SourceFileChangedException();
             string? existingToken = importDraftToken;
             string draftToken = existingToken ?? Guid.NewGuid().ToString("N");
-            string? stagedPath = null;
-            stagedPayloadPath = string.Empty;
+            TerrainChannelGeometryPayload? stagedPayload = null;
+            cleanup = null!;
             try
             {
                 TerrainChannelGeometryPayload payload = TerrainChannelGeometryPayloadCodec.Stage(asset, draftToken, migratedPath, sourceSHA256);
-                stagedPath = TerrainChannelGeometryPayloadCodec.PathFor(asset, draftToken, payload.FileName);
-                stagedPayloadPath = stagedPath;
+                stagedPayload = payload;
+                cleanup = new(draftToken, payload.Id, payload.MigratedSHA256);
                 TerrainChannelGeometryPayloadCodec.WithClassicGeometry(asset, draftToken, payload, geometry =>
                 {
                     if (geometry.CrossSectionLayer.Count == 0)
@@ -1034,14 +1052,10 @@ public static partial class ModelEditorAdapter
             }
             catch
             {
-                if (stagedPath is not null && File.Exists(stagedPath)) File.Delete(stagedPath);
-                stagedPayloadPath = string.Empty;
-                if (existingToken == null)
-                {
-                    importDraftToken = null;
-                    string directory = TerrainInputImportService.DraftDirectory(asset, draftToken);
-                    if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
-                }
+                if (stagedPayload is not null)
+                    _ = TerrainChannelGeometryPayloadCodec.Discard(asset,
+                        new(draftToken, stagedPayload.Id, stagedPayload.MigratedSHA256));
+                if (existingToken == null) importDraftToken = null;
                 throw;
             }
         }
@@ -1128,6 +1142,10 @@ public static partial class ModelEditorAdapter
                             throw new ArgumentException("The Channel import undo no longer matches its source profiles.");
                         undone = undone with { ImportedChannelProfiles = CaptureImportedChannelProfiles(channel.Features) };
                         channel.Clear();
+                        // Undo removes the imported feature rows as well as the
+                        // graph. A profile selected before Undo no longer owns
+                        // a row in the returned parent snapshot.
+                        ApplySelections(new(StringComparer.Ordinal));
                     }
                     TerrainTopologyDraft next = draft with { Mutations = draft.Mutations[..^1], RedoMutations = [.. draft.RedoMutations, undone] };
                     if (next.Mutations.Length == 0 && next.RedoMutations.Length == 0) topologyDrafts.Remove(request.InputId);

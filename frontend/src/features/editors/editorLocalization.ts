@@ -5,6 +5,7 @@
 import type { Language } from '../../shared/workbench';
 
 const labels: Record<string, string> = {
+  "Elevation": "高程",
   "(varies)": "（多个不同值）",
   "1 time level": "1 个时间层",
   "1/10": "1/10",

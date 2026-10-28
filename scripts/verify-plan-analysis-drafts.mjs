@@ -56,7 +56,8 @@ try {
   const codes = result => result.blockers.map(item => item.code);
 
   test('tool and project writes block navigation until confirmed, while ordinary settings remain discardable', () => {
-    for (const owner of ['tools.stable-channel-write:save', 'project.projection-export:export', 'tools.project-archive:prepare'])
+    for (const owner of ['tools.stable-channel-write:save', 'project.projection-export:export', 'tools.project-archive:prepare',
+      'editors.channel-v6-write:import'])
       assert.equal(hasProtectedSourceWrite(new Set([owner]), emptyPlanAnalysisDraftRegistry()), true, owner);
     for (const owner of ['tools.stable-channel-draft:form', 'tools.project-archive-settings:form'])
       assert.equal(hasProtectedSourceWrite(new Set([owner]), emptyPlanAnalysisDraftRegistry()), false, owner);

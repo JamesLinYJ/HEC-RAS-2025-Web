@@ -16,6 +16,7 @@ try {
       mapMutation: path.join(root, 'frontend/src/shared/mapVisualizationMutation.ts'),
       mapDocuments: path.join(root, 'frontend/src/features/map/mapDocumentActionsWorkflow.ts'),
       projectMutation: path.join(root, 'frontend/src/shared/projectContextMutation.ts'),
+      modelSaveMutation: path.join(root, 'frontend/src/shared/modelSaveMutation.ts'),
       externalConnection: path.join(root, 'frontend/src/features/project/ExternalConnectionWorkflow.ts'),
     }, formats: ['es'], fileName: (_format, name) => `${name}.mjs` },
     outDir: temporary, emptyOutDir: true, minify: false, sourcemap: false,
@@ -392,6 +393,58 @@ try {
   verify(staleSourceCalls.length === 0,
     'A stale source core capture produces no inspect or commit POST.');
 
+  const { captureModelSaveLease, trackModelSaveOperation, matchesModelSaveCommit } =
+    await import(pathToFileURL(path.join(temporary, 'modelSaveMutation.mjs')).href);
+  const modelDraftOwner = 'terrain-draft', modelWriteOwner = 'editors.channel-v6-write:terrain-save';
+  const modelLease = captureModelSaveLease(active, structuredClone(active), modelDraftOwner, modelWriteOwner, new Set([modelDraftOwner]));
+  verify(!!modelLease, 'A source-exact terrain save acquires its own draft lease.');
+  const catalogTerrain = { ...active, selectedAsset: { ...active.selectedAsset, revision: undefined } };
+  const loadedRevision = 'a'.repeat(64);
+  const loadedLease = captureModelSaveLease(catalogTerrain, structuredClone(catalogTerrain), modelDraftOwner,
+    modelWriteOwner, new Set([modelDraftOwner]), loadedRevision);
+  verify(loadedLease?.sourceRevision === loadedRevision,
+    'A catalog asset without a revision acquires a save lease using its actual model.load revision.');
+  verify(!captureModelSaveLease(catalogTerrain, catalogTerrain, modelDraftOwner, modelWriteOwner, new Set()),
+    'A catalog asset cannot save without a loaded model revision.');
+  verify(!captureModelSaveLease(catalogTerrain, catalogTerrain, modelDraftOwner, modelWriteOwner, new Set(), 'bad-sha'),
+    'Malformed loaded revisions cannot acquire a save lease.');
+  verify(!captureModelSaveLease(active, active, modelDraftOwner, modelWriteOwner, new Set(), '0'.repeat(64)),
+    'An existing catalog revision must agree with the loaded model revision.');
+  verify(!captureModelSaveLease(active, active, modelDraftOwner, modelWriteOwner, new Set([modelDraftOwner, 'other-editor'])),
+    'Another dirty editor prevents the terrain save lease from being acquired.');
+  verify(!captureModelSaveLease(active, active, modelDraftOwner, 'unprotected-owner', new Set()),
+    'A terrain lease cannot use an owner which navigation would not protect.');
+  const modelOperationID = 'd'.repeat(32);
+  const savedModel = { ...active, selectedAsset: { ...active.selectedAsset, revision: 'e'.repeat(64) } };
+  verify(matchesModelSaveCommit(trackModelSaveOperation(loadedLease, modelOperationID), catalogTerrain,
+    catalogTerrain, savedModel, modelOperationID),
+    'A catalog selection can adopt the original save receipt without fabricating a pre-save context revision.');
+  verify(!matchesModelSaveCommit(modelLease, active, active, savedModel, modelOperationID),
+    'A receipt cannot commit before the accepted HTTP operation ID is recorded.');
+  verify(!trackModelSaveOperation(modelLease, 'invalid-id'), 'A malformed task ID never unlocks a save.');
+  const trackedModelLease = trackModelSaveOperation(modelLease, modelOperationID);
+  verify(trackedModelLease?.operationID === modelOperationID, 'The initial HTTP task is retained for reconciliation.');
+  verify(trackModelSaveOperation(trackedModelLease, modelOperationID) === trackedModelLease,
+    'Repeated progress from the original HTTP task is idempotent.');
+  verify(!trackModelSaveOperation(trackedModelLease, 'f'.repeat(32)), 'A later task cannot replace the accepted save task.');
+  verify(matchesModelSaveCommit(trackedModelLease, active, active, savedModel, modelOperationID),
+    'The matching save may advance only the selected model revision. Core rebasing is checked separately.');
+  verify(!matchesModelSaveCommit(trackedModelLease, active, active, savedModel, 'f'.repeat(32)),
+    'Another task cannot acknowledge this save lease.');
+  for (const changes of [{ projectSessionID: 'other' }, { projectPath: '/other.ras' }, { projectRevision: 'f'.repeat(64) },
+    { projectXml: '<Changed/>' }, { selectedAsset: { ...savedModel.selectedAsset, path: '/other.h5' } },
+    { selectedAsset: { ...savedModel.selectedAsset, kind: 'Plan' } },
+    { selectedAsset: { ...savedModel.selectedAsset, name: 'Other model' } },
+    { selectedAsset: { ...savedModel.selectedAsset, revision: '' } }]) {
+    verify(!matchesModelSaveCommit(trackedModelLease, active, active, { ...savedModel, ...changes }, modelOperationID),
+      'A save receipt cannot change the project or substitute a selected model.');
+  }
+  for (const changes of [{ projectSessionID: 'new-session' }, { projectXml: '<Changed/>' },
+    { selectedAsset: { ...active.selectedAsset, locator: { changed: true } } },
+    { coreLayerContext: { ...active.coreLayerContext, references: [{ different: true }] } }]) {
+    verify(!matchesModelSaveCommit(trackedModelLease, { ...active, ...changes }, active, savedModel, modelOperationID),
+      'Current source, locator and complete external-reference content must still match the captured save.');
+  }
   console.log(JSON.stringify({ state: 'passed', checks: 52 + addedChecks + documentChecks,
     scope: 'session-reference-project-context-and-external-connection-ownership' }));
 } finally { await rm(temporary, { recursive: true, force: true }); }

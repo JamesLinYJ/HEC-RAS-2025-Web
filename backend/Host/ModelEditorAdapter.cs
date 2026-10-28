@@ -62,18 +62,25 @@ public static partial class ModelEditorAdapter
         ClassificationImportFile[]? classificationImport = null,
         BoundaryInitialConditionsStagingContext? initialConditions = null,
         CumulusGridImportOperation? cumulusImport = null,
-        DssGridImportCancellation? dssGridCancellation = null)
+        DssGridImportCancellation? dssGridCancellation = null,
+        TerrainSaveCommitTestHooks? terrainSaveTestHooks = null)
     {
         if (initialConditions is not null) request = initialConditions.UseCapturedProjectXml(request);
         VerifyKind(request);
         if (string.IsNullOrEmpty(request.ProjectPath)) throw new ArgumentException("Saving requires the owning project.");
+        string projectPath = request.ProjectPath;
         if (Revision(request.AssetPath) != request.Revision) throw new SourceFileChangedException();
-        string original = Path.GetFullPath(request.AssetPath);
+        // Replacing a symbolic-link entry would silently move a Terrain to a
+        // different canonical source after its receipt was verified.
+        string original = request.Kind == "Terrain"
+            ? SourceFilePaths.Canonical(request.AssetPath) : Path.GetFullPath(request.AssetPath);
         string staging = Path.Combine(Path.GetDirectoryName(original)!, ".model-edit-" + Guid.NewGuid().ToString("N") + ".pending");
+        string? terrainProjectRevision = request.Kind == "Terrain" ? Revision(projectPath) : null;
         string? boundaryState = null;
         TerrainEditor? terrainForSave = null;
         int? classificationSelection = null, terrainSelection = null;
         ModelSnapshot? dssCommittedSnapshot = null;
+        ModelSnapshot? terrainCommittedSnapshot = null;
         List<string> createdRasters = []; bool published = false;
         try
         {
@@ -162,6 +169,12 @@ public static partial class ModelEditorAdapter
                 dssCommittedSnapshot = PrepareDssCommittedSnapshot(dssCommittedSnapshot, staging, boundaryState);
                 boundaryState = dssCommittedSnapshot.SourceState;
             }
+            if (terrainForSave is not null)
+            {
+                terrainSaveTestHooks?.StagingClosed?.Invoke(staging);
+                terrainCommittedSnapshot = await PrepareTerrainCommittedSnapshotAsync(request, staging, terrainSelection);
+                terrainSaveTestHooks?.ReceiptPrepared?.Invoke(staging, terrainCommittedSnapshot);
+            }
             if (gridImport?.DssSource is { } committedDssGrid)
             {
                 dssGridCancellation?.ThrowIfCancellationRequested();
@@ -172,6 +185,19 @@ public static partial class ModelEditorAdapter
                 throw new OperationCanceledException("Cumulus grid import was cancelled.");
             void Publish()
             {
+                if (terrainCommittedSnapshot is not null)
+                {
+                    // The receipt describes these closed HDF bytes and this
+                    // exact owning project/session, not an in-memory draft.
+                    if (Revision(projectPath) != terrainProjectRevision ||
+                        !SourceFilePaths.SameSourceFile(request.AssetPath, original))
+                        throw new SourceFileChangedException();
+                    if (request.CoreLayerContext is { } terrainCoreContext)
+                        CoreLayerImportService.ValidateContext(terrainCoreContext, projectPath);
+                    terrainForSave!.VerifyDependencies();
+                    if (Revision(staging) != terrainCommittedSnapshot.Revision)
+                        throw new SourceFileChangedException();
+                }
                 // Dependency verification can read an entire DSS file. Check
                 // the target after those reads, inside the import commit gate,
                 // to reject model changes made during dependency validation.
@@ -190,7 +216,14 @@ public static partial class ModelEditorAdapter
             try
             {
                 string? terrainCleanupToken = terrainForSave?.ImportDraftToken;
-                string? terrainCleanupWarning = terrainForSave?.CleanupCommittedPending();
+                if (terrainCommittedSnapshot is not null)
+                {
+                    // No post-publication rebase/load/selection is allowed to
+                    // turn this committed save into a retryable failure.
+                    terrainSaveTestHooks?.Published?.Invoke();
+                    string? warning = terrainForSave!.CleanupCommittedPending();
+                    return WithTerrainSaveCleanupWarning(terrainCommittedSnapshot, terrainCleanupToken, warning);
+                }
                 if (boundaryState != null)
                 {
                     var state = JsonSerializer.Deserialize<BoundaryEditorState>(boundaryState, BackendJson.Options)!;
@@ -217,22 +250,14 @@ public static partial class ModelEditorAdapter
                     result.Fields[ClassificationEditor.SourceField] = id;
                     result = result with { Classification = data with { SelectedId = id } };
                 }
-                if (terrainSelection is { } terrainIndex && result.Terrain is { } terrainData && terrainIndex >= 0 && terrainIndex < terrainData.Inputs.Length)
-                {
-                    string id = terrainData.Inputs[terrainIndex].Id;
-                    // Selection controls the source table projection. Rebuild it
-                    // against the saved revision instead of relabeling an empty
-                    // unselected snapshot with a selected input ID.
-                    var selectedModel = new ModelSaveRequest(request.AssetPath, request.Kind,
-                        request.ProjectPath, result.Revision, [], [], SourceState: result.SourceState,
-                        ProjectXml: initialConditions?.CommittedProjectXml ?? request.ProjectXml,
-                        CoreLayerContext: committedCoreLayerContext);
-                    result = await TransformTerrainAsync(new(selectedModel, "selectInput", ItemId: id));
-                }
-                if (terrainCleanupWarning is not null && result.Terrain is { } cleanupData)
-                    result = result with { Terrain = cleanupData with {
-                        ImportCleanupWarning = terrainCleanupWarning, ImportCleanupToken = terrainCleanupToken } };
                 return result with { CoreLayerContext = committedCoreLayerContext };
+            }
+            catch (Exception error) when (terrainCommittedSnapshot is not null)
+            {
+                // Publication already succeeded. Preserve its independently
+                // read receipt; keep the import token for explicit cleanup.
+                return WithTerrainSaveCleanupWarning(terrainCommittedSnapshot, terrainForSave?.ImportDraftToken,
+                    "地形已保存，临时导入数据清理未完成：" + error.Message);
             }
             catch (Exception error) when (gridImport?.DssSource is not null
                 && dssCommittedSnapshot is not null && dssGridCancellation is not null)
@@ -600,6 +625,7 @@ public static partial class ModelEditorAdapter
         public Project Project => project;
         public CoreLayerBase Layer { get; }
         public ObservableCoreLayer Observable { get; }
+        public string SourceFilename { get; }
         public ModelContext(ModelRequest request, string? staging = null)
         {
             if (request.ProjectPath is not null)
@@ -615,6 +641,7 @@ public static partial class ModelEditorAdapter
             {
                 string source = Path.GetFullPath(request.AssetPath);
                 var original = CoreLayers().FirstOrDefault(layer => SourceFilePaths.SameSourceFile(layer.Filename, source));
+                SourceFilename = original?.Filename ?? source;
                 if (request.CoreLayerContext is not null && request.ProjectPath is not null &&
                     staging is null && original is null && request.Kind is ("Geometry" or "Boundary Conditions"))
                     throw new ArgumentException("The Geometry or Boundary Condition is not part of this project session. Add an explicit session-only reference first.");
@@ -673,6 +700,7 @@ public static partial class ModelEditorAdapter
             observableProject = owner.observableProject;
             ownsProject = false;
             Layer = layer;
+            SourceFilename = layer.Filename;
             Observable = ObservableLayers().Single(item => ReferenceEquals(item.Layer, layer));
         }
         public ModelContext ForAssociatedLayer(string kind, string canonicalAssetPath)

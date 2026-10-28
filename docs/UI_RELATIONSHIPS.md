@@ -464,13 +464,23 @@ GIS Mode 复用项目替换确认、会话安装和清理，创建 URL 为空的
 
 推荐范围与绝对范围分别处理。推荐范围外的值显示原始警告，在绝对范围内仍可应用；错误和类型错误继续由 Host 拒绝。应用后保留拓扑撤销与父事务边界，不能因视图重建而暂时放行保存。
 
-## 河槽旧几何导入
+## 河槽 Version 6 几何导入
 
-河槽几何导入界面当前开放 Version 6 HDF 入口；2025 Classic Geometry 入口保持禁用。两种文件格式不能互换，导入必须使用对应的读取与迁移路径。
+当前 Web 入口为 `EditorWorkbench → TerrainLayersEditor → ChannelModTerrainInputProperties → ChannelModParentEditor → ChannelV6ImportControl`。它仅向已加载且没有真实 Channel feature 行的选中河槽提供 Version 6 `.hdf` 导入；导入后显示原全局设置，撤销回到空输入后可重新检查来源。原 `ChannelModParentEditor.Connect` 只连接 `Import6_Click`；全托管源码中的 `Import2025_Click` 只有定义及其私有调用，没有找到事件注册。因此本入口只承接已证明可达的 V6 行为，不能把 Classic 处理函数的存在当作完整原 UI 路由的证据。
 
-文件选择捕获原始 HDF 的规范路径和 SHA，复制并校验私有输入副本后，复用已有 ModelConverter 将副本迁移为 Classic 几何，向精确选中的空河槽输入导入剖面与拓扑。原转换器可能补写辅助线，因此不能直接传入用户原文件；转换前后继续复核原文件 SHA。移植不依赖 Windows 迁移可执行文件。迁移文件使用父地形现有导入 token 的私有目录；草稿只携带经校验的文件名、来源 SHA 与迁移 SHA，不持久化临时绝对路径。
+文件路径指 C# 服务所在计算机可读取的绝对路径。`workspace.file.inspect` 返回规范路径、非空长度和 SHA-256；检查与导入捕获原路径文本、工程会话/XML/修订、后端实例及能力代次、父模型草稿、精确输入和输入列表。父编辑器先读取选中空河槽的拓扑，再计算导入专用身份：输入 ID、地形修订和完整 `sourceState` 的 SHA。这个身份与拓扑撤销日志的 `draftIdentity` 分别校验，不能互换。检查后父草稿或来源变化必须重新检查，不能沿旧回执开始导入。
 
-导入是父地形草稿操作。撤销和重做同时恢复剖面及拓扑，跨服务请求可重放；父保存才写入地形 HDF 并清理暂存目录。取消、来源变化或过时回包不能安装快照，未接纳的 token 沿父地形清理机制释放。原所有者已退役时，即使迟到响应复用其旧 token，也再次清理，防止后台导入重建已清理的目录；仍活动的父所有者保留自己的既有 token。
+`model.channelV6GeometryImport` 复制并校验用户 HDF 的私有输入副本，复用 `ModelConverter.MigrateGeometry` 的 Classic 与 `Generate1DLines.IfNeeded` 分支。原转换器可能补写辅助线，因此用户文件保持在转换副本之外；转换前后及返回前复核原文件 SHA。无横断面的转换结果拒绝进入草稿。暂存迁移文件位于父地形 import token 目录；序列化状态只保存 payload ID、文件名和来源/迁移 SHA，不保存临时绝对路径。
+
+完成回执中的 Snapshot、剖面、Topology 和 import token 只由捕获的父 `EditorWorkbench` 一并接纳；已有未保存字段和表格仍保留在同一 `ModelDraft`。导入状态由父级 controller 持有，界面隐藏或子控件卸载不会重发任务。`ChannelModTopologyEditor` 沿用父 `model.terrainTopology` 的撤销和重做，跨请求重建拓扑与剖面；撤销后 payload 仍归父草稿所有，以便重做。只有父 `model.save` 写入地形 HDF，并以真实保存回执推进来源修订。
+
+Terrain 父保存先写入规范来源文件同目录的暂存副本，关闭写入句柄后，由新的 `ModelContext` 重开该 HDF 并准备完整保存回执。选中输入按已保存顺序重新定位，以原资产路径和暂存文件 SHA 生成保存后的输入身份与表格；干净 `sourceState` 不再依赖导入 payload、待追加输入或旧撤销日志。名称遵循原 Terrain loader 的文件名规则，`TerrainCatalogSummary/Context_Filename` 保留所属工程或会话 loader 的原来源路径，随机暂存路径不能成为回执中的资产身份。已有 session-only Terrain 引用的修订、名称、reference ID 和 Core identity token 也在发布前准备，其他引用保持原捕获。
+
+发布前再次核对工程修订、已有 Core 会话捕获、原文件 SHA、输入依赖、暂存 SHA，以及请求路径仍指向同一规范来源。准备或核验失败不会发布本次 HDF，也不会消费父导入 token。保存替换规范目标文件，保留用户路径上的符号链接；别名改指其它文件会拒绝发布。发布后直接返回已从关闭的暂存 HDF 核验过的回执，不再通过发布后的 `LoadAsync` 或 `RebaseContext` 决定保存是否成功。清理异常随已保存回执返回中文警告和原 import token，保留可明确清理的来源；不能把已落盘的保存报告为可重新提交的普通失败。
+
+带已接纳渠道 payload 的父保存由 `channelV6ParentSave → RasMainWindow/ModelSaveLease` 保留完整请求、原网关、原 HTTP 操作 ID 和精确父草稿。它使用独立于普通草稿及导入任务的写入 owner；普通 owner 注销、页面清理和来源退役不能提前释放未知保存，也不能由前端提前退役或清理已接纳的 payload。重连服务不会替换未改变的已加载草稿，续查始终使用原捕获的网关和任务。已通过基本快照校验的返回值先缓存，再尝试根级回执接纳；根回调拒绝或抛错时保留该快照和租约，不重复 POST。根级接纳核对同一来源、资产、租约与操作 ID，只消费一次；父级随后安装已保存状态并退役旧 payload。缺失编号、任务冲突、未知传输和未接纳回执均持续保护草稿，不能当作取消。若 Host 已成功保存后才丢失 HTTP 回执，服务端可能已完成暂存清理；这与前端主动丢弃原任务不同，必须继续核对原保存结果。
+
+取消请求与确认取消分别处理。HTTP 状态失联只续查原操作 ID，未确认导入或清理持续保护父草稿。未接纳的完成回执通过 `model.channelV6GeometryImportDiscard` 清理，必须携带这次响应的 draft token、payload ID 与迁移 SHA；Host 只删除匹配文件，仅在目录为空时移除目录。同 token 下其他已接纳 payload、导入批次及撤销历史不能被递归删除。已接纳 payload 的所有权随父保存、显式放弃或来源退役结束；清理失败/失联保留原来源与回执，清理重试不会再次执行导入。以上描述源码中的所有权与保存边界，实际 HDF 往返、浏览器操作及 Electron 运行需要分别验证。
 
 Geometry 的已确认保存回执通过 `onContextCommit(source, committed)` 接纳，避免自身未保存状态把新修订当作离开来源而阻止更新。新的来源 owner 重新读取干净快照，旧撤销和重做历史随之退役。
 

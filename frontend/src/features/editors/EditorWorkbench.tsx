@@ -29,6 +29,12 @@ import { hasUncapturedSessionReferences, modelSaveRequest } from '../tools/coreI
 import { ExternalConnectionCommittedContextError, inspectAndCommitExternalConnection, isSameServerPath,
   type ExternalConnectionCommitResult, type ExternalConnectionValues } from '../project/ExternalConnectionWorkflow';
 import { rebaseBoundaryExternalConnection } from './payloadExternalConnectionWorkflow';
+import { ChannelV6ImportController } from './channelV6ImportController';
+import type { ChannelV6ImportBindings, ChannelV6ImportCapture, ChannelV6ImportCleanup, ChannelV6ImportCompleted, ChannelV6ImportModel } from './channelV6ImportTypes';
+import { channelV6ImportMethods, channelV6OperationID, channelV6TerminalConfirmed, parseChannelV6ImportDiscarded } from './channelV6ImportProtocol';
+import { acknowledgeChannelV6ParentSave, captureChannelV6ParentSave, channelV6ParentSaveFailureConfirmed,
+  channelV6ParentSaveCurrent, resumeChannelV6ParentSave, trackChannelV6ParentSave,
+  type ChannelV6ParentSave, type ChannelV6ParentSource } from './channelV6ParentSave';
 
 type DisplayMode = 'model' | 'catalog';
 interface SourceContext { context: WorkbenchContext; owner: string }
@@ -74,7 +80,13 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const [snapshot, setSnapshot] = useState<ModelSnapshot | null>(null);
   const snapshotRef = useRef<ModelSnapshot | null>(snapshot);
   snapshotRef.current = snapshot;
-  const [draft, setDraft] = useState<ModelDraft | null>(null);
+  const draftGeneration = useRef(0);
+  const [draft, updateDraftState] = useState<ModelDraft | null>(null);
+  // Invalidate captures when an update is queued, before React commits another render.
+  const setDraft = useCallback((next: ModelDraft | null | ((current: ModelDraft | null) => ModelDraft | null)): void => {
+    draftGeneration.current++;
+    updateDraftState(next);
+  }, []);
   const draftRef = useRef<ModelDraft | null>(draft);
   draftRef.current = draft;
   const [loadState, setLoadState] = useState<LoadState>({ status: 'idle' });
@@ -90,6 +102,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const [payloadConnectionState, setPayloadConnectionState] = useState<'idle' | 'refresh' | 'uncertain'>('idle');
   const [payloadForms, setPayloadForms] = useState<ReadonlySet<string>>(() => new Set());
   const [payloadDialogHost, setPayloadDialogHost] = useState<HTMLDivElement | null>(null);
+  const [channelTaskHost, setChannelTaskHost] = useState<HTMLDivElement | null>(null);
   const onPayloadFormDirtyChange = useCallback((lineID: string, formDirty: boolean): void => {
     setPayloadForms(current => {
       if (current.has(lineID) === formDirty) return current;
@@ -112,6 +125,53 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const acceptedReceipt = useRef<{ owner: string; snapshot: ModelSnapshot } | null>(null);
   const loadedOwner = useRef<string | null>(null);
   const [analysisEditorID] = useState(() => crypto.randomUUID());
+  const channelBindings = useRef<ChannelV6ImportBindings | null>(null);
+  const [channelV6Controller] = useState(() => new ChannelV6ImportController({
+    capture: (inputId, signal) => channelBindings.current?.capture(inputId, signal) ?? Promise.resolve(null),
+    isCurrent: capture => channelBindings.current?.isCurrent(capture) ?? false,
+    acquire: capture => channelBindings.current?.acquire(capture) ?? false,
+    accept: (capture, receipt) => channelBindings.current?.accept(capture, receipt) ?? false,
+    release: capture => channelBindings.current?.release(capture),
+  }));
+  const [channelParent] = useState(() => new ChannelV6ParentDraftRegistry());
+  const [channelSaveRecovery, setChannelSaveRecovery] = useState<ChannelV6ParentSave | null>(null);
+  const channelSaveRecoveryRef = useRef<ChannelV6ParentSave | null>(null);
+  const updateChannelSaveRecovery = (next: ChannelV6ParentSave | null): void => {
+    channelSaveRecoveryRef.current = next; setChannelSaveRecovery(next);
+  };
+  const channelLease = useRef<{ capture: ChannelV6ImportCapture; request: NonNullable<typeof activeSave.current> } | null>(null);
+  const channelMounted = useRef(true);
+  const [, setChannelCleanupVersion] = useState(0);
+  const channelDirtyCallback = useRef(onDirtyStateChange);
+  channelDirtyCallback.current = onDirtyStateChange;
+  const channelWriteOwner = `editors.channel-v6-write:${analysisEditorID}`;
+  const cleanupChannelPayload = async (payload: ChannelV6OwnedPayload): Promise<void> => {
+    const owner = `${channelWriteOwner}:cleanup:${payload.cleanup.payloadId}`;
+    channelDirtyCallback.current?.(owner, true);
+    if (channelMounted.current) setChannelCleanupVersion(version => version + 1);
+    await channelParent.cleanup(payload);
+    if (!channelParent.hasPayload(payload)) channelDirtyCallback.current?.(owner, false);
+    if (channelMounted.current) setChannelCleanupVersion(version => version + 1);
+  };
+  const retireChannelPayloads = (owner: string): void => {
+    if (channelSaveRecoveryRef.current?.current.owner === owner) return;
+    for (const payload of channelParent.retire(owner)) void cleanupChannelPayload(payload);
+  };
+  useEffect(() => {
+    channelMounted.current = true;
+    return () => {
+      channelMounted.current = false;
+      channelV6Controller.dispose();
+      // A save with an unknown terminal state may still be replaying these payloads.
+      if (!channelSaveRecoveryRef.current) for (const payload of channelParent.retire()) void cleanupChannelPayload(payload);
+    };
+  }, [channelParent, channelV6Controller]);
+  useEffect(() => {
+    const current = channelV6Controller.getSnapshot();
+    if (current.inspection && !channelBindings.current?.isCurrent(current.inspection.capture)) channelV6Controller.invalidateInspection();
+    const capture = channelLease.current?.capture;
+    if (capture && channelV6Controller.pending && !channelBindings.current?.isCurrent(capture)) channelV6Controller.invalidateScope();
+  }, [source.owner, backend, backendRevision, draft, snapshot, props.context]);
   const analysisLoadedSource = useRef<{ owner: string; source: PlanAnalysisDraftSource } | null>(null);
   const [analysisUncertainOwners, setAnalysisUncertainOwners] = useState<ReadonlySet<string>>(() => new Set());
   const analysisDraftIdentity = useRef({ snapshot, draft, owner: source.owner, revision: 0 });
@@ -221,11 +281,11 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   }, [source.owner]);
 
   useEffect(() => {
-    const current = ++generation.current;
     const controller = new AbortController();
     const activeAsset = source.context.selectedAsset;
     // Reconnecting transport must not replace an already loaded editor draft.
     if (loadedOwner.current === source.owner) return () => controller.abort();
+    const current = ++generation.current;
     loadedOwner.current = null;
     const receipt = acceptedReceipt.current;
     if (receipt?.owner === source.owner) {
@@ -271,10 +331,21 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       if (generation.current !== current || controller.signal.aborted) return;
       setLoadState({ status: 'error', error: message(error) });
     });
-    return () => { controller.abort(); if (generation.current === current) generation.current += 1; };
+    return () => {
+      controller.abort();
+      if (generation.current === current && loadedOwner.current !== source.owner) generation.current += 1;
+    };
   }, [backend, backendRevision, source.owner]);
 
   function acceptSource(next: SourceContext): void {
+    if (channelSaveRecoveryRef.current) {
+      setSaveMessage(text(language, '地形保存尚未确认，请先核对原任务；父草稿与渠道暂存文件继续保留。', 'Confirm the original terrain save first. The parent draft and Channel payloads remain retained.'));
+      return;
+    }
+    if (next.owner !== source.owner) {
+      channelV6Controller.invalidateScope();
+      retireChannelPayloads(source.owner);
+    }
     activeOwner.current = next.owner;
     const unresolvedInitialConditions = initialConditionsOperationRef.current;
     if (unresolvedInitialConditions?.state === 'attaching' && unresolvedInitialConditions.owner !== next.owner) {
@@ -328,6 +399,20 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     ...validateChangedTableCells(draft, validationSnapshot ?? snapshot, catalog.tables, language),
     ...validateChangedSamples(validationSnapshot ?? snapshot, draft, language),
   ] : [];
+  const channelEnvironment = useRef({ source, desiredOwner: desiredSource.owner, backend, backendRevision, valid: false });
+  channelEnvironment.current = { source, desiredOwner: desiredSource.owner, backend, backendRevision,
+    valid: validations.length === 0 && loadState.status === 'ready' };
+  const currentChannelSource = (): ChannelV6ParentSource | null => {
+    const environment = channelEnvironment.current;
+    const baseline = snapshotRef.current, currentDraft = draftRef.current;
+    if (!channelMounted.current || !environment.valid || !baseline?.canEdit || !currentDraft
+      || environment.source.context.selectedAsset?.kind !== 'Terrain'
+      || !environment.source.context.projectPath || !environment.source.context.projectSessionID
+      || activeOwner.current !== environment.source.owner || environment.desiredOwner !== environment.source.owner) return null;
+    return { owner: environment.source.owner, context: environment.source.context, backend: environment.backend,
+      backendRevision: environment.backendRevision ?? 0, generation: generation.current,
+      draftGeneration: draftGeneration.current, snapshot: baseline, draft: currentDraft };
+  };
 
   // Publications always belong to the retained editor source, never the root's latest selection.
   const analysisPublication: PlanAnalysisDraftPublication | null = (() => {
@@ -373,14 +458,15 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     const revision = props.planAnalysisDrafts?.discardRevision ?? 0;
     if (analysisDiscardRevision.current === revision) return;
     analysisDiscardRevision.current = revision;
-    if (asset?.kind !== 'Plan' || analysisUncertainOwners.has(source.owner) || activeSave.current) return;
+    if ((asset?.kind !== 'Plan' && !channelParent.hasOwned(source.owner)) || analysisUncertainOwners.has(source.owner) || activeSave.current) return;
     analysisDiscardTransition.current = { revision, sourceOwner: source.owner, targetOwner: desiredSource.owner };
+    retireChannelPayloads(source.owner);
     if (desiredSource.owner !== source.owner) acceptSource(desiredSource);
     else if (snapshot) setDraft(createModelDraft(snapshot));
   }, [props.planAnalysisDrafts?.discardRevision, desiredSource, source.owner]);
 
   const onFieldChange = (fieldID: string, value: string): void => {
-    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked) return;
+    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked || channelSaveRecoveryRef.current) return;
     setDraft((current) => {
       if (!current) return current;
       const next = { ...current, fields: { ...current.fields, [fieldID]: value } };
@@ -395,12 +481,12 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     setSaveMessage('');
   };
   const onImagesChange = (fieldID: string, images: ModelDraft['images'][string]): void => {
-    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked || activeOwner.current !== source.owner) return;
+    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked || channelSaveRecoveryRef.current || activeOwner.current !== source.owner) return;
     setDraft((current) => current ? { ...current, images: { ...current.images, [fieldID]: images } } : current);
     setSaveMessage('');
   };
   const onRowCellChange = (tableID: string, rowID: string, columnID: string, value: string): void => {
-    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked) return;
+    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked || channelSaveRecoveryRef.current) return;
     setDraft((current) => {
       if (!current) return current;
       const rows = current.rows[tableID] ?? [];
@@ -411,7 +497,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     setSaveMessage('');
   };
   const onSampleChange: PageProps['onSampleChange'] = (seriesID, sampleID, column, value) => {
-    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked) return;
+    if (!snapshot?.canEdit || activeSave.current || planSaveBlocked || channelSaveRecoveryRef.current) return;
     setDraft((current) => {
       if (!current) return current;
       const boundary = current.boundaryView ?? snapshot.boundary;
@@ -1700,7 +1786,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
 
   const onTerrainTransform: PageProps['onTerrainTransform'] = async (command: TerrainTransformCommand) => {
     setSaveErrorDetails('');
-    if (activeSave.current || busy) return false;
+    if (activeSave.current || busy || channelSaveRecoveryRef.current || channelParent.retired().length) return false;
     const terrain = draft?.terrainView ?? snapshot?.terrain;
     if (!snapshot || !draft || !asset || !source.context.projectPath || !snapshot.canEdit || !terrain) return false;
     if (!backend.supports('model.terrainTransform') || !backend.supports('model.save')) {
@@ -1889,7 +1975,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     const baseline = snapshotRef.current;
     const currentDraft = draftRef.current;
     const terrain = currentDraft?.terrainView ?? baseline?.terrain;
-    if (activeSave.current || busy || !baseline || !currentDraft || !asset || !terrain
+    if (activeSave.current || busy || channelSaveRecoveryRef.current || channelParent.retired().length || !baseline || !currentDraft || !asset || !terrain
       || !baseline.canEdit || !source.context.projectPath
       || !backend.supports('model.terrainTopology') || !backend.supports('model.save')) return null;
     const selectedInput = terrain.inputs.find((input) => input.id === command.inputId);
@@ -2004,6 +2090,65 @@ export default function EditorWorkbench(props: FeaturePageProps) {
         setBusy(false);
       }
     }
+  };
+
+  channelBindings.current = {
+    capture: async (inputId, signal) => {
+      const initial = currentChannelSource();
+      if (!initial || activeSave.current || channelSaveRecoveryRef.current || signal.aborted || channelParent.retired().length
+        || !initial.backend.supports('model.terrainTopology') || !initial.backend.supports('model.save')) return null;
+      const model = channelV6ParentModel(initial);
+      const before = channelParent.capture(initial, inputId, model, '');
+      const request = { owner: initial.owner, controller: new AbortController() };
+      const abort = (): void => request.controller.abort();
+      signal.addEventListener('abort', abort, { once: true });
+      activeSave.current = request; setBusy(true);
+      try {
+        const result = await initial.backend.request<TerrainTopologyResponse>('model.terrainTopology',
+          { model, inputId, operation: 'load' }, { signal: request.controller.signal });
+        if (signal.aborted || activeSave.current !== request || !channelParent.isCurrent(before, currentChannelSource())) return null;
+        assertChannelV6ParentTopology(before, result);
+        if (result.topology.features.length !== 0) throw new Error('Version 6 几何只能导入当前选中的空渠道，请先处理现有渠道要素。');
+        const projected = projectTerrainSnapshot(initial.snapshot, initial.draft, result.snapshot);
+        // The inspection must capture this projection even before React's next render.
+        draftRef.current = projected; setDraft(projected);
+        const current = currentChannelSource();
+        if (!current) return null;
+        const capture = channelParent.capture(current, inputId, channelV6ParentModel(current), '');
+        const identity = await channelV6ParentDraftIdentity(inputId, capture.model);
+        if (signal.aborted || activeSave.current !== request || !channelParent.isCurrent(capture, currentChannelSource())) return null;
+        capture.expectedDraftIdentity = identity;
+        return capture;
+      } finally {
+        signal.removeEventListener('abort', abort);
+        if (activeSave.current === request) { activeSave.current = null; if (channelMounted.current) setBusy(false); }
+      }
+    },
+    isCurrent: capture => channelParent.isCurrent(capture, currentChannelSource()),
+    acquire: capture => {
+      if (activeSave.current || channelSaveRecoveryRef.current || channelParent.retired().length || !channelParent.acquire(capture, currentChannelSource())) return false;
+      const request = { owner: capture.owner, controller: new AbortController() };
+      channelLease.current = { capture, request }; activeSave.current = request;
+      channelDirtyCallback.current?.(channelWriteOwner, true);
+      setBusy(true); setSaveMessage(''); setSaveErrorDetails('');
+      return true;
+    },
+    accept: (capture, receipt) => {
+      if (channelLease.current?.capture !== capture || activeSave.current !== channelLease.current.request) return false;
+      const projected = channelParent.accept(capture, currentChannelSource(), receipt);
+      if (!projected) return false;
+      draftRef.current = projected; setDraft(projected);
+      setSaveMessage(text(language, 'Version 6 渠道几何已进入父地形草稿；可撤销、重做，点击“保存”后才写入地形。', 'Version 6 Channel geometry is in the parent terrain draft. Undo/redo remain available; save to write the terrain.'));
+      return true;
+    },
+    release: capture => {
+      channelParent.release(capture);
+      const lease = channelLease.current;
+      if (lease?.capture !== capture) return;
+      if (activeSave.current === lease.request) { activeSave.current = null; if (channelMounted.current) setBusy(false); }
+      channelLease.current = null;
+      channelDirtyCallback.current?.(channelWriteOwner, false);
+    },
   };
 
   const onClassificationTransform: PageProps['onClassificationTransform'] = async (command: ClassificationTransformCommand) => {
@@ -2453,8 +2598,10 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   };
 
   const requestTransition = (next: Transition): void => {
-    if (pending || busy) return;
+    if (pending || busy || channelSaveRecoveryRef.current) return;
     if (next.kind === 'page' && next.pageID === activePageID || next.kind === 'view' && next.view === view) return;
+    // Pages within one terrain edit the same parent draft and share its Undo/Redo history.
+    if (next.kind === 'page' && asset?.kind === 'Terrain') { setPageID(next.pageID); return; }
     if (payloadConnectionState !== 'idle') {
       setSaveMessage(text(language, '工程连接流程尚未完成；请先重读载荷选项，或重新打开工程核对提交结果。', 'The project connection workflow is incomplete. Refresh the payload choices or reopen the project to reconcile the commit.'));
       return;
@@ -2471,25 +2618,82 @@ export default function EditorWorkbench(props: FeaturePageProps) {
 
   const adoptSavedModel = (original: SourceContext, originalAsset: NonNullable<WorkbenchContext['selectedAsset']>,
     result: ModelSnapshot, originalBackend: BackendGateway, originalBackendRevision: number | undefined,
-    recovery?: PlanSaveRecoveryAcknowledgement): boolean => {
+    recovery?: PlanSaveRecoveryAcknowledgement,
+    commit?: (original: WorkbenchContext, committed: WorkbenchContext) => boolean): boolean => {
     assertModelSnapshot(result);
     const tracking = planSaveRecoveryRef.current;
     if (tracking?.ownerContextID === original.owner) updatePlanSaveRecovery({ ...tracking, receipt: result });
     const nextContext = updatedContext(original.context, originalAsset, result);
     const nextSource = sourceFor(nextContext);
-    acceptedReceipt.current = { owner: nextSource.owner, snapshot: result };
-    if (onContextCommit && !onContextCommit(original.context, nextContext, recovery)) {
-      acceptedReceipt.current = null;
+    const nextDraft = createModelDraft(result);
+    const nextAnalysisSource = capturePlanAnalysisSource(nextContext, originalBackend, originalBackendRevision);
+    if (commit ? !commit(original.context, nextContext) : onContextCommit && !onContextCommit(original.context, nextContext, recovery)) {
       return false;
     }
+    acceptedReceipt.current = { owner: nextSource.owner, snapshot: result };
     onDirtyStateChange?.(original.owner, false);
     activeOwner.current = nextSource.owner;
-    analysisLoadedSource.current = { owner: nextSource.owner, source: capturePlanAnalysisSource(nextContext, originalBackend, originalBackendRevision) };
-    setSnapshot(result); setDraft(createModelDraft(result)); setSource(nextSource);
+    analysisLoadedSource.current = { owner: nextSource.owner, source: nextAnalysisSource };
+    snapshotRef.current = result; draftRef.current = nextDraft;
+    setSnapshot(result); setDraft(nextDraft); setSource(nextSource);
+    if (originalAsset.kind === 'Terrain') retireChannelPayloads(original.owner);
     if (originalAsset.kind === 'Plan') clearAnalysisUncertain(original.owner);
     setSaveMessage(text(language, '已从后端保存回执刷新模型。', 'The model was refreshed from the backend save receipt.'));
-    if (!onContextCommit) onContextChange(nextContext);
+    if (!commit && !onContextCommit) onContextChange(nextContext);
     return true;
+  };
+
+  const acceptChannelSave = (tracking: ChannelV6ParentSave, result: ModelSnapshot): boolean => {
+    assertModelSnapshot(result);
+    if (!isSha256(result.revision)) return false;
+    const received = { ...tracking, receipt: result };
+    updateChannelSaveRecovery(received);
+    if (!channelV6ParentSaveCurrent(tracking, currentChannelSource())
+      || !tracking.operationID || !props.onTrackModelSave || !props.onCommitModelSave) return false;
+    return adoptSavedModel({ owner: tracking.current.owner, context: tracking.current.context },
+      tracking.current.context.selectedAsset!, result, tracking.current.backend, tracking.current.backendRevision, undefined,
+      (_original, committed) => {
+        const acknowledged = acknowledgeChannelV6ParentSave(received, currentChannelSource(), committed,
+          props.onTrackModelSave!, props.onCommitModelSave!);
+        if (!acknowledged.accepted) { updateChannelSaveRecovery(acknowledged.save); return false; }
+        updateChannelSaveRecovery(null); // Only after the root atomically accepts this lease's receipt.
+        return true;
+      });
+  };
+  const resumeChannelSave = async (): Promise<void> => {
+    const original = channelSaveRecoveryRef.current;
+    if (!original || original.phase !== 'unknown' || !original.operationID || activeSave.current) return;
+    const request = { owner: original.current.owner, controller: new AbortController() };
+    activeSave.current = request; setBusy(true); setSaveErrorDetails('');
+    updateChannelSaveRecovery({ ...original, phase: 'resuming' });
+    let received = false;
+    try {
+      const result = await resumeChannelV6ParentSave(original, { signal: request.controller.signal,
+        onTransportState: state => {
+          const tracking = channelSaveRecoveryRef.current;
+          if (tracking?.leaseID === original.leaseID && props.onTrackModelSave)
+            updateChannelSaveRecovery(trackChannelV6ParentSave(tracking, state.operationId, props.onTrackModelSave));
+        },
+      });
+      received = true;
+      const tracking = channelSaveRecoveryRef.current;
+      if (activeSave.current !== request || !tracking || !acceptChannelSave(tracking, result))
+        throw new Error('原地形保存已返回，但精确父草稿或根来源回执未被接纳。');
+    } catch (error) {
+      let tracking = channelSaveRecoveryRef.current ?? original;
+      const operationID = channelV6OperationID(error);
+      if (operationID && props.onTrackModelSave) tracking = trackChannelV6ParentSave(tracking, operationID, props.onTrackModelSave);
+      if (!received && channelV6ParentSaveFailureConfirmed(tracking, error, 'resume')) {
+        props.onEndModelSave?.(original.leaseID); updateChannelSaveRecovery(null);
+        setSaveMessage(text(language, '原地形保存已确认失败或取消；父草稿和渠道暂存仍保留，可核对后再次保存。', 'The original terrain save failed or was cancelled. The draft and Channel payloads are retained.'));
+      } else {
+        updateChannelSaveRecovery({ ...tracking, phase: 'unknown' });
+        setSaveMessage(text(language, '原地形保存仍待核对；父草稿和渠道暂存文件继续保留。', 'The original terrain save is still unconfirmed. The draft and Channel payloads remain retained.'));
+      }
+      setSaveErrorDetails(message(error));
+    } finally {
+      if (activeSave.current === request) { activeSave.current = null; setBusy(!!channelSaveRecoveryRef.current); }
+    }
   };
 
   const resumePlanSave = async (): Promise<void> => {
@@ -2532,6 +2736,14 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   const save = async (): Promise<boolean> => {
     setSaveErrorDetails('');
     if (activeSave.current) return false;
+    if (channelSaveRecoveryRef.current) {
+      setSaveMessage(text(language, '请先继续核对原地形保存任务；不会重复提交保存或释放渠道暂存。', 'Continue checking the original terrain save before resubmitting or releasing Channel payloads.'));
+      return false;
+    }
+    if (channelParent.retired().length) {
+      setSaveMessage(text(language, '请先核对渠道暂存文件的原清理任务，再保存当前模型。', 'Confirm the original Channel cleanup task before saving the model.'));
+      return false;
+    }
     if (asset?.kind === 'Plan' && analysisUncertainOwners.has(source.owner)) {
       setSaveMessage(text(language, '此前保存结果尚未确认，请先核对来源，不会重复提交保存。', 'The previous save is unconfirmed. Verify the source before submitting again.'));
       return false;
@@ -2566,6 +2778,19 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       setSaveMessage(text(language, '存在无效字段；修正后才能保存。', 'Some values are invalid. Correct them before saving.'));
       return false;
     }
+    let capturedChannelSave: ChannelV6ParentSave | null = null;
+    if (asset.kind === 'Terrain' && channelParent.hasOwned(source.owner)) {
+      const current = currentChannelSource();
+      if (!current || !props.onBeginModelSave || !props.onTrackModelSave || !props.onCommitModelSave || !props.onEndModelSave) {
+        setSaveMessage(text(language, '当前工作区未提供渠道父保存的精确回执保护，草稿继续保留。', 'The workspace does not provide protected Channel parent-save acknowledgements. The draft is retained.'));
+        return false;
+      }
+      const request = channelV6ParentModel(current);
+      const leaseID = props.onBeginModelSave(source.context, source.owner, `${channelWriteOwner}:save`, request.revision);
+      if (!leaseID) { setSaveMessage(text(language, '工程来源正忙或已变化，未提交地形保存。', 'The project source is busy or changed; the terrain save was not submitted.')); return false; }
+      capturedChannelSave = captureChannelV6ParentSave(current, leaseID, request);
+      updateChannelSaveRecovery(capturedChannelSave);
+    }
     setBusy(true);
     const requestState = { owner: source.owner, controller: new AbortController() };
     activeSave.current = requestState;
@@ -2576,6 +2801,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     setSaveErrors([]);
     setSaveErrorDetails('');
     let receivedPlanSave = false;
+    let receivedChannelSave = false;
     try {
       const planFields = snapshot.planTimeWindowFieldIDs;
       const planIDs = planFields ? [planFields.mode, planFields.start, planFields.end] : [];
@@ -2594,7 +2820,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
         const selections = table.requestedSelectionRowIDs ?? table.selectedRowIDs;
         return selections ? [[id, selections]] : [];
       }));
-      const request = {
+      const request = capturedChannelSave?.request ?? {
         ...modelRequest(source.context, asset),
         revision: snapshot.revision,
         fields,
@@ -2611,11 +2837,21 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       };
       const result = await backend.request<ModelSnapshot>('model.save', request, { signal: requestState.controller.signal,
         onTransportState: state => {
+          const channelTracking = channelSaveRecoveryRef.current;
+          if (capturedChannelSave && channelTracking?.leaseID === capturedChannelSave.leaseID && props.onTrackModelSave)
+            updateChannelSaveRecovery(trackChannelV6ParentSave(channelTracking, state.operationId, props.onTrackModelSave));
           const tracking = planSaveRecoveryRef.current;
           if (asset.kind !== 'Plan' || tracking?.ownerContextID !== source.owner) return;
           updatePlanSaveRecovery(trackPlanSaveOperation(tracking, state.operationId));
         },
       });
+      if (capturedChannelSave) {
+        receivedChannelSave = true;
+        const tracking = channelSaveRecoveryRef.current;
+        if (!isCurrentSave() || !tracking || !acceptChannelSave(tracking, result))
+          throw new Error('地形保存已返回，但父草稿或根来源未接纳此原任务回执。');
+        return true;
+      }
       receivedPlanSave = asset.kind === 'Plan';
       if (!isCurrentSave()) { if (receivedPlanSave) markAnalysisUncertain(source.owner); return false; }
       if (!adoptSavedModel(source, asset, result, backend, backendRevision)) {
@@ -2624,28 +2860,40 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       }
       return true;
     } catch (error) {
+      if (capturedChannelSave) {
+        let tracking = channelSaveRecoveryRef.current ?? capturedChannelSave;
+        const operationID = channelV6OperationID(error);
+        if (operationID && props.onTrackModelSave) tracking = trackChannelV6ParentSave(tracking, operationID, props.onTrackModelSave);
+        if (!receivedChannelSave && channelV6ParentSaveFailureConfirmed(tracking, error, 'submit')) {
+          props.onEndModelSave?.(tracking.leaseID); updateChannelSaveRecovery(null);
+        } else updateChannelSaveRecovery({ ...tracking, phase: 'unknown' });
+      }
       if (asset.kind === 'Plan' && (receivedPlanSave || (error && typeof error === 'object'
         && 'terminalConfirmed' in error && error.terminalConfirmed === false))) markAnalysisUncertain(source.owner);
       else if (asset.kind === 'Plan') updatePlanSaveRecovery(null);
       if (isCurrentSave()) {
-        setSaveMessage(text(language, '保存失败。', 'Save failed.'));
+        setSaveMessage(channelSaveRecoveryRef.current
+          ? text(language, '地形保存仍待核对；父草稿和渠道暂存文件继续保留。', 'The terrain save is unconfirmed. The draft and Channel payloads remain retained.')
+          : text(language, '保存失败。', 'Save failed.'));
         setSaveErrorDetails(message(error));
       }
       return false;
     } finally {
       if (activeSave.current === requestState) {
         activeSave.current = null;
-        setBusy(false);
+        setBusy(!!channelSaveRecoveryRef.current);
       }
     }
   };
 
   const discard = (): void => {
-    if (planSaveBlocked || activeSave.current) return;
+    if (planSaveBlocked || channelSaveRecoveryRef.current || activeSave.current) return;
     if (pending?.kind === 'source') {
       acceptSource(pending.source);
       return;
     }
+    channelV6Controller.invalidateInspection();
+    retireChannelPayloads(source.owner);
     if (pending) {
       if (snapshot) setDraft(createModelDraft(snapshot));
       applyTransition(pending);
@@ -2772,7 +3020,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
   } : undefined;
 
   const pageProps: EditorPageProps | null = snapshot && draft && asset ? {
-    backend, language, asset, snapshot: planSaveBlocked ? { ...snapshot, canEdit: false } : snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
+    backend, language, asset, snapshot: planSaveBlocked || !!channelSaveRecovery || channelV6Controller.pending || channelParent.retired().length > 0 ? { ...snapshot, canEdit: false } : snapshot, draft, schemas: catalog.schemas, tableSchemas: catalog.tables,
     pageId: activePageID, onPageChange: (next) => requestTransition({ kind: 'page', pageID: next }),
     onFieldChange, onImagesChange, onRowCellChange, onSampleChange,
     ...(boundaryInitialConditionsWorkflow ? { boundaryInitialConditions: boundaryInitialConditionsWorkflow } : {}),
@@ -2792,9 +3040,14 @@ export default function EditorWorkbench(props: FeaturePageProps) {
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.gridImport') && backend.supports('model.save') ? { onGridImport } : {}),
     ...(cumulusImportWorkflow ? { cumulusImport: cumulusImportWorkflow } : {}),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.terrainTransform') && backend.supports('model.save') ? { onTerrainTransform } : {}),
+    ...(asset.kind === 'Terrain' ? { channelV6Import: { owner: source.owner, controller: channelV6Controller, taskHost: channelTaskHost,
+      canInspect: !!currentChannelSource() && !busy && !activeSave.current && !channelSaveRecovery && !channelV6Controller.pending
+        && channelParent.retired().length === 0 && ['model.terrainTopology', 'model.save', ...Object.values(channelV6ImportMethods)].every(method => backend.supports(method)),
+      blockedMessage: text(language, '请等待当前操作完成，并确认已连接具备渠道导入及暂存清理能力的服务。', 'Wait for the current operation and connect a service supporting Channel import and staged-payload cleanup.'),
+    } } : {}),
     ...(snapshot.canEdit && source.context.projectPath && source.context.projectXml && source.context.projectRevision
       ? { terrainMapOwner: terrainMapProjectOwner(source.context, asset) } : {}),
-    canEditTerrainTopology: snapshot.canEdit && !!source.context.projectPath && !busy && validations.length === 0
+    canEditTerrainTopology: snapshot.canEdit && !!source.context.projectPath && !busy && !channelSaveRecovery && channelParent.retired().length === 0 && validations.length === 0
       && backend.supports('model.terrainTopology') && backend.supports('model.save'),
     ...(snapshot.canEdit && !!source.context.projectPath && backend.supports('model.terrainTopology')
       && backend.supports('model.save') ? { onTerrainTopology } : {}),
@@ -2806,7 +3059,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
       && !dirty && !busy && backend.supports('nvalue.preview'),
     ...(!!source.context.projectPath && !!source.context.projectRevision && backend.supports('nvalue.preview') ? { onNValuePreview } : {}),
   } : null;
-  const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy && !planSaveBlocked && !initialConditionsBlocksDraft && payloadConnectionState === 'idle' && payloadForms.size === 0;
+  const canSave = !!snapshot?.canEdit && !!source.context.projectPath && backend.supports('model.save') && dirty && !busy && !planSaveBlocked && !channelSaveRecovery && channelParent.retired().length === 0 && !initialConditionsBlocksDraft && payloadConnectionState === 'idle' && payloadForms.size === 0;
 
   return (
     <main className="editor-workbench">
@@ -2827,10 +3080,33 @@ export default function EditorWorkbench(props: FeaturePageProps) {
           {view === 'model' && classificationImportRunning && <button type="button" className="editor-button" data-testid="classification-import-cancel" onClick={cancelClassificationImport}>{text(language, '请求取消分类导入', 'Request classification import cancellation')}</button>}
           <button type="button" className={view === 'model' ? 'editor-button editor-button-selected' : 'editor-button'} disabled={!asset} onClick={() => requestTransition({ kind: 'view', view: 'model' })}>{text(language, '模型页面', 'Model')}</button>
           <button type="button" className={view === 'catalog' ? 'editor-button editor-button-selected' : 'editor-button'} onClick={() => requestTransition({ kind: 'view', view: 'catalog' })}>{text(language, '控件目录 · 开发预览', 'Control catalog · preview')}</button>
-          {view === 'model' && <button type="button" className="editor-button" disabled={!dirty || busy || planSaveBlocked || !snapshot || payloadConnectionState !== 'idle' || payloadForms.size > 0} onClick={discard}>{text(language, '丢弃草稿', 'Discard draft')}</button>}
+          {view === 'model' && <button type="button" className="editor-button" disabled={!dirty || busy || planSaveBlocked || !!channelSaveRecovery || !snapshot || payloadConnectionState !== 'idle' || payloadForms.size > 0} onClick={discard}>{text(language, '丢弃草稿', 'Discard draft')}</button>}
           {view === 'model' && <button type="submit" form="source-model-editor-form" className="editor-button editor-button-primary" disabled={!canSave}>{payloadConnectionCreating ? text(language, '连接处理中…', 'Updating connection…') : busy ? text(language, '保存中…', 'Saving…') : text(language, '保存', 'Save')}</button>}
         </div>
       </header>
+
+      {channelSaveRecovery?.phase !== 'saving' && channelSaveRecovery && <div className="editor-validation-summary" role="alert" data-testid="channel-v6-parent-save-recovery">
+        <strong>{text(language, '地形保存结果尚未确认', 'Terrain save result is unconfirmed')}</strong>
+        <p>{text(language, '父草稿及撤销、重做依赖的渠道暂存文件已保留；只续查原任务，不会重新提交保存。', 'The parent draft and Channel undo/redo payloads are retained. Resume the original task without saving again.')}</p>
+        {channelSaveRecovery.operationID ? <code data-testid="channel-v6-parent-save-operation-id">{channelSaveRecovery.operationID}</code>
+          : <p>{text(language, '服务未返回任务编号，无法自动续查；请核对服务端任务，当前来源保护继续保留。', 'No task ID was returned. Automatic tracking is unavailable; source protection remains while the server task is reconciled.')}</p>}
+        <button type="button" className="editor-button" data-testid="channel-v6-parent-save-resume"
+          disabled={channelSaveRecovery.phase !== 'unknown' || !!activeSave.current || !channelSaveRecovery.operationID
+            || !!channelSaveRecovery.operationConflict || (!channelSaveRecovery.receipt && !channelSaveRecovery.current.backend.resumeOperation)}
+          onClick={() => void resumeChannelSave()}>{text(language, '继续核对原地形保存', 'Resume original terrain save')}</button>
+      </div>}
+
+      {channelParent.retired().length > 0 && <div className="editor-validation-summary" role="alert" data-testid="channel-v6-parent-cleanup">
+        <strong>{text(language, '渠道暂存文件清理待确认', 'Channel staged-file cleanup is pending')}</strong>
+        <p>{text(language, '只清理已退出父草稿的导入文件；仍属于撤销或重做历史的文件会继续保留。', 'Only imports retired from the parent draft are cleaned up. Undo/redo payloads stay owned by the draft.')}</p>
+        {channelParent.retired().map(payload => <div key={payload.cleanup.payloadId}>
+          <code>{payload.operationID ?? payload.cleanup.payloadId}</code>
+          <button type="button" className="editor-button" disabled={payload.phase === 'cleaning'
+            || (payload.phase === 'unknown' && (!payload.operationID || !payload.capture.backend.resumeOperation))}
+            onClick={() => void cleanupChannelPayload(payload)}>{text(language, payload.phase === 'unknown' ? '继续核对原清理任务' : '重试精确清理', payload.phase === 'unknown' ? 'Resume original cleanup' : 'Retry exact cleanup')}</button>
+          {payload.error != null && <details><summary>{text(language, '错误详情', 'Error details')}</summary><pre>{message(payload.error)}</pre></details>}
+        </div>)}
+      </div>}
 
       {planSaveBlocked && <div className="editor-validation-summary" role="alert" data-testid="plan-save-recovery">
         <strong>{text(language, '计算计划保存结果尚未确认', 'Plan save result is unconfirmed')}</strong>
@@ -2867,6 +3143,7 @@ export default function EditorWorkbench(props: FeaturePageProps) {
             {asset && loadState.status === 'error' && <div className="editor-inline-error" role="alert">{text(language, '模型载入失败。', 'Model load failed.')}<details><summary>{text(language, '错误详情', 'Error details')}</summary><pre>{loadState.error}</pre></details></div>}
             {asset && !source.context.projectPath && snapshot && <div className="editor-config-notice">{text(language, '已载入模型快照，但当前会话没有所属项目路径；此快照不可保存。', 'The model snapshot is loaded, but this session has no owning project path; it cannot be saved.')}</div>}
             {pageProps && <div key={editorMountKey} className="editor-model-page">
+              <div ref={setChannelTaskHost} data-testid="channel-v6-task-host" />
               <fieldset disabled={busy || initialConditionsBlocksDraft || payloadConnectionState === 'uncertain'} style={{ margin: 0, padding: 0, border: 0, minWidth: 0 }}>{renderEditor(pageProps)}</fieldset>
               {validations.length > 0 && dirty && <section className="editor-validation-summary" aria-live="polite"><h2>{text(language, '需要修正', 'Needs attention')}</h2><ul>{validations.slice(0, 20).map((error) => <li key={error.fieldID}><strong>{error.title}</strong> · {error.message} <code>{error.fieldID}</code></li>)}</ul>{validations.length > 20 && <small>{text(language, `另有 ${validations.length - 20} 项`, `${validations.length - 20} more issues`)}</small>}</section>}
             </div>}
@@ -2876,6 +3153,10 @@ export default function EditorWorkbench(props: FeaturePageProps) {
               </Suspense>}
             {asset && !snapshot && loadState.status !== 'loading' && <div className="editor-no-snapshot"><div className="editor-empty-state">{text(language, '尚无可编辑的模型快照。', 'There is no editable model snapshot.')}</div><button type="button" className="editor-button" onClick={() => setView('catalog')}>{text(language, '浏览原始控件配置', 'Browse source control metadata')}</button></div>}
             {saveMessage && <div className={saveErrorDetails ? 'editor-inline-error' : 'editor-save-notice'} role="status">{saveMessage}{saveErrorDetails && <details><summary>{text(language, '错误详情', 'Error details')}</summary><pre>{saveErrorDetails}</pre></details>}</div>}
+            {snapshot?.terrain?.importCleanupWarning && <div className="editor-save-notice" role="status" data-testid="terrain-save-cleanup-warning">
+              <strong>{text(language, '已保存，临时导入数据清理未完成', 'Saved; temporary import data cleanup is incomplete')}</strong>
+              <details><summary>{text(language, '清理诊断', 'Cleanup diagnostics')}</summary><pre>{snapshot.terrain.importCleanupWarning}</pre></details>
+            </div>}
             {saveErrors.length > 0 && <ul className="editor-validation-summary">{saveErrors.slice(0, 12).map((error) => <li key={error.fieldID}>{error.title}: {error.message} <code>{error.fieldID}</code></li>)}</ul>}
           </form>
         </>
@@ -3311,6 +3592,131 @@ function projectTerrainSnapshot(baseline: ModelSnapshot, current: ModelDraft, re
     terrainSelectionBaselineFields: selectionBaselines,
   };
   return { ...next, changedCells: changedModelCells(next, snapshotRows(baseline)) };
+}
+
+export interface ChannelV6OwnedPayload {
+  capture: ChannelV6ImportCapture;
+  cleanup: ChannelV6ImportCleanup;
+  retired: boolean;
+  phase: 'owned' | 'pending' | 'cleaning' | 'unknown' | 'failed';
+  operationID: string | null;
+  error?: unknown;
+}
+/** Main-save semantics, captured without replacing the loaded source snapshot. */
+export function channelV6ParentModel(current: ChannelV6ParentSource): ChannelV6ImportModel {
+  const { context, snapshot, draft } = current;
+  const asset = context.selectedAsset;
+  const terrain = draft.terrainView ?? snapshot.terrain;
+  if (asset?.kind !== 'Terrain' || !terrain) throw new Error('当前来源不是可编辑地形。');
+  const readOnly = new Set([...(snapshot.readOnlyFields ?? []), ...(draft.terrainReadOnlyFields ?? [])]);
+  const fields = Object.fromEntries(Object.entries(draft.fields).filter(([id, value]) =>
+    value !== snapshot.fields[id] && !readOnly.has(id)
+      && !(Object.hasOwn(draft.terrainSelectionBaselineFields ?? {}, id) && value === draft.terrainSelectionBaselineFields?.[id])));
+  fields['TerrainLayersEditor/SelectedInputWithMap'] = terrain.selectedId ?? '';
+  return structuredClone({ ...modelRequest(context, asset), revision: snapshot.revision, fields,
+    images: Object.fromEntries(Object.entries(draft.images).filter(([id, images]) => JSON.stringify(images) !== JSON.stringify(snapshot.images[id] ?? []))),
+    sourceState: draft.sourceState !== (snapshot.sourceState ?? null) ? draft.sourceState : snapshot.sourceState ?? sourceStateFor(asset) ?? null,
+    rows: draft.rows, samples: samplesForBoundaryDraft(snapshot, draft), planTimeWindowEdits: null,
+    tableSelections: Object.fromEntries(Object.entries(terrain.tables ?? {}).flatMap(([id, table]) => {
+      const selected = table.requestedSelectionRowIDs ?? table.selectedRowIDs;
+      return selected ? [[id, selected]] : [];
+    })), changedCells: changedModelCells(draft, snapshotRows(snapshot)),
+  });
+}
+
+/** Host import identity is the full sourceState hash, not the topology journal hash. */
+export async function channelV6ParentDraftIdentity(inputId: string, model: ChannelV6ImportModel): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${inputId}\n${model.revision}\n${model.sourceState ?? ''}`));
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+function channelV6ParentScope(current: ChannelV6ParentSource): string {
+  return planAnalysisValueKey([current.owner, current.context, current.generation, current.draftGeneration,
+    planAnalysisBackendIdentity(current.backend), current.backendRevision]);
+}
+
+function assertChannelV6ParentTopology(capture: ChannelV6ImportCapture, response: TerrainTopologyResponse): void {
+  assertModelSnapshot(response.snapshot);
+  const { snapshot, topology } = response;
+  const inputs = snapshot.terrain?.inputs;
+  if (snapshot.revision !== capture.model.revision || !snapshot.canEdit || !snapshot.sourceState
+    || snapshot.terrain?.selectedId !== capture.inputId
+    || JSON.stringify(inputs?.map(input => input.id)) !== JSON.stringify(capture.inputIds)
+    || inputs?.find(input => input.id === capture.inputId)?.schema !== 'ChannelModTerrainInputProperties'
+    || topology?.inputId !== capture.inputId || topology.sourceRevision !== capture.model.revision
+    || !isSha256(topology.draftIdentity) || !Array.isArray(topology.features)
+    || !Array.isArray(topology.selectedFeatureIDs)) throw new Error('渠道回执与捕获的父地形来源或输入不一致。');
+}
+
+/** Exact CAS and accepted payload ownership survive Undo/Redo until the parent leaves its draft. */
+export class ChannelV6ParentDraftRegistry {
+  private captures = new WeakMap<ChannelV6ImportCapture, { current: ChannelV6ParentSource; scope: string; model: string }>();
+  private lease: ChannelV6ImportCapture | null = null;
+  private payloads = new Set<ChannelV6OwnedPayload>();
+
+  capture(current: ChannelV6ParentSource, inputId: string, model: ChannelV6ImportModel, expectedDraftIdentity: string): ChannelV6ImportCapture {
+    const terrain = current.draft.terrainView ?? current.snapshot.terrain;
+    const input = terrain?.inputs.find(item => item.id === inputId);
+    if (terrain?.selectedId !== inputId || input?.schema !== 'ChannelModTerrainInputProperties')
+      throw new Error('请选择当前地形中精确的空渠道输入。');
+    const capture: ChannelV6ImportCapture = { owner: current.owner, draftKey: channelV6ParentScope(current), backend: current.backend,
+      model, inputId, inputIds: terrain.inputs.map(item => item.id), expectedDraftIdentity,
+      existingDraftToken: terrain.importDraftToken ?? null, inputName: input.name };
+    this.captures.set(capture, { current, scope: capture.draftKey, model: planAnalysisValueKey(capture.model) });
+    return capture;
+  }
+  isCurrent(capture: ChannelV6ImportCapture, current: ChannelV6ParentSource | null): boolean {
+    const saved = this.captures.get(capture);
+    return !!saved && !!current && saved.current.snapshot === current.snapshot && saved.current.draft === current.draft
+      && saved.scope === channelV6ParentScope(current) && saved.model === planAnalysisValueKey(capture.model)
+      && (current.draft.terrainView ?? current.snapshot.terrain)?.selectedId === capture.inputId;
+  }
+  acquire(capture: ChannelV6ImportCapture, current: ChannelV6ParentSource | null): boolean {
+    if (this.lease || !this.isCurrent(capture, current)) return false;
+    this.lease = capture; return true;
+  }
+  release(capture: ChannelV6ImportCapture): void { if (this.lease === capture) this.lease = null; }
+  accept(capture: ChannelV6ImportCapture, current: ChannelV6ParentSource | null, receipt: ChannelV6ImportCompleted): ModelDraft | null {
+    if (this.lease !== capture || !current || !this.isCurrent(capture, current)) return null;
+    assertChannelV6ParentTopology(capture, receipt);
+    if (!receipt.topology.features.length || receipt.cleanup.draftToken !== receipt.snapshot.terrain?.importDraftToken
+      || (capture.existingDraftToken && receipt.cleanup.draftToken !== capture.existingDraftToken))
+      throw new Error('渠道导入没有返回当前草稿拥有的暂存数据。');
+    const next = projectTerrainSnapshot(current.snapshot, current.draft, receipt.snapshot);
+    this.payloads.add({ capture, cleanup: { ...receipt.cleanup }, retired: false, phase: 'owned', operationID: null });
+    return next;
+  }
+  hasOwned(owner: string): boolean { return [...this.payloads].some(payload => !payload.retired && payload.capture.owner === owner); }
+  hasPayload(payload: ChannelV6OwnedPayload): boolean { return this.payloads.has(payload); }
+  retired(): ChannelV6OwnedPayload[] { return [...this.payloads].filter(payload => payload.retired); }
+  retire(owner?: string): ChannelV6OwnedPayload[] {
+    const result = [...this.payloads].filter(payload => !payload.retired && (owner === undefined || payload.capture.owner === owner));
+    for (const payload of result) { payload.retired = true; payload.phase = 'pending'; }
+    return result;
+  }
+  async cleanup(payload: ChannelV6OwnedPayload): Promise<void> {
+    if (!this.payloads.has(payload) || !payload.retired || payload.phase === 'cleaning') return;
+    const resume = payload.phase === 'unknown';
+    const backend = payload.capture.backend;
+    if (resume && (!payload.operationID || !backend.resumeOperation)) return;
+    payload.phase = 'cleaning'; payload.error = undefined;
+    if (!resume) payload.operationID = null;
+    let received = false;
+    try {
+      const options: BackendRequestOptions = { onTransportState: state => {
+        if (!payload.operationID) payload.operationID = state.operationId;
+      } };
+      const result = resume ? await backend.resumeOperation!(payload.operationID!, options)
+        : await backend.request(channelV6ImportMethods.discard, { model: payload.capture.model, cleanup: payload.cleanup }, options);
+      received = true;
+      parseChannelV6ImportDiscarded(result, payload.cleanup);
+      this.payloads.delete(payload);
+    } catch (error) {
+      payload.operationID ??= channelV6OperationID(error);
+      payload.phase = !received && channelV6TerminalConfirmed(error) ? 'failed' : 'unknown';
+      payload.error = error;
+    }
+  }
 }
 
 function emptyDraft(): ModelDraft {

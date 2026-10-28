@@ -234,3 +234,9 @@ This check creates its own fresh project and exports two `.r2r.h5` files through
 ### Prepared project archive download
 
 `--run-project-archive-download-http <loopback-base-url> <new-output-directory>` prepares and downloads ZIPs with and without result files. It checks downloaded bytes and each entry against the verified archive inventory, source preservation, cancellation, token-only access and idempotent cleanup. The server and check must share the same isolated temporary directory so pending-file and link-denial checks examine the correct archive directory. A ZIP is downloadable only after verification and staging cleanup complete; preparation publishes the completed file atomically. Run against a local service and use a fresh output directory outside the repository. Browser download interaction is verified separately.
+
+### Version 6 channel geometry import
+
+`--create-channel-v6-import-fixture <new-output-directory>` creates a real Version 6 geometry HDF and a saved terrain containing an empty Channel input. `--run-channel-v6-import-http <loopback-base-url> <new-output-directory>` checks conversion, imported profiles and topology, parent draft undo/redo, explicit terrain save and independent HDF readback. It also checks source preservation and exact cleanup of an unadopted payload without deleting other payloads under the same draft token. Use a fresh directory outside the repository. Keep the server and check on the same isolated temporary directory when inspecting cleanup artifacts.
+
+`--run-terrain-save-commit <new-output-directory>` exercises terrain save publication against real HDF files, including controlled failures around the commit boundary. These in-process checks complement the HTTP and browser save/reopen checks; fault hooks are internal and cannot be selected by product HTTP requests.

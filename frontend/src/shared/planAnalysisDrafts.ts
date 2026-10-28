@@ -137,7 +137,7 @@ export function hasProtectedSourceWrite(owners: ReadonlySet<string>, registry: P
   return [...owners].some(owner => owner.startsWith('map.write:') || owner.startsWith('map.create:')
     || owner.startsWith('map.raster-write:') || owner.startsWith('geometry.mesh-export:') || owner.startsWith('tools.r2r-export:')
     || owner.startsWith('tools.stable-channel-write:') || owner.startsWith('project.projection-export:')
-    || owner.startsWith('tools.project-archive:'))
+    || owner.startsWith('tools.project-archive:') || owner.startsWith('editors.channel-v6-write:'))
     || registry.entries.some(entry => entry.status === 'uncertain'
       ? !matchesPlanSaveRecoveryAcknowledgement(entry, acknowledgedSource, recovery)
       : entry.writePending && !matchesAcknowledgedPlanSource(entry, acknowledgedSource));

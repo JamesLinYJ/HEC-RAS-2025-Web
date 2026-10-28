@@ -2,6 +2,7 @@ import type { AssetReference, BackendGateway, Language } from '../../shared/work
 import { editorPageTitle } from './editorLocalization';
 import type { TerrainMapProjectOwner, TerrainTopologyCommand, TerrainTopologyResponse } from './terrainTopologyTypes';
 import type { CumulusImportWorkflow } from './cumulusTypes';
+import type { ChannelV6ImportWorkflow } from './channelV6ImportTypes';
 import type { CatalogTreeSnapshot } from '../project/CatalogTreeSnapshot';
 import type { ExternalConnectionValues } from '../project/ExternalConnectionWorkflow';
 
@@ -423,6 +424,8 @@ export interface EditorPageProps {
   canEditTerrainTopology?: boolean;
   terrainMapOwner?: TerrainMapProjectOwner;
   onTerrainTopology?: (command: TerrainTopologyCommand) => Promise<TerrainTopologyResponse | null>;
+  /** Parent-owned Version 6 HDF import with exact draft adoption and payload cleanup. */
+  channelV6Import?: ChannelV6ImportWorkflow;
   language: Language;
   asset: AssetReference;
   snapshot: ModelSnapshot;

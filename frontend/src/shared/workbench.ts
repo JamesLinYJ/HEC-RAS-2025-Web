@@ -134,6 +134,12 @@ export interface FeaturePageProps {
   onBeginProjectContextMutation?: (source: WorkbenchContext, draftOwner: string) => string | null;
   onCommitProjectContextMutation?: (source: WorkbenchContext, committed: WorkbenchContext, leaseID: string) => boolean;
   onEndProjectContextMutation?: (leaseID: string) => void;
+  /** Retain a Channel terrain's payloads until its original model.save has a confirmed outcome. */
+  onBeginModelSave?: (source: WorkbenchContext, draftOwner: string, writeOwner: string, sourceRevision: string) => string | null;
+  onTrackModelSave?: (leaseID: string, operationID: string) => boolean;
+  onCommitModelSave?: (source: WorkbenchContext, committed: WorkbenchContext, leaseID: string, operationID: string) => boolean;
+  /** Release only after a confirmed failure or cancellation; unknown outcomes retain the lease. */
+  onEndModelSave?: (leaseID: string) => void;
   /** Invalidates saved-map captures after an acknowledged write in another workspace. */
   mapRevision?: number;
   onDirtyStateChange?: (owner: string, dirty: boolean) => void;

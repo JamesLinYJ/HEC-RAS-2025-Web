@@ -9,6 +9,8 @@ export function ChannelModTerrainInputProperties(props: TerrainInputEditorProps 
   const parentSchema = props.schemas.find((candidate) => candidate.id === 'ChannelModParentEditor');
   const channelSchema = props.schemas.find((candidate) => candidate.id === 'ChannelModEditor');
   const terrainInputs = snapshot.terrain?.inputs ?? [];
+  const channelFeatures = draft.rows['ChannelModEditor/Features'] ?? snapshot.terrain?.rows?.['ChannelModEditor/Features'] ?? [];
+  const hasImported = channelFeatures.length > 0;
   const extentSource = [selected, ...terrainInputs.filter((input) => input.id !== selected.id && input.schema === 'RasterTerrainInputProperties'),
     ...terrainInputs.filter((input) => input.id !== selected.id && input.schema !== 'RasterTerrainInputProperties')]
     .find((input) => isValidExtent(input.validExtent));
@@ -17,7 +19,7 @@ export function ChannelModTerrainInputProperties(props: TerrainInputEditorProps 
     <section className="editor-field-sections" aria-label={language === 'zh' ? '渠道修改输入属性' : 'Channel modification input properties'}>
       <h4>{language === 'zh' ? '渠道修改输入属性' : 'Channel modification input properties'}</h4>
       <SchemaFieldRenderer schema={schema} fieldKeyPrefix={fieldKeyPrefix} snapshot={snapshot} values={draft.fields} images={draft.images} canEdit={snapshot.canEdit} onFieldChange={onFieldChange} onImagesChange={onImagesChange} language={language} />
-      {selectedInputIsLoaded && parentSchema && <ChannelModParentEditor {...props} schema={parentSchema} fieldKeyPrefix={`${selected.scope}/${parentSchema.id}`} hasImported />}
+      {selectedInputIsLoaded && parentSchema && <ChannelModParentEditor {...props} schema={parentSchema} fieldKeyPrefix={`${selected.scope}/${parentSchema.id}`} inputId={selected.id} hasImported={hasImported} />}
       {selectedInputIsLoaded && channelSchema && <ChannelModEditor {...props} schema={channelSchema} />}
       {selectedInputIsLoaded && <ChannelModTopologyEditor
         language={language}

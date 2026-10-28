@@ -1,7 +1,8 @@
+import { lazy, Suspense } from 'react';
 import type { EditorPageProps } from './model';
 import { pageTitle } from './model';
 import { TerrainProperties } from './TerrainProperties';
-import { TerrainLayersEditor } from './TerrainLayersEditor';
+const TerrainLayersEditor = lazy(() => import('./TerrainLayersEditor').then(module => ({ default: module.TerrainLayersEditor })));
 
 /** React port of Ras.Visual.WinUI.Controls.TerrainEditor. */
 export function TerrainEditor(props: EditorPageProps) {
@@ -12,7 +13,9 @@ export function TerrainEditor(props: EditorPageProps) {
       <nav className="editor-page-tabs" aria-label={props.language === 'zh' ? '地形页面' : 'Terrain pages'}>
         {tabs.map((tab) => <button type="button" key={tab} className={activePage === tab ? 'selected' : ''} aria-current={activePage === tab ? 'page' : undefined} onClick={() => props.onPageChange(tab)}>{pageTitle(tab, props.language)}</button>)}
       </nav>
-      {activePage === 'TerrainLayersEditor' ? <TerrainLayersEditor {...props} pageId={activePage} /> : <TerrainProperties {...props} pageId={activePage} />}
+      <Suspense fallback={<p role="status">{props.language === 'zh' ? '正在加载地形输入…' : 'Loading terrain inputs…'}</p>}>
+        {activePage === 'TerrainLayersEditor' ? <TerrainLayersEditor {...props} pageId={activePage} /> : <TerrainProperties {...props} pageId={activePage} />}
+      </Suspense>
     </div>
   );
 }

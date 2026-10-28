@@ -11,7 +11,17 @@ public sealed record ChannelV6GeometryImportRequest(ModelSaveRequest Model, stri
 
 public sealed record ChannelV6GeometryImportResponse(string State,
     ModelSnapshot? Snapshot = null, TerrainTopologyData? Topology = null,
-    string? SourceRevision = null, string? ErrorMessage = null);
+    string? SourceRevision = null, string? ErrorMessage = null,
+    ChannelV6GeometryImportCleanup? Cleanup = null);
+
+public sealed record ChannelV6GeometryImportCleanup(string DraftToken, string PayloadId,
+    string MigratedSHA256);
+
+public sealed record ChannelV6GeometryImportDiscardRequest(ModelSaveRequest Model,
+    ChannelV6GeometryImportCleanup Cleanup);
+
+public sealed record ChannelV6GeometryImportDiscardResponse(bool Discarded, string PayloadId,
+    bool DraftDirectoryRemoved);
 
 /// <summary>
 /// Self-contained draft payload for replaying an imported topology. No temporary
@@ -30,14 +40,28 @@ internal static class TerrainChannelGeometryPayloadCodec
         string fileName = id + ".hdf";
         string path = PathFor(assetPath, token, fileName);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        using (FileStream source = new(migratedPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-        using (FileStream destination = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        bool created = false;
+        try
         {
-            source.CopyTo(destination);
-            destination.Flush(flushToDisk: true);
+            using (FileStream source = new(migratedPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            using (FileStream destination = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                created = true;
+                source.CopyTo(destination);
+                destination.Flush(flushToDisk: true);
+            }
+            string migratedSHA = HashFile(path);
+            return new TerrainChannelGeometryPayload(id, fileName, sourceSHA256, migratedSHA);
         }
-        string migratedSHA = HashFile(path);
-        return new TerrainChannelGeometryPayload(id, fileName, sourceSHA256, migratedSHA);
+        catch
+        {
+            // A copy that never produced a receipt owns only its newly created
+            // file. Other imports can already be using the same draft token.
+            if (created) File.Delete(path);
+            DeleteEmptyDirectory(Path.GetDirectoryName(path)!);
+            DeleteEmptyDirectory(TerrainInputImportService.DraftDirectory(assetPath, token));
+            throw;
+        }
     }
 
     internal static T WithClassicGeometry<T>(string assetPath, string draftToken,
@@ -78,6 +102,39 @@ internal static class TerrainChannelGeometryPayloadCodec
         return Path.Combine(TerrainInputImportService.DraftDirectory(assetPath, token), "channel-geometry", fileName);
     }
 
+    internal static ChannelV6GeometryImportDiscardResponse Discard(string assetPath,
+        ChannelV6GeometryImportCleanup cleanup)
+    {
+        if (!Guid.TryParseExact(cleanup.PayloadId, "N", out Guid payloadID)
+            || !StringComparer.Ordinal.Equals(payloadID.ToString("N"), cleanup.PayloadId) || !IsSHA256(cleanup.MigratedSHA256))
+            throw new ArgumentException("The Channel geometry cleanup receipt is invalid.");
+        string path = PathFor(assetPath, cleanup.DraftToken, cleanup.PayloadId + ".hdf");
+        if (File.Exists(path))
+        {
+            if (!StringComparer.Ordinal.Equals(HashFile(path), cleanup.MigratedSHA256))
+                throw new SourceFileChangedException();
+            File.Delete(path);
+        }
+        DeleteEmptyDirectory(Path.GetDirectoryName(path)!);
+        string draftDirectory = TerrainInputImportService.DraftDirectory(assetPath,
+            TerrainInputImportService.NormalizeToken(cleanup.DraftToken, "terrain import draft"));
+        DeleteEmptyDirectory(draftDirectory);
+        return new(!File.Exists(path), cleanup.PayloadId, !Directory.Exists(draftDirectory));
+    }
+
+    private static void DeleteEmptyDirectory(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path) || Directory.EnumerateFileSystemEntries(path).Any()) return;
+            Directory.Delete(path, recursive: false);
+        }
+        catch (DirectoryNotFoundException) { }
+        // A concurrent accepted import may have added a sibling after the empty
+        // check. Retaining its directory is the safe cleanup result.
+        catch (IOException) when (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()) { }
+    }
+
     private static string HashFile(string path)
     {
         using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -98,9 +155,7 @@ public static partial class ModelEditorAdapter
         using CancellationTokenSource watcherStop = new();
         Task watcher = WatchCancellationAsync(controls, cancellation, watcherStop.Token);
         string? workingDirectory = null;
-        string? stagedPayloadPath = null;
-        string? stagedDraftToken = null;
-        bool createdDraftToken = false;
+        ChannelV6GeometryImportCleanup? stagedCleanup = null;
         bool keepDraftPayload = false;
         try
         {
@@ -124,7 +179,6 @@ public static partial class ModelEditorAdapter
             editor.ApplyRows(request.Model.Rows, request.Model.ChangedCells);
             editor.VerifyDependencies();
             TerrainTopologyData current = editor.LoadChannelTopology(request.InputId);
-            string? existingDraftToken = editor.ImportDraftToken;
 
             cancellation.Token.ThrowIfCancellationRequested();
             report?.Invoke(new BackendOperationProgress(Fraction: 0.05, TaskName: "Checking Version 6 geometry"));
@@ -160,10 +214,8 @@ public static partial class ModelEditorAdapter
             cancellation.Token.ThrowIfCancellationRequested();
             report?.Invoke(new BackendOperationProgress(Fraction: 0.72, TaskName: "Preparing imported Channel geometry"));
             TerrainTopologyData topology = editor.ImportChannelV6Geometry(request.InputId, outputPath,
-                request.SourceSHA256, current.DraftIdentity, out string stagedPath);
-            stagedPayloadPath = stagedPath;
-            stagedDraftToken = editor.ImportDraftToken;
-            createdDraftToken = existingDraftToken == null;
+                request.SourceSHA256, current.DraftIdentity, out ChannelV6GeometryImportCleanup cleanup);
+            stagedCleanup = cleanup;
             editor.VerifyDependencies();
             ModelSnapshot snapshot = await Snapshot(context, request.Model.Revision, true, null, terrain: editor);
             editor.VerifyDependencies();
@@ -175,8 +227,13 @@ public static partial class ModelEditorAdapter
                 throw new SourceFileChangedException();
             cancellation.Token.ThrowIfCancellationRequested();
             report?.Invoke(new BackendOperationProgress(Fraction: 1, TaskName: "Channel geometry is ready to save"));
+            string stagedPath = TerrainChannelGeometryPayloadCodec.PathFor(request.Model.AssetPath,
+                cleanup.DraftToken, cleanup.PayloadId + ".hdf");
+            if (!StringComparer.Ordinal.Equals(await HashFileAsync(stagedPath, cancellation.Token).ConfigureAwait(false), cleanup.MigratedSHA256))
+                throw new SourceFileChangedException();
+            cancellation.Token.ThrowIfCancellationRequested();
             keepDraftPayload = true;
-            return new("completed", snapshot, topology, request.SourceSHA256);
+            return new("completed", snapshot, topology, request.SourceSHA256, Cleanup: cleanup);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -189,13 +246,32 @@ public static partial class ModelEditorAdapter
             catch (OperationCanceledException) { }
             if (workingDirectory is not null && Directory.Exists(workingDirectory))
                 Directory.Delete(workingDirectory, recursive: true);
-            if (!keepDraftPayload && stagedPayloadPath is not null && File.Exists(stagedPayloadPath))
-            {
-                if (createdDraftToken && stagedDraftToken is not null)
-                    _ = TerrainInputImportService.Discard(request.Model.AssetPath, stagedDraftToken);
-                else File.Delete(stagedPayloadPath);
-            }
+            if (!keepDraftPayload && stagedCleanup is not null)
+                _ = TerrainChannelGeometryPayloadCodec.Discard(request.Model.AssetPath, stagedCleanup);
         }
+    }
+
+    /// <summary>
+    /// Discards one completed result that its parent draft did not adopt. An
+    /// existing terrain import token can own unrelated accepted payloads and
+    /// undo history, so this operation must never recursively delete the token.
+    /// Parent Save/Discard continue to own cleanup of the complete adopted draft.
+    /// </summary>
+    public static ChannelV6GeometryImportDiscardResponse DiscardChannelV6GeometryImport(
+        ChannelV6GeometryImportDiscardRequest request)
+    {
+        if (request.Model.Kind != "Terrain" || string.IsNullOrWhiteSpace(request.Model.ProjectPath))
+            throw new ArgumentException("Discarding Channel geometry imports requires the owning terrain project.");
+        ChannelV6GeometryImportCleanup cleanup = request.Cleanup
+            ?? throw new ArgumentException("The Channel geometry cleanup receipt is missing.");
+        if (!Guid.TryParseExact(cleanup.PayloadId, "N", out Guid payloadID)
+            || !StringComparer.Ordinal.Equals(payloadID.ToString("N"), cleanup.PayloadId) || !IsSHA256(cleanup.MigratedSHA256))
+            throw new ArgumentException("The Channel geometry cleanup receipt is invalid.");
+        string path = TerrainChannelGeometryPayloadCodec.PathFor(request.Model.AssetPath,
+            cleanup.DraftToken, cleanup.PayloadId + ".hdf");
+        if (File.Exists(path) && TerrainEditor.ReferencesChannelGeometryPayload(request.Model, cleanup))
+            throw new ArgumentException("The Channel geometry payload is still owned by the terrain draft or its undo/redo history.");
+        return TerrainChannelGeometryPayloadCodec.Discard(request.Model.AssetPath, cleanup);
     }
 
     private static async Task WatchCancellationAsync(BackendDuplexControlReader controls,

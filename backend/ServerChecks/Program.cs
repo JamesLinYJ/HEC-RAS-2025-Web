@@ -10,6 +10,37 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-terrain-save-commit", string terrainSaveOutput])
+            {
+                TextWriter protocol = Console.Out;
+                TerrainSaveCommitAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunTerrainSaveCommitAsync(terrainSaveOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--create-channel-v6-import-fixture", string channelV6FixtureOutput])
+            {
+                TextWriter protocol = Console.Out;
+                ChannelV6ImportFixture report;
+                Console.SetOut(Console.Error);
+                try { report = ServerAcceptance.CreateChannelV6ImportFixture(channelV6FixtureOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--run-channel-v6-import-http", string channelV6Base, string channelV6Output])
+            {
+                TextWriter protocol = Console.Out;
+                ChannelV6ImportReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunChannelV6ImportAsync(
+                    EnsureTrailingSlash(channelV6Base), channelV6Output); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-project-archive-download-http", string archiveBase, string archiveOutput])
             {
                 TextWriter protocol = Console.Out;
@@ -436,6 +467,9 @@ internal static class Program
             }
 
             Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-terrain-save-commit <new-output-directory>");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --create-channel-v6-import-fixture <new-output-directory>");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-channel-v6-import-http <loopback-base-url> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-boundary-inline-connection-http <loopback-base-url> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-gdb-deep-connect-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-mesh-generation-http <loopback-base-url> <new-output-directory>");

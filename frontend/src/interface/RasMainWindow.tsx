@@ -12,6 +12,7 @@ import { ConfirmActionControlDialog } from '../controls/ConfirmActionControlDial
 import { FramedContentDialog } from '../controls/FramedContentDialog';
 import { captureMapVisualizationLease, matchesMapVisualizationReceipt, type MapVisualizationLease } from '../shared/mapVisualizationMutation';
 import { captureProjectContextLease, matchesProjectContextCommit, type ProjectContextLease } from '../shared/projectContextMutation';
+import { captureModelSaveLease, matchesModelSaveCommit, trackModelSaveOperation, type ModelSaveLease } from '../shared/modelSaveMutation';
 import { useRasterCalculatorSessions } from '../shared/useRasterCalculatorSessions';
 import { clearPlanAnalysisDraftRegistry, emptyPlanAnalysisDraftRegistry, hasProtectedSourceWrite, matchesPlanSaveRecoveryAcknowledgement, publishPlanAnalysisDraft, type PlanAnalysisDraftPublication, type PlanSaveRecoveryAcknowledgement } from '../shared/planAnalysisDrafts';
 
@@ -62,6 +63,7 @@ export function RasMainWindow() {
   const [mapWriting, setMapWriting] = useState(false);
   const [mapRevision, setMapRevision] = useState(0);
   const projectWriteLease = useRef<ProjectContextLease | null>(null);
+  const modelSaveLease = useRef<ModelSaveLease | null>(null);
   const [projectWriting, setProjectWriting] = useState(false);
   const [backendRevision, setBackendRevision] = useState(0);
   const [dirtyOwners, setDirtyOwners] = useState<Set<string>>(() => new Set());
@@ -267,6 +269,46 @@ export function RasMainWindow() {
     projectWriteLease.current = null;
     setProjectWriting(false);
   }, []);
+  const onBeginModelSave = useCallback((source: WorkbenchContext, draftOwner: string, writeOwner: string, sourceRevision: string): string | null => {
+    if (modelSaveLease.current || referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current
+      || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current)) return null;
+    const lease = captureModelSaveLease(contextRef.current, source, draftOwner, writeOwner, dirtyOwnersRef.current, sourceRevision);
+    if (!lease) return null;
+    modelSaveLease.current = lease;
+    onDirtyStateChange(writeOwner, true);
+    return lease.id;
+  }, [onDirtyStateChange]);
+  const onTrackModelSave = useCallback((leaseID: string, operationID: string): boolean => {
+    const lease = modelSaveLease.current;
+    if (!lease || lease.id !== leaseID) return false;
+    const tracked = trackModelSaveOperation(lease, operationID);
+    if (!tracked) return false;
+    modelSaveLease.current = tracked;
+    return true;
+  }, []);
+  const onCommitModelSave = useCallback((source: WorkbenchContext, committed: WorkbenchContext,
+    leaseID: string, operationID: string): boolean => {
+    const lease = modelSaveLease.current;
+    if (!lease || lease.id !== leaseID || referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current
+      || !dirtyOwnersRef.current.has(lease.writeOwner)
+      || !matchesModelSaveCommit(lease, contextRef.current, source, committed, operationID)) return false;
+    const otherOwners = new Set(dirtyOwnersRef.current); otherOwners.delete(lease.writeOwner);
+    if (hasProtectedSourceWrite(otherOwners, planDraftRegistryRef.current)) return false;
+    try {
+      const next = mergeSessionReferenceContext(committed, contextRef.current, true);
+      // Adopt and consume the exact acknowledgement in one synchronous callback.
+      commitContext(next, { navigation: 'preserve' });
+      modelSaveLease.current = null;
+      onDirtyStateChange(lease.writeOwner, false);
+      return true;
+    } catch (error) { setRuntimeError(message(error)); return false; }
+  }, [commitContext, onDirtyStateChange]);
+  const onEndModelSave = useCallback((leaseID: string): void => {
+    const lease = modelSaveLease.current;
+    if (!lease || lease.id !== leaseID) return;
+    modelSaveLease.current = null;
+    onDirtyStateChange(lease.writeOwner, false);
+  }, [onDirtyStateChange]);
   const closeProject = useCallback(() => onContextChange(blankContext()), [onContextChange]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -283,7 +325,7 @@ export function RasMainWindow() {
     catch (error) { setRuntimeState('failed'); setRuntimeError(message(error)); }
   }, [backend]);
   useEffect(() => { void connect(); }, [connect]);
-  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, calculatorSessions, planAnalysisDrafts, onPlanAnalysisDraftChange, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting || projectWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, onBeginProjectContextMutation, onCommitProjectContextMutation, onEndProjectContextMutation, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
+  const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, calculatorSessions, planAnalysisDrafts, onPlanAnalysisDraftChange, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting || projectWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, onBeginProjectContextMutation, onCommitProjectContextMutation, onEndProjectContextMutation, onBeginModelSave, onTrackModelSave, onCommitModelSave, onEndModelSave, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
   const title = context.selectedAsset?.name ?? context.projectPath?.split(/[\\/]/).at(-1) ?? t('尚未打开工程', 'No project open');
 
   return <main className="ras-main-window">
@@ -294,7 +336,7 @@ export function RasMainWindow() {
       <RasContent activeFeature={activeFeature} {...props} />
       {showInspector && <aside className="ras-inspector" aria-label={t('属性', 'Properties')}><h2>{t('属性', 'Properties')}</h2>{context.selectedAsset ? <><dl><dt>{t('名称', 'Name')}</dt><dd>{context.selectedAsset.name}</dd><dt>{t('类型', 'Type')}</dt><dd>{assetKindLabel(context.selectedAsset.kind, language)}</dd><dt>{t('文件', 'File')}</dt><dd>{context.selectedAsset.path}</dd></dl><button onClick={() => onNavigate(context.selectedAsset?.kind.toLowerCase().includes('geometry') ? 'geometry' : 'editors')}>{t('打开编辑器', 'Open editor')}</button></> : <p>{t('选择工程中的对象查看属性。', 'Select a project object to inspect its properties.')}</p>}{runtimeError && <details className="ras-runtime-error"><summary>{t('服务连接失败', 'Server connection failed')}</summary><p>{t('无法连接 C# 服务，请确认服务已启动且当前地址可访问。', 'Cannot connect to the C# server. Confirm that it is running and reachable.')}</p><pre>{runtimeError}</pre></details>}</aside>}
     </div>
-    <footer className="ras-statusbar"><span role="status">{projectWriting ? t('正在更新工程连接…', 'Updating a project connection…') : mapWriting ? t('正在加入地图图层…', 'Adding a map layer…') : hasProtectedSourceWrite(dirtyOwners, planAnalysisDrafts) ? t('文件写入尚未确认完成…', 'File write is awaiting completion…') : referenceWriting ? t('正在提交外部来源…', 'Committing external source…') : dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
+    <footer className="ras-statusbar"><span role="status">{projectWriting ? t('正在更新工程连接…', 'Updating a project connection…') : mapWriting ? t('正在加入地图图层…', 'Adding a map layer…') : hasProtectedSourceWrite(dirtyOwners, planAnalysisDrafts) ? t('正在等待操作确认完成…', 'Awaiting operation completion…') : referenceWriting ? t('正在提交外部来源…', 'Committing external source…') : dirtyOwners.size > 0 ? t('有未保存的草稿', 'Unsaved drafts') : t('就绪', 'Ready')}</span><span>{context.projectPath ?? t('无活动工程', 'No active project')}</span><span>{runtimeState === 'ready' ? t('C# 服务已连接', 'C# server connected') : runtimeState === 'loading' ? t('正在连接 C# 服务', 'Connecting to C# server') : t('C# 服务未连接', 'C# server disconnected')}</span></footer>
     <ConfirmActionControlDialog
       open={pendingContext !== null}
       title={t('保留未保存的修改？', 'Keep unsaved changes?')}
