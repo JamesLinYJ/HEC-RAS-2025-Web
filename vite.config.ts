@@ -20,6 +20,7 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     rolldownOptions: {
+      input: { main: 'frontend/index.html', flood: 'frontend/flood.html' },
       output: {
         codeSplitting: {
           // Keep the 3D renderer lazy and cache its engine separately from the scene.

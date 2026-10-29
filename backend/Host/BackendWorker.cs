@@ -23,6 +23,8 @@ public static class BackendWorker
         "attributeTable.load",
         "attributeTable.transform",
         "backend.info",
+        "flood.scene",
+        "flood.compute",
         "boundary.initialConditions.attach",
         "boundary.initialConditions.inspect",
         "boundary.initialConditions.status",
@@ -321,6 +323,8 @@ public static class BackendWorker
                 "project.create" => ProjectWorkspaceService.Create(request.Parameters.Deserialize<ProjectWorkspaceCreateRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project creation parameters.")),
                 "project.save" => ProjectWorkspaceService.Save(request.Parameters.Deserialize<ProjectWorkspaceSaveRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project save parameters.")),
                 "runtime.gdal" => GdalRuntimeService.Inspect(),
+                "flood.scene" => FloodSimulationService.Describe(request.Parameters.Deserialize<FloodScenario>(BackendJson.Options) ?? throw new ArgumentException("Missing flood parameters.")),
+                "flood.compute" => await FloodSimulationService.RunAsync(request.Parameters.Deserialize<FloodScenario>(BackendJson.Options) ?? throw new ArgumentException("Missing flood parameters."), report, duplexControls),
                 "runtime.hdf" => HdfRuntimeService.Inspect(),
                 "runtime.dss" => DssRuntimeService.Inspect(),
                 "project.projection.export" => ProjectProjectionExportService.Export(request.Parameters.Deserialize<ProjectProjectionExportRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing project projection export request.")),
@@ -593,7 +597,7 @@ public static class BackendWorker
             return 0;
         }
 
-        catch (OperationCanceledException) when (method == "map.background.styles")
+        catch (OperationCanceledException) when (method is "map.background.styles" or "flood.compute")
         {
             responses.Complete(new { id, result = new { state = "canceled", cleanupComplete = true } }, streamProgress);
             return 0;

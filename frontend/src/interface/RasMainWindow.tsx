@@ -129,6 +129,7 @@ export function RasMainWindow() {
 
   const onNavigate = useCallback((feature: FeatureId) => {
     if (referenceWriteLease.current || mapWriteLease.current || projectWriteLease.current || hasProtectedSourceWrite(dirtyOwnersRef.current, planDraftRegistryRef.current)) return;
+    if (feature === 'dam-break') { window.location.assign('./flood.html'); return; }
     setActiveFeature(feature);
     window.history.replaceState(null, '', `#/${feature}`);
   }, []);

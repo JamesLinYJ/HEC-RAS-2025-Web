@@ -1,4 +1,4 @@
-/** Presentation-only scenario. Never serialize these values as a HEC-RAS model. */
+/** SI scenario inputs shared with the server flood operation. Times are minutes, rainfall mm/h. */
 export interface FloodScenario {
   name: string;
   rainfall: number;
@@ -49,7 +49,7 @@ export function minuteLabel(minute: number): string {
   return `${Math.floor(whole / 60).toString().padStart(2, '0')}:${(whole % 60).toString().padStart(2, '0')}:${Math.floor((minute - whole) * 60).toString().padStart(2, '0')}`;
 }
 
-export const SCENARIO_KEY = 'hecras.flood-studio.visual-scenario.v1';
+export const SCENARIO_KEY = 'flood-studio.scenario.v2';
 export function parseScenario(value: unknown): FloodScenario | null {
   if (!value || typeof value !== 'object') return null;
   const s = value as Record<string, unknown>;

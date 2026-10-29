@@ -574,6 +574,7 @@ public class SolverImpSWE : SolverImp, ISolver
 					faceBTerm[faceIndex] = 0.0;
 					faceAdvVarImp[faceIndex] = 0f;
 					weir.IsFaceWet[i] = false;
+					weir.SavedWeirVal[i] = 0.0;
 					continue;
 				}
 				bool sign = cellElevationWeirApproachVelTerm > cellElevation2WeirApproachVel2Term;
@@ -781,6 +782,20 @@ public class SolverImpSWE : SolverImp, ISolver
 		{
 			UpdateFaceMatrixCoeffRHSStartStop(ws, wsOld, dt, dt2Theta2negGrav, theta, start, stop);
 		}, loopSize);
+		// A dry crest also blocks the implicit continuity matrix. Zeroing only
+		// the final reported velocity allows the pressure solve to move water
+		// through a closed weir without a corresponding face flux.
+		foreach (Weir weir in HydraulicStructures.Weirs)
+		{
+			for (int i = 0; i < weir.Faces.Length; i++)
+			{
+				if (!weir.IsFaceWet[i])
+				{
+					FaceCoeff[weir.Faces[i]] = 0.0;
+					FaceRHS[weir.Faces[i]] = 0.0;
+				}
+			}
+		}
 		ticks[21] += stopwatch.ElapsedTicks;
 	}
 
@@ -929,6 +944,7 @@ public class SolverImpSWE : SolverImp, ISolver
 		double dtGravTerm = dt * dt * grav * Control.ImplicitFactor * Control.ImplicitFactor;
 		for (int i = 0; i < weir.Faces.Length; i++)
 		{
+			if (!weir.IsFaceWet[i]) continue;
 			int faceIndex = weir.Faces[i];
 			int faceCellA = _meshConnectivity.FaceCellA[faceIndex];
 			int faceCellB = _meshConnectivity.FaceCellB[faceIndex];

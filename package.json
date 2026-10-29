@@ -45,7 +45,8 @@
     "test:result-layer-settings": "node frontend/src/features/map/results-layer-settings/verify-result-layer-settings.mjs",
     "test:result-layer-react": "node frontend/src/features/map/results-layer-settings/verify-result-layer-react.mjs",
     "test:osm-style-picker": "node scripts/verify-osm-style-picker.mjs",
-    "test:flood-scenario": "node scripts/verify-flood-scenario.mjs"
+    "test:flood-scenario": "node scripts/verify-flood-scenario.mjs",
+    "test:flood-compute": "node scripts/verify-flood-compute.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

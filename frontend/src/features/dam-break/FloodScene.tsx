@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { clamp, ease, rainAt, type FloodScenario } from './scenario';
+import { clamp } from './scenario';
+import type { FloodGeometry, FloodSample } from './results';
 
 export interface SceneControls { reset(): void; zoom(direction: number): void; overhead(): void }
 export interface FloodSceneProps {
-  scenario: FloodScenario;
+  geometry: FloodGeometry | null;
+  sample: FloodSample | null;
   minute: number;
   playing: boolean;
   active: boolean;
@@ -17,65 +19,38 @@ export interface FloodSceneProps {
 }
 
 const riverX = (z: number) => Math.sin((z + 24) * 0.034) * 11 + Math.sin((z + 24) * 0.074) * 3;
-const bed = (z: number) => 3.8 - (z + 24) * 0.035;
-function elevation(x: number, z: number): number {
-  const distance = Math.abs(x - riverX(z));
-  const width = z < -25 ? 11 + Math.sin(clamp((-z - 25) / 70) * Math.PI) * 10 : 5.5 + clamp((z + 25) / 80) * 4;
-  const flank = Math.max(0, distance - width);
-  const ridge = Math.sin(z * 0.07 + x * 0.035) * 3.5 + Math.sin(x * 0.15 - z * 0.09) * 1.7 + Math.cos(z * 0.22 + x * 0.13) * 0.7;
-  return bed(z) + flank * 0.32 + flank * flank * 0.0025 + ridge * ease(flank / 24) - Math.exp(-distance * distance / 28) * 1.5;
-}
-
 const waterVertex = `
-uniform float clockTime;
-uniform float opening;
-uniform float front;
-uniform float reservoir;
-uniform float rainfall;
-uniform float breachWidth;
 attribute float ground;
+attribute vec2 velocity;
+attribute float wetCell;
+varying float cellIsWet;
 varying vec3 worldPosition;
 varying float depth;
-varying float along;
+varying vec2 flow;
 void main() {
-  vec3 p = position;
-  float z = p.z;
-  float floorHeight = 3.8 - (z + 24.0) * .035;
-  float downstream = smoothstep(-26.0, -21.0, z);
-  float waveFront = 1.0 - smoothstep(front - 7.0, front + 3.0, z);
-  float lake = 8.0 + reservoir * .24 + rainfall * 1.4 - opening * 3.2;
-  float flood = floorHeight + .25 + waveFront * opening * (4.6 + breachWidth * 2.3) * exp(-max(0., z+24.) * .006);
-  float level = mix(lake, flood, downstream);
-  p.y = level + sin(p.x*.58 + clockTime*1.5 + p.z*.32)*.10 + sin(p.z*.85-clockTime*2.4)*.07;
-  depth = level - ground;
-  worldPosition = p;
-  along = downstream;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(p,1.0);
+  cellIsWet = wetCell;
+  worldPosition = position;
+  depth = position.y - ground;
+  flow = velocity;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
 }`;
 const waterFragment = `
 uniform float clockTime;
-uniform float opening;
+varying float cellIsWet;
 varying vec3 worldPosition;
 varying float depth;
-varying float along;
+varying vec2 flow;
 void main(){
-  if(depth < .08) discard;
-  vec3 p = worldPosition;
-  float pattern = sin(p.x*.91+p.z*.66-clockTime*2.) * sin(p.z*1.18+clockTime*1.4+p.x*.17);
-  float ribbon = pow(max(0.,sin(p.z*2.3-clockTime*4.+sin(p.x*.7))), 18.0);
-  vec3 deep = vec3(.055,.23,.35);
-  vec3 shallow = vec3(.24,.49,.63);
-  vec3 color = mix(shallow, deep, clamp(depth/12.,0.,1.));
-  color += pattern*.022 + ribbon*.075*(.3+along*opening);
-  float edge = 1.-smoothstep(.1,.55,depth);
-  color = mix(color,vec3(.67,.81,.86),edge*.7);
-  vec3 eye = normalize(cameraPosition-p);
-  float fresnel = pow(1.-max(0.,eye.y),3.);
-  color = mix(color,vec3(.61,.72,.81),fresnel*.25);
-  gl_FragColor = vec4(color,.92);
+  if(depth < .01 || cellIsWet < .5) discard;
+  vec2 p = worldPosition.xz - flow * clockTime / 6.;
+  float pattern = sin(p.x*1.3+p.y*.8) * sin(p.y*1.4+p.x*.2);
+  vec3 color = mix(vec3(.24,.49,.63),vec3(.055,.23,.35),clamp(depth/12.,0.,1.));
+  color += pattern*.025;
+  color = mix(color,vec3(.67,.81,.86),(1.-smoothstep(.01,.35,depth))*.7);
+  gl_FragColor = vec4(color,.94);
 }`;
 
-/** Three.js concept landscape, deliberately independent of the numerical solver. */
+/** Display transform is 1:6 horizontally. Surface heights and vectors come from recorded SWE output. */
 export function FloodScene(props: FloodSceneProps) {
   const host = useRef<HTMLDivElement>(null);
   const latest = useRef(props);
@@ -86,7 +61,17 @@ export function FloodScene(props: FloodSceneProps) {
 
   useEffect(() => {
     const element = host.current;
-    if (!element) return;
+    const model = props.geometry;
+    if (!element || !model) return;
+    const xs = [...new Set(model.vertices.map(v=>v[0]/6))].sort((a,b)=>a-b);
+    const zs = [...new Set(model.vertices.map(v=>v[1]/6))].sort((a,b)=>a-b);
+    const elevation = (x:number,z:number) => {
+      const ix=clamp(xs.reduce((last,v,i)=>v<=x?i:last,0),0,xs.length-2), iz=clamp(zs.reduce((last,v,i)=>v<=z?i:last,0),0,zs.length-2);
+      const tx=clamp((x-xs[ix])/(xs[ix+1]-xs[ix])),tz=clamp((z-zs[iz])/(zs[iz+1]-zs[iz]));
+      const a=model.vertices[iz*xs.length+ix][2],b=model.vertices[iz*xs.length+ix+1][2];
+      const c=model.vertices[(iz+1)*xs.length+ix][2],d=model.vertices[(iz+1)*xs.length+ix+1][2];
+      return (a+(b-a)*tx)*(1-tz)+(c+(d-c)*tx)*tz;
+    };
     setError(null); setReady(false);
     let renderer: THREE.WebGLRenderer;
     try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' }); }
@@ -96,10 +81,27 @@ export function FloodScene(props: FloodSceneProps) {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.2;
+    const textures:THREE.Texture[]=[];
+    const manager=new THREE.LoadingManager(()=>setReady(true));
+    manager.onError=()=>setError('场景材质加载失败，请重试。');
+    const textureLoader=new THREE.TextureLoader(manager);
+    const loadTexture=(file:string,color=false)=>{
+      const texture=textureLoader.load(`${import.meta.env.BASE_URL}materials/flood/${file}`);
+      texture.wrapS=texture.wrapT=THREE.RepeatWrapping;
+      texture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+      if(color)texture.colorSpace=THREE.SRGBColorSpace;
+      textures.push(texture);return texture;
+    };
+    const groundColor=loadTexture('rocky_terrain_02_diff_1k.jpg',true);
+    const groundNormal=loadTexture('rocky_terrain_02_nor_gl_1k.jpg');
+    const groundArm=loadTexture('rocky_terrain_02_arm_1k.jpg');
+    const concreteColor=loadTexture('concrete_floor_worn_001_diff_1k.jpg',true);
+    const concreteNormal=loadTexture('concrete_floor_worn_001_nor_gl_1k.jpg');
+    const concreteArm=loadTexture('concrete_floor_worn_001_arm_1k.jpg');
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     const canvas = renderer.domElement;
-    canvas.setAttribute('aria-label', '河谷三维演示，可拖动旋转、滚轮缩放');
+    canvas.setAttribute('aria-label', '河谷推演结果，可拖动旋转、滚轮缩放');
     canvas.setAttribute('role', 'img');
     canvas.tabIndex = 0;
     element.appendChild(canvas);
@@ -140,21 +142,24 @@ export function FloodScene(props: FloodSceneProps) {
     scene.add(sun);
     const fill = new THREE.DirectionalLight('#9cacbd', 0.75); fill.position.set(70, 40, -90); scene.add(fill);
 
-    const terrainGeo = new THREE.PlaneGeometry(140, 200, 140, 200);
-    terrainGeo.rotateX(-Math.PI / 2);
-    const vertices = terrainGeo.attributes.position;
-    const colors: number[] = [], ground: number[] = [];
-    const low = new THREE.Color('#74756c'), high = new THREE.Color('#b0aa9c'), rock = new THREE.Color('#989a91');
-    for (let i = 0; i < vertices.count; i++) {
-      const x = vertices.getX(i), z = vertices.getZ(i), y = elevation(x, z);
-      vertices.setY(i, y); ground.push(y);
-      const color = low.clone().lerp(high, clamp((y - 5) / 45));
-      color.lerp(rock, clamp(Math.sin(x * 0.28 + z * 0.19) * 0.18));
-      colors.push(color.r, color.g, color.b);
-    }
-    terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const terrainPositions:number[]=[],ground:number[]=[],cellForVertex:number[]=[],nodeForVertex:number[]=[];
+    const low = new THREE.Color('#d4c9ad'), high = new THREE.Color('#efeee4');
+    model.cells.forEach((corners,cell)=>{
+      for(const corner of [0,1,2,0,2,3]){
+        const [x,z,y]=model.vertices[corners[corner]];
+        terrainPositions.push(x/6,y,z/6);ground.push(y);cellForVertex.push(cell);nodeForVertex.push(corners[corner]);
+      }
+    });
+    const terrainGeo=new THREE.BufferGeometry();
+    terrainGeo.setAttribute('position',new THREE.Float32BufferAttribute(model.vertices.flatMap(([x,z,y])=>[x/6,y,z/6]),3));
+    terrainGeo.setAttribute('uv',new THREE.Float32BufferAttribute(model.vertices.flatMap(([x,z])=>[(x+420)/90,(z+600)/90]),2));
+    terrainGeo.setAttribute('color',new THREE.Float32BufferAttribute(model.vertices.flatMap(([, ,y])=>{
+      const c=low.clone().lerp(high,clamp((y-5)/45));return [c.r,c.g,c.b];
+    }),3));
+    terrainGeo.setIndex(model.cells.flatMap(c=>[c[0],c[2],c[1],c[0],c[3],c[2]]));
     terrainGeo.computeVertexNormals();
-    const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, metalness: 0.02 }));
+    const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({vertexColors:true,map:groundColor,normalMap:groundNormal,
+      normalScale:new THREE.Vector2(1.15,1.15),roughnessMap:groundArm,aoMap:groundArm,aoMapIntensity:.7,roughness:1,side:THREE.DoubleSide}));
     terrain.receiveShadow = true; scene.add(terrain);
 
     // A cut terrain edge gives the scene the legibility of a physical terrain model.
@@ -181,34 +186,47 @@ export function FloodScene(props: FloodSceneProps) {
     const contourGeo=new THREE.BufferGeometry(); contourGeo.setAttribute('position',new THREE.Float32BufferAttribute(contourPoints,3));
     const contours=new THREE.LineSegments(contourGeo,new THREE.LineBasicMaterial({color:'#dfded3',transparent:true,opacity:0.17}));scene.add(contours);
 
-    const waterGeo = terrainGeo.clone();
+    const waterGeo = new THREE.BufferGeometry();
+    waterGeo.setAttribute('position',new THREE.Float32BufferAttribute(terrainPositions,3));
     waterGeo.setAttribute('ground',new THREE.Float32BufferAttribute(ground,1));
-    const waterMat = new THREE.ShaderMaterial({ vertexShader:waterVertex,fragmentShader:waterFragment,transparent:true,depthWrite:false,
-      uniforms:{clockTime:{value:0},opening:{value:0},front:{value:-30},reservoir:{value:18},rainfall:{value:0},breachWidth:{value:0.6}} });
-    const water=new THREE.Mesh(waterGeo,waterMat); water.frustumCulled=false; water.renderOrder=2;scene.add(water);
-
+    waterGeo.setAttribute('wetCell',new THREE.Float32BufferAttribute(new Float32Array(ground.length),1));
+    waterGeo.setAttribute('velocity',new THREE.Float32BufferAttribute(new Float32Array(ground.length*2),2));
+    const waterMat = new THREE.ShaderMaterial({vertexShader:waterVertex,fragmentShader:waterFragment,transparent:true,depthWrite:false,side:THREE.DoubleSide,
+      uniforms:{clockTime:{value:0}}});
+    const water=new THREE.Mesh(waterGeo,waterMat);water.frustumCulled=false;water.renderOrder=2;scene.add(water);
     const dam=new THREE.Group();scene.add(dam);
-    const damMaterial=new THREE.MeshStandardMaterial({color:'#c2c3b4',roughness:.8});
-    const damBlocks:THREE.Mesh[]=[];
-    const damGeo=new THREE.BoxGeometry(2.1,12,4.5);
-    for(let i=0;i<25;i++) {
-      const block=new THREE.Mesh(damGeo,damMaterial);block.position.set((i-12)*2.1,10.4,-24);block.castShadow=true;block.receiveShadow=true;dam.add(block);damBlocks.push(block);
-      const cap=new THREE.Mesh(new THREE.BoxGeometry(2.08,.5,5),new THREE.MeshStandardMaterial({color:'#e1ddc9',roughness:.8}));cap.position.y=6.2;block.add(cap);
-    }
-    const rail=new THREE.Mesh(new THREE.BoxGeometry(57,.25,.25),new THREE.MeshStandardMaterial({color:'#edd8a3'}));rail.position.set(0,17,-26.2);dam.add(rail);
+    const damMaterial=new THREE.MeshStandardMaterial({color:'#e3ded0',map:concreteColor,normalMap:concreteNormal,
+      normalScale:new THREE.Vector2(.65,.65),roughnessMap:concreteArm,aoMap:concreteArm,aoMapIntensity:.55,roughness:1});
+    const damBlocks=model.damEdges.map(edge=>{
+      const a=model.vertices[edge[0]],b=model.vertices[edge[1]];
+      const bottom=Math.min(a[2],b[2]);
+      const box=new THREE.BoxGeometry(Math.abs(a[0]-b[0])/6,1,3);
+      const uv=box.attributes.uv;for(let i=0;i<uv.count;i++)uv.setXY(i,uv.getX(i)*Math.abs(a[0]-b[0])/12,uv.getY(i)*Math.max(1,model.damCrest-bottom)/5);
+      const block=new THREE.Mesh(box,damMaterial);
+      block.position.set((a[0]+b[0])/12,0,model.damY/6);block.castShadow=true;block.receiveShadow=true;dam.add(block);
+      return {block,bottom};
+    });
 
     // Reproducible vegetation and settlement positions; no external imagery or tile traffic.
     const rand=(n:number)=>{const v=Math.sin(n*127.1+311.7)*43758.5453;return v-Math.floor(v);};
-    const trees=new THREE.InstancedMesh(new THREE.ConeGeometry(.85,3.1,5),new THREE.MeshStandardMaterial({color:'#404b46',roughness:1}),480);
+    const trees=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,1),new THREE.MeshStandardMaterial({color:'#536044',roughness:1}),1440);
+    const trunks=new THREE.InstancedMesh(new THREE.CylinderGeometry(.09,.15,2.6,5),new THREE.MeshStandardMaterial({color:'#675441',roughness:1}),480);
     let count=0;const transform=new THREE.Object3D();
     for(let i=0;i<900&&count<480;i++) {
       const x=rand(i*2)*132-66,z=rand(i*2+1)*192-96,y=elevation(x,z);
       if(y<9||y>38||Math.abs(z+24)<5||Math.abs(x-riverX(z))<17)continue;
-      transform.position.set(x,y+1.4,z);transform.scale.setScalar(.65+rand(i+80)*.8);transform.rotation.y=rand(i+51)*6.28;transform.updateMatrix();trees.setMatrixAt(count++,transform.matrix);
+      const scale=.65+rand(i+80)*.8;
+      transform.position.set(x,y+1.2*scale,z);transform.scale.setScalar(scale);transform.rotation.y=rand(i+51)*6.28;transform.updateMatrix();trunks.setMatrixAt(count,transform.matrix);
+      for(let lobe=0;lobe<3;lobe++){
+        const angle=lobe*2.1+rand(i)*6.28;transform.position.set(x+Math.cos(angle)*.45*scale,y+(2+lobe*.25)*scale,z+Math.sin(angle)*.45*scale);
+        transform.scale.set(scale*(.75+rand(i+lobe)*.4),scale*(.9+rand(i+lobe+10)*.7),scale*.85);transform.updateMatrix();trees.setMatrixAt(count*3+lobe,transform.matrix);
+        trees.setColorAt(count*3+lobe,new THREE.Color('#46583b').lerp(new THREE.Color('#7d8053'),rand(i+lobe+120)*.6));
+      }
+      count++;
     }
-    trees.count=count;trees.castShadow=true;scene.add(trees);
+    trees.count=count*3;trunks.count=count;trees.castShadow=true;trunks.castShadow=true;scene.add(trees,trunks);
     const settlement=new THREE.Group();scene.add(settlement);
-    const wallMaterial=new THREE.MeshStandardMaterial({color:'#e1dcd0',roughness:.9});
+    const wallMaterial=new THREE.MeshStandardMaterial({color:'#e1dcd0',map:concreteColor,normalMap:concreteNormal,roughness:.9});
     const roofMaterial=new THREE.MeshStandardMaterial({color:'#7d7463',roughness:.85});
     for(let i=0;i<25;i++) {
       const z=33+Math.floor(i/5)*7,x=riverX(z)+16+(i%5)*4;
@@ -223,12 +241,14 @@ export function FloodScene(props: FloodSceneProps) {
     const rainCount=1700,rainPositions=new Float32Array(rainCount*6);
     const rainGeo=new THREE.BufferGeometry();rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPositions,3).setUsage(THREE.DynamicDrawUsage));
     const rain=new THREE.LineSegments(rainGeo,new THREE.LineBasicMaterial({color:'#a7b9c8',transparent:true,opacity:.27,depthWrite:false}));rain.frustumCulled=false;rain.renderOrder=4;scene.add(rain);
-    const foamCount=200,foamPositions=new Float32Array(foamCount*3);
+    const foamCount=model.cells.length,foamPositions=new Float32Array(foamCount*3);
     const foamGeo=new THREE.BufferGeometry();foamGeo.setAttribute('position',new THREE.BufferAttribute(foamPositions,3).setUsage(THREE.DynamicDrawUsage));
     const foam=new THREE.Points(foamGeo,new THREE.PointsMaterial({color:'#deecf0',size:.45,transparent:true,opacity:.72,depthWrite:false}));foam.renderOrder=3;foam.frustumCulled=false;scene.add(foam);
 
     const resize=()=>{const {width,height}=element.getBoundingClientRect();if(width<1||height<1)return;renderer.setSize(width,height);camera.aspect=width/height;camera.fov=camera.aspect<1.2?52:37;camera.updateProjectionMatrix();};
     const observer=new ResizeObserver(resize);observer.observe(element);resize();
+    const nodeCount=model.vertices.length;
+    const nodeSum=new Float32Array(nodeCount*2),nodeWeight=new Float32Array(nodeCount*2);
     let last=0,visualClock=0,disposed=false,visible=true;
     const animate=(time:number)=>{
       if(disposed)return;
@@ -236,36 +256,47 @@ export function FloodScene(props: FloodSceneProps) {
       if(!p.active || !visible || document.hidden){last=time;return;}
       const dt=last?Math.min((time-last)/1000,.08):0;last=time;
       if(p.playing&&!p.reducedMotion)visualClock+=dt;
-      const s=p.scenario,opening=ease((p.minute-s.breachStart)/s.breachDuration);
-      const wave=clamp((p.minute-s.breachStart)/65);
-      const currentRain=rainAt(s,p.minute),front=-28+wave*150;
+      const sample=p.sample, count=model.cells.length;
       waterMat.uniforms.clockTime.value=visualClock;
-      waterMat.uniforms.opening.value=opening;
-      waterMat.uniforms.front.value=front;
-      waterMat.uniforms.reservoir.value=s.reservoirLevel;
-      waterMat.uniforms.rainfall.value=clamp(p.minute/s.stormDuration)*s.rainfall/120;
-      waterMat.uniforms.breachWidth.value=s.breachWidth/100;
-      for(let i=0;i<damBlocks.length;i++){
-        const x=Math.abs(i-12)*2.1,halfWidth=(s.breachWidth/100)*19;
-        const lowered=opening*(1-ease((x-halfWidth*.65)/(halfWidth*.4)));
-        damBlocks[i].scale.y=1-lowered*.93;damBlocks[i].position.y=4.4+6*damBlocks[i].scale.y;
+      const positions=waterGeo.attributes.position, velocities=waterGeo.attributes.velocity,wetCells=waterGeo.attributes.wetCell;
+      nodeSum.fill(0);nodeWeight.fill(0);
+      // Reconstruct a continuous display surface from wet cell values. Keep
+      // separate nodes on either bank of the dam so its head is never averaged away.
+      for(let cell=0;cell<count;cell++){
+        const upstream=model.centers[cell][1]<model.damY;
+        const level=sample?sample.values[cell]:(upstream?model.reservoirStage:-1000);
+        const wet=sample?sample.values[count+cell]>.01:upstream;
+        if(!wet)continue;
+        for(const node of model.cells[cell]){const index=node+(upstream?0:nodeCount);nodeSum[index]+=level;nodeWeight[index]++;}
       }
-      rail.visible=opening<.12;
+      for(let i=0;i<positions.count;i++){
+        const cell=cellForVertex[i],upstream=model.centers[cell][1]<model.damY,node=nodeForVertex[i]+(upstream?0:nodeCount);
+        positions.setY(i,nodeWeight[node]>0?nodeSum[node]/nodeWeight[node]:-1000);
+        wetCells.setX(i,(sample?sample.values[count+cell]>.01:upstream)?1:0);
+        velocities.setXY(i,sample?.values[count*2+cell]??0,sample?.values[count*3+cell]??0);
+      }
+      positions.needsUpdate=true;velocities.needsUpdate=true;wetCells.needsUpdate=true;
+      damBlocks.forEach(({block,bottom},i)=>{
+        const top=sample?.damCrests[i]??Math.max(model.damCrest,bottom);
+        block.scale.y=Math.max(.01,top-bottom);block.position.y=bottom+block.scale.y/2;
+      });
       contours.visible=p.showContours;settlement.visible=p.showBuildings;
+      const currentRain=sample?.rainRate??0;
       rain.visible=p.showRain&&currentRain>0&&!p.reducedMotion;
-      const drops=Math.floor(rainCount*currentRain/120);rainGeo.setDrawRange(0,drops*2);
-      if(rain.visible)for(let i=0;i<drops;i++) {
-        const x=rand(i*3)*140-70,z=rand(i*3+1)*200-100;
-        const y=5+((rand(i*3+2)*65-visualClock*32)%65+65)%65;
-        rainPositions.set([x,y,z,x-.6,y+2.1,z+.25],i*6);
+      rainGeo.setDrawRange(0,Math.floor(rainCount*currentRain/120)*2);
+      if(rain.visible)for(let i=0;i<rainCount;i++){
+        const x=rand(i*3)*144-72,z=rand(i*3+1)*204-102,y=16+((rand(i*3+2)*75-visualClock*35)%75+75)%75;
+        rainPositions.set([x,y,z,x-.65,y+2.7,z-.35],i*6);
       }
       rainGeo.attributes.position.needsUpdate=true;
-      foam.visible=opening>.05;
-      if(foam.visible)for(let i=0;i<foamCount;i++){
-        const progress=((rand(i+7)+visualClock*.08)%1),z=-24+progress*Math.max(1,front+24);
-        const x=riverX(z)+(rand(i+800)-.5)*(7+opening*10);
-        const level=bed(z)+.25+opening*(4.6+s.breachWidth*.023)*Math.exp(-Math.max(0,z+24)*.006);
-        foamPositions.set([x,level+.22+Math.sin(i+visualClock*3)*.06,z],i*3);
+      foam.visible=Boolean(sample);
+      if(sample)for(let i=0;i<foamCount;i++){
+        const vx=sample.values[count*2+i],vy=sample.values[count*3+i],speed=Math.hypot(vx,vy);
+        const phase=((visualClock*speed/10+rand(i))%1)-.5;
+        const [x,z]=model.centers[i],level=sample.values[i];
+        // Moving velocity glyphs stay inside their source cell; they are not generated flood fronts.
+        const length=Math.min(8,Math.sqrt(model.areas[i])*.4),wet=sample.values[count+i]>.02&&speed>.03;
+        foamPositions.set([x/6+(speed?vx/speed:0)*phase*length/6,wet?level+.08:-1000,z/6+(speed?vy/speed:0)*phase*length/6],i*3);
       }
       foamGeo.attributes.position.needsUpdate=true;
       orbit.update();renderer.render(scene,camera);
@@ -275,16 +306,16 @@ export function FloodScene(props: FloodSceneProps) {
     document.addEventListener('visibilitychange',syncLoop);
     const contextLost=(event:Event)=>{event.preventDefault();renderer.setAnimationLoop(null);setError('三维绘图连接已中断，场景参数仍保留。');};
     canvas.addEventListener('webglcontextlost',contextLost);
-    syncLoop();setReady(true);
+    syncLoop();
     return()=>{
       disposed=true;renderer.setAnimationLoop(null);observer.disconnect();intersection.disconnect();
       document.removeEventListener('visibilitychange',syncLoop);canvas.removeEventListener('keydown',key);canvas.removeEventListener('webglcontextlost',contextLost);
       orbit.dispose();props.controls.current=null;
       const geometries=new Set<THREE.BufferGeometry>(),materials=new Set<THREE.Material>();
       scene.traverse(node=>{const mesh=node as THREE.Mesh;if(mesh.geometry)geometries.add(mesh.geometry);if(mesh.material)(Array.isArray(mesh.material)?mesh.material:[mesh.material]).forEach(m=>materials.add(m));});
-      geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());trees.dispose();renderer.dispose();renderer.forceContextLoss();canvas.remove();
+      geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());trees.dispose();trunks.dispose();textures.forEach(texture=>texture.dispose());renderer.dispose();renderer.forceContextLoss();canvas.remove();
     };
-  },[restart]);
+  },[restart,props.geometry]);
 
   return <div className="flood-scene" ref={host} data-scene-ready={ready && !error}>
     {!ready&&!error&&<div className="flood-scene-message"><span className="flood-loader"/><strong>正在构建三维河谷</strong><span>地形、水体与降雨</span></div>}

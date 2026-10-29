@@ -172,7 +172,7 @@ public sealed class OperationManager : IHostedService
             if (!operation.CancelRequested)
             {
                 operation.CancelRequested = true;
-                if (operation.Method == "map.background.styles" && operation.State == "queued")
+                if (operation.Method is ("map.background.styles" or "flood.compute") && operation.State == "queued")
                     operation.QueueCancellation.Cancel();
                 operation.LastAccess = DateTimeOffset.UtcNow;
                 if (operation.PlanCancellation is PlanCancellationFiles cancellation)
@@ -297,7 +297,7 @@ public sealed class OperationManager : IHostedService
                 }
             }
         }
-        catch (OperationCanceledException) when (operation.Method == "map.background.styles" && operation.CancelRequested)
+        catch (OperationCanceledException) when (operation.Method is ("map.background.styles" or "flood.compute") && operation.CancelRequested)
         {
             lock (operation.Gate)
                 if (!operation.IsTerminal) SetTerminalLocked(operation, "canceled", null, null);
@@ -435,6 +435,7 @@ public sealed class OperationManager : IHostedService
     {
         int maximumLineCharacters = operation.Method is "map.resultRender" or "map.associations.load" or "map.background.render"
             or "topology.mapCommand.preview" or "topology.vectorSource.inspect"
+            or "flood.compute"
             ? MaximumLargeResultLineCharacters : MaximumProtocolLineCharacters;
         var lines = new BoundedProtocolLineReader(process.StandardOutput, maximumLineCharacters);
         string? line;
