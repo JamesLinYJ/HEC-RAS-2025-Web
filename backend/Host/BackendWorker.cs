@@ -503,7 +503,7 @@ public static class BackendWorker
                 "map.associations.load" => AssociatedMapLayersService.Load(request.Parameters.Deserialize<AssociatedMapLayersRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing associated map layer request.")),
                 "map.associationStyle.load" => AssociatedRasterStyleService.Load(request.Parameters.Deserialize<AssociatedRasterStyleRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing associated raster style request.")),
                 "map.associationStyle.apply" => AssociatedRasterStyleService.Apply(request.Parameters.Deserialize<AssociatedRasterStyleApplyRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing associated raster style request.")),
-                "map.background.styles" => await BackgroundMapService.GetStylesAsync(request.Parameters.Deserialize<BackgroundMapStylesRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing background map styles request.")),
+                "map.background.styles" => await GetBackgroundStylesAsync(request.Parameters.Deserialize<BackgroundMapStylesRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing background map styles request."), duplexControls),
                 "map.background.cache" => BackgroundMapService.Cache(request.Parameters.Deserialize<BackgroundMapCacheRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing background map cache request.")),
                 "map.background.render" => await BackgroundMapService.RenderAsync(request.Parameters.Deserialize<BackgroundMapRenderRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing background map render request.")),
                 "map.tree.load" => MapTreeService.Load(request.Parameters.Deserialize<MapTreeRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing map tree request.")),
@@ -593,6 +593,11 @@ public static class BackendWorker
             return 0;
         }
 
+        catch (OperationCanceledException) when (method == "map.background.styles")
+        {
+            responses.Complete(new { id, result = new { state = "canceled", cleanupComplete = true } }, streamProgress);
+            return 0;
+        }
         catch (FeatureQueryCanceledException) when (method is "featureQuery.query" or "featureQuery.save" or "featureQuery.suggest")
         {
             responses.Complete(new { id, result = new { state = "canceled", cleanupComplete = true } }, streamProgress);
@@ -621,6 +626,27 @@ public static class BackendWorker
             // The parent closes its control writer after receiving that terminal frame.
             if (duplexControls is not null) await duplexControls.DisposeAsync();
         }
+    }
+
+    private static async Task<BackgroundMapStylesResult> GetBackgroundStylesAsync(BackgroundMapStylesRequest request,
+        BackendDuplexControlReader? controls)
+    {
+        if (controls is null) return await BackgroundMapService.GetStylesAsync(request).ConfigureAwait(false);
+        using var cancellation = new CancellationTokenSource();
+        using var stop = new CancellationTokenSource();
+        Task pump = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (BackendDuplexControlFrame frame in controls.ReadAllAsync(stop.Token).ConfigureAwait(false))
+                    if (frame.Control.TryGetProperty("type", out JsonElement type) &&
+                        type.ValueKind == JsonValueKind.String && type.GetString() == "cancel")
+                        cancellation.Cancel();
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        });
+        try { return await BackgroundMapService.GetStylesAsync(request, cancellation.Token).ConfigureAwait(false); }
+        finally { stop.Cancel(); await pump.ConfigureAwait(false); }
     }
 
     private static ResultPlanContextSnapshot InspectResultPlanContext(ResultPlanContextRequest request) =>

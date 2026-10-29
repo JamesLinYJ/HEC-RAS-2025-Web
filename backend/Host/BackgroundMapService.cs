@@ -37,77 +37,131 @@ public static partial class BackgroundMapService
     private static readonly BackgroundMapTileDiskCache OsmTileCache =
         new(Path.Combine(Path.GetTempPath(), "OSMTiles"));
 
-    public static async Task<BackgroundMapStylesResult> GetStylesAsync(BackgroundMapStylesRequest request,
+    private static readonly TimeSpan StyleCatalogBudget = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan SingleStyleBudget = TimeSpan.FromSeconds(60);
+    private const int MaximumStyleCount = 32;
+    private const int MaximumStyleCatalogBytes = 128 * 1024;
+    private const int MaximumStylePreviewBytes = 1024 * 1024;
+    private const long MaximumTotalStylePreviewBytes = 4L * 1024 * 1024;
+    private const int MaximumStyleDescriptionBytes = 4 * 1024;
+    private const int MaximumConcurrentStyleRequests = 4;
+
+    public static Task<BackgroundMapStylesResult> GetStylesAsync(BackgroundMapStylesRequest request,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return GetStylesAsync(request, Http, OsmBaseUrl,
+            request.StyleID is null ? StyleCatalogBudget : SingleStyleBudget, cancellationToken);
+    }
+
+    // Injectable transport and budget also allow deterministic protocol checks without a live service.
+    internal static async Task<BackgroundMapStylesResult> GetStylesAsync(BackgroundMapStylesRequest request,
+        HttpClient http, string baseUrl, TimeSpan budget, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.RequestID))
             throw new ArgumentException("A style-list request identity is required.", nameof(request));
-
+        if (request.StyleID is not null && (!IsSafeStyleID(request.StyleID) || request.CatalogOnly))
+            throw new ArgumentException("A selected style ID must be valid and cannot be combined with catalog-only mode.", nameof(request));
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(budget);
+        CancellationToken token = deadline.Token;
         string[] styleIDs;
         string? warning = null;
         try
         {
-            using HttpResponseMessage response = await Http.GetAsync(OsmBaseUrl + "/styles",
-                HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            using HttpResponseMessage response = await http.GetAsync(baseUrl + "/styles",
+                HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
-            styleIDs = await response.Content.ReadFromJsonAsync<string[]>(cancellationToken: cancellationToken)
-                .ConfigureAwait(false) ?? [];
+            byte[] body = await ReadStyleBodyAsync(response.Content, MaximumStyleCatalogBytes, token).ConfigureAwait(false);
+            styleIDs = JsonSerializer.Deserialize<string[]>(body) ?? [];
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is HttpRequestException or JsonException or IOException ||
-                                           exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException or IOException or OperationCanceledException)
         {
             return new(request.RequestID, [], DescribeHttpFailure(exception));
         }
 
-        List<BackgroundMapStyle> styles = new(styleIDs.Length);
-        foreach (string styleID in styleIDs)
+        if (request.StyleID is not null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!IsSafeStyleID(styleID))
-            {
-                warning ??= "The OSM service returned an invalid style identifier.";
-                continue;
-            }
-
+            if (!styleIDs.Contains(request.StyleID, StringComparer.Ordinal))
+                return new(request.RequestID, [], "The selected style was not returned by the OSM service.");
+            styleIDs = [request.StyleID];
+        }
+        else if (styleIDs.Length > MaximumStyleCount)
+        {
+            styleIDs = styleIDs[..MaximumStyleCount];
+            warning = "The OSM service returned too many style identifiers; the list was truncated.";
+        }
+        string[] safeIDs = styleIDs.Where(IsSafeStyleID).ToArray();
+        if (safeIDs.Length != styleIDs.Length)
+            warning ??= "The OSM service returned an invalid style identifier.";
+        cancellationToken.ThrowIfCancellationRequested();
+        if (request.CatalogOnly)
+            return new(request.RequestID, safeIDs.Select(id => new BackgroundMapStyle(id, HumanizeStyleID(id),
+                string.Empty, null, null, null)).ToArray(), warning);
+        using var gate = new SemaphoreSlim(MaximumConcurrentStyleRequests);
+        long totalPreviewBytes = 0;
+        Task<BackgroundMapStyle>[] requests = safeIDs.Select(async styleID =>
+        {
             byte[]? preview = null;
             string? description = null;
             string? styleWarning = null;
             try
             {
-                using HttpResponseMessage imageResponse = await Http.GetAsync(
-                    OsmBaseUrl + "/styles/" + Uri.EscapeDataString(styleID) + "/image",
-                    HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-                if (imageResponse.StatusCode != HttpStatusCode.NoContent)
+                await gate.WaitAsync(token).ConfigureAwait(false);
+                try
                 {
-                    imageResponse.EnsureSuccessStatusCode();
-                    preview = await imageResponse.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+                    string path = baseUrl + "/styles/" + Uri.EscapeDataString(styleID);
+                    using HttpResponseMessage image = await http.GetAsync(path + "/image",
+                        HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+                    if (image.StatusCode != HttpStatusCode.NoContent)
+                    {
+                        image.EnsureSuccessStatusCode();
+                        preview = await ReadStyleBodyAsync(image.Content, MaximumStylePreviewBytes, token).ConfigureAwait(false);
+                        if (Interlocked.Add(ref totalPreviewBytes, preview.Length) > MaximumTotalStylePreviewBytes)
+                        {
+                            Interlocked.Add(ref totalPreviewBytes, -preview.Length);
+                            preview = null;
+                            throw new IOException("The OSM preview total exceeds the size limit.");
+                        }
+                    }
+                    using HttpResponseMessage text = await http.GetAsync(path + "/description",
+                        HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+                    text.EnsureSuccessStatusCode();
+                    description = System.Text.Encoding.UTF8.GetString(
+                        await ReadStyleBodyAsync(text.Content, MaximumStyleDescriptionBytes, token).ConfigureAwait(false));
                 }
-                using HttpResponseMessage descriptionResponse = await Http.GetAsync(
-                    OsmBaseUrl + "/styles/" + Uri.EscapeDataString(styleID) + "/description",
-                    HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-                descriptionResponse.EnsureSuccessStatusCode();
-                description = await descriptionResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                finally { gate.Release(); }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception) when (exception is HttpRequestException or IOException or OperationCanceledException)
             {
                 styleWarning = DescribeHttpFailure(exception);
-                warning ??= styleWarning;
             }
+            return new BackgroundMapStyle(styleID, HumanizeStyleID(styleID), description ?? string.Empty,
+                preview is { Length: > 0 } ? "image/*" : null, preview, styleWarning);
+        }).ToArray();
+        BackgroundMapStyle[] styles = await Task.WhenAll(requests).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        warning ??= styles.Select(style => style.Warning).FirstOrDefault(value => value is not null);
+        return new(request.RequestID, styles, warning);
+    }
 
-            styles.Add(new(styleID, HumanizeStyleID(styleID), description ?? string.Empty,
-                preview is { Length: > 0 } ? "image/*" : null, preview, styleWarning));
+    private static async Task<byte[]> ReadStyleBodyAsync(HttpContent content, int maximumBytes, CancellationToken token)
+    {
+        if (content.Headers.ContentLength is long length && length > maximumBytes)
+            throw new IOException("The OSM response exceeds the size limit.");
+        await using Stream input = await content.ReadAsStreamAsync(token).ConfigureAwait(false);
+        using var output = new MemoryStream();
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = await input.ReadAsync(buffer, token).ConfigureAwait(false)) != 0)
+        {
+            if (output.Length + count > maximumBytes) throw new IOException("The OSM response exceeds the size limit.");
+            output.Write(buffer, 0, count);
         }
-
-        return new(request.RequestID, styles.ToArray(), warning);
+        return output.ToArray();
     }
 
     public static BackgroundMapCacheResult Cache(BackgroundMapCacheRequest request)
@@ -454,6 +508,8 @@ public static partial class BackgroundMapService
     {
         HttpRequestException => "The OSM service returned an HTTP error.",
         OperationCanceledException => "The OSM request timed out.",
+        IOException io when io.Message.Contains("exceeds the size limit", StringComparison.Ordinal) =>
+            "The OSM response exceeds the size limit.",
         _ => "The OSM service could not be reached or returned invalid data."
     };
 

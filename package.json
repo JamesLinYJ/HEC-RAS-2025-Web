@@ -43,7 +43,8 @@
     "test:feature-query-workflow": "node scripts/verify-feature-query-workflow.mjs",
     "test:topology-quick-edit": "node scripts/verify-topology-quick-edit.mjs",
     "test:result-layer-settings": "node frontend/src/features/map/results-layer-settings/verify-result-layer-settings.mjs",
-    "test:result-layer-react": "node frontend/src/features/map/results-layer-settings/verify-result-layer-react.mjs"
+    "test:result-layer-react": "node frontend/src/features/map/results-layer-settings/verify-result-layer-react.mjs",
+    "test:osm-style-picker": "node scripts/verify-osm-style-picker.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

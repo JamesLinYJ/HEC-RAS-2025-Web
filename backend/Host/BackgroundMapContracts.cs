@@ -90,7 +90,7 @@ public sealed record BackgroundMapRenderResult(
     BackgroundMapSourceStatus[] Sources,
     string? OsmBackgroundColor = null);
 
-public sealed record BackgroundMapStylesRequest(string RequestID);
+public sealed record BackgroundMapStylesRequest(string RequestID, bool CatalogOnly = false, string? StyleID = null);
 
 public sealed record BackgroundMapStyle(
     string ID,

@@ -20,7 +20,7 @@
   padding-left: 9px;
   border-left: 2px solid var(--map-line, #d9e2e9);
   min-width: 0;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--map-ink, #172d40);
 }
 
@@ -34,6 +34,7 @@
 .osm-style-select select {
   width: 100%;
   min-width: 0;
+  min-height: 32px;
   padding: 5px 6px;
   border: 1px solid var(--map-line, #d9e2e9);
   border-radius: 4px;
@@ -83,11 +84,53 @@
   border-color: #9fc2da;
 }
 
+.osm-style-picker button {
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.map-background-panel .osm-style-picker .osm-style-labels {
+  font-size: 12px;
+}
+
 .osm-style-picker button:disabled,
 .osm-style-picker select:disabled,
 .map-background-panel .map-background-render-actions button:disabled {
   opacity: .55;
   cursor: not-allowed;
+}
+
+.osm-style-preview-load-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 8px;
+  min-width: 0;
+  padding-top: 5px;
+  border-top: 1px solid #e6ebef;
+  font-size: 12px;
+}
+
+.osm-style-preview-load-state p {
+  flex: 1 1 140px;
+  min-width: 0;
+  margin: 0;
+  color: #677986;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.osm-style-preview-load-state[data-state="failed"] p,
+.osm-style-preview-load-state[data-state="partial"] p {
+  color: #9a4b3d;
+}
+
+.osm-style-preview-load-state button {
+  min-height: 30px;
+  padding: 5px 9px;
+  color: #315f7c;
+  font-size: 12px;
 }
 
 .osm-style-preview {
@@ -162,7 +205,7 @@
 
 .osm-style-density-scale {
   color: var(--map-muted, #728395);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .osm-cache-panel {

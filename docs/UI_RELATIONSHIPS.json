@@ -1849,7 +1849,8 @@
           "frontend/src/features/map/background/BackgroundMapScene.tsx",
           "backend/Host/BackgroundMapContracts.cs",
           "backend/Host/BackgroundMapService.cs",
-          "backend/Server/OperationManager.cs"
+          "backend/Server/OperationManager.cs",
+          "backend/Host/BackendWorker.cs"
         ],
         "stateOwner": "Each saved map owns local background settings. The reader captures project session/path/XML/revision, saved map identity/revision, backend instance/capability epoch, settings and camera. It reads the XML Projection and requires CSharp projection.evaluate to confirm a projected CRS; a translated CRS badge or untransformed local layer never authorizes an overlay. Source changes synchronously hide old frames; camera changes cancel and debounce requests while an existing correctly georeferenced frame can remain visible.",
         "readActions": [
@@ -1858,7 +1859,7 @@
           "map.background.styles",
           "map.background.cache"
         ],
-        "writeBoundary": "Background settings apply only to the current view and do not save .ras/.vis. Actual CSharp RGBA frames and OSM vector paths/labels render below project content. The result parser checks request/map/session/viewport, source status, geometry and pixel bounds; disabled/failed sources never manufacture imagery. Styles and previews come from the service. Cache inspection and explicit clear act on the CSharp server cache; a successful matching clear receipt refreshes the current view. The server uses its existing finite 64 × 1024 × 1024 character terminal-result budget for background renders while progress and ordinary results retain their limits. Browser SVG preserves reported project geometry, clipping, colors, line gaps, text placement and halo settings; exact native font rasterization and collision layout are not claimed."
+        "writeBoundary": "Background settings apply only to the current view and do not save .ras/.vis. Actual CSharp RGBA frames and OSM vector paths/labels render below project content. The result parser checks request/map/session/viewport, source status, geometry and pixel bounds; disabled/failed sources never manufacture imagery. Styles and previews come from the service. Cache inspection and explicit clear act on the CSharp server cache; a successful matching clear receipt refreshes the current view. The server uses its existing finite 64 × 1024 × 1024 character terminal-result budget for background renders while progress and ordinary results retain their limits. Browser SVG preserves reported project geometry, clipping, colors, line gaps, text placement and halo settings; exact native font rasterization and collision layout are not claimed. The style catalog uses catalogOnly=true to return real remote IDs without thumbnails. An explicit single-preview request uses styleID, verifies current remote membership, and binds its response to backend/capability, catalog generation, selected style and exact request ID. Preview adoption never changes the map draft. A catalog request has an eight-second full-body budget; single previews have sixty seconds and a one-MiB image limit. Only map.background.styles uses a separate bounded network lane; native and project mutations remain serialized. Caller cancellation retains its canceled terminal state and is distinct from budget exhaustion or a missing image."
       },
       {
         "id": "web-feature-query-importers",

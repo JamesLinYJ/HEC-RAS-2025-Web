@@ -26,6 +26,11 @@ public sealed class OperationManager : IHostedService
 
     private readonly ConcurrentDictionary<string, OperationRecord> operations = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim concurrency = new(1, 1);
+    private readonly SemaphoreSlim styleConcurrency = new(1, 1);
+    private const int MaximumStyleOperations = 4;
+    private readonly Func<Process> workerFactory;
+    public OperationManager() : this(StartWorkerProcess) { }
+    internal OperationManager(Func<Process> workerFactory) => this.workerFactory = workerFactory;
     private readonly object registryGate = new();
     private readonly CancellationTokenSource cleanupStop = new();
     private Task cleanupTask = Task.CompletedTask;
@@ -77,6 +82,8 @@ public sealed class OperationManager : IHostedService
             CleanupExpiredLocked(DateTimeOffset.UtcNow);
             int activeOrQueued = operations.Values.Count(operation => !operation.IsTerminal);
             if (stopping || activeOrQueued >= MaximumOperations ||
+                (method == "map.background.styles" && operations.Values.Count(operation =>
+                    operation.Method == "map.background.styles" && !operation.IsTerminal) >= MaximumStyleOperations) ||
                 operations.Count >= MaximumOperations + MaximumRetainedTerminalOperations)
             {
                 id = string.Empty;
@@ -165,6 +172,8 @@ public sealed class OperationManager : IHostedService
             if (!operation.CancelRequested)
             {
                 operation.CancelRequested = true;
+                if (operation.Method == "map.background.styles" && operation.State == "queued")
+                    operation.QueueCancellation.Cancel();
                 operation.LastAccess = DateTimeOffset.UtcNow;
                 if (operation.PlanCancellation is PlanCancellationFiles cancellation)
                 {
@@ -194,9 +203,10 @@ public sealed class OperationManager : IHostedService
         Task<string?>? stderrPump = null;
         PlanCancellationFiles? planCancellation = null;
         string? stderrTail = null;
+        SemaphoreSlim lane = operation.Method == "map.background.styles" ? styleConcurrency : concurrency;
         try
         {
-            await concurrency.WaitAsync().ConfigureAwait(false);
+            await lane.WaitAsync(operation.QueueCancellation.Token).ConfigureAwait(false);
             entered = true;
 
             lock (operation.Gate)
@@ -215,7 +225,7 @@ public sealed class OperationManager : IHostedService
                     if (operation.CancelRequested) CreateCancelMarker(planCancellation);
                 }
 
-                process = StartWorkerProcess();
+                process = workerFactory();
                 operation.Process = process;
                 string requestLine = BuildWorkerRequest(operation, planCancellation);
                 process.StandardInput.WriteLine(requestLine);
@@ -287,6 +297,11 @@ public sealed class OperationManager : IHostedService
                 }
             }
         }
+        catch (OperationCanceledException) when (operation.Method == "map.background.styles" && operation.CancelRequested)
+        {
+            lock (operation.Gate)
+                if (!operation.IsTerminal) SetTerminalLocked(operation, "canceled", null, null);
+        }
         catch (Exception error)
         {
             if (process is not null)
@@ -324,7 +339,8 @@ public sealed class OperationManager : IHostedService
             lock (operation.Gate) operation.Process = null;
             process?.Dispose();
             if (planCancellation is not null) RemovePlanCancellationFiles(planCancellation);
-            if (entered) concurrency.Release();
+            if (entered) lane.Release();
+            operation.QueueCancellation.Dispose();
         }
     }
 
@@ -668,6 +684,7 @@ public sealed class OperationManager : IHostedService
         public Process? Process { get; set; }
         public Task? RunTask { get; set; }
         public bool CancelRequested { get; set; }
+        public CancellationTokenSource QueueCancellation { get; } = new();
         public long ControlSequence { get; set; }
         public int ControlsQueued { get; set; }
         public long EventBytes { get; set; }
