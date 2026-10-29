@@ -37,7 +37,10 @@
     "test:project-archive": "node scripts/verify-project-archive.mjs",
     "test:channel-v6-import": "node scripts/verify-channel-v6-import.mjs",
     "test:channel-v6-parent": "node scripts/verify-channel-v6-parent.mjs",
-    "test:background-map-rendering": "node scripts/verify-background-map-rendering.mjs"
+    "test:background-map-rendering": "node scripts/verify-background-map-rendering.mjs",
+    "test:osm-query-builder": "node scripts/verify-osm-query-builder.mjs",
+    "test:feature-query-map-import": "node scripts/verify-feature-query-map-import.mjs",
+    "test:feature-query-workflow": "node scripts/verify-feature-query-workflow.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

@@ -10,6 +10,16 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-feature-query-preview-local", string featureQueryOutput])
+            {
+                TextWriter protocol = Console.Out;
+                object report;
+                Console.SetOut(Console.Error);
+                try { report = await FeatureQueryPreviewAcceptance.RunAsync(featureQueryOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-terrain-save-commit", string terrainSaveOutput])
             {
                 TextWriter protocol = Console.Out;
@@ -467,6 +477,7 @@ internal static class Program
             }
 
             Console.Error.WriteLine("Usage:");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-feature-query-preview-local <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-terrain-save-commit <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --create-channel-v6-import-fixture <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-channel-v6-import-http <loopback-base-url> <new-output-directory>");

@@ -45,6 +45,8 @@ public static class BackendWorker
         "developer.projectArchive.prepare",
         "dss.catalog",
         "dss.read",
+        "featureQuery.discard",
+        "featureQuery.preview",
         "featureQuery.query",
         "featureQuery.save",
         "featureQuery.snapshot",
@@ -283,6 +285,7 @@ public static class BackendWorker
         Console.SetOut(Console.Error);
         using IDisposable backendLogging = BackendApplicationLogging.Initialize();
         string? id = null;
+        string? method = null;
         bool streamProgress = false;
         bool duplexMode = args.Contains("--duplex", StringComparer.Ordinal);
         BackendDuplexControlReader? duplexControls = null;
@@ -296,6 +299,7 @@ public static class BackendWorker
             var request = JsonSerializer.Deserialize<BackendRequest>(input, BackendJson.Options)
                 ?? throw new ArgumentException("Missing backend request.");
             id = request.Id;
+            method = request.Method;
             if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("Missing request identity.");
             if (request.Duplex != duplexMode)
                 throw new ArgumentException("The duplex request mode does not match the child process mode.");
@@ -371,8 +375,11 @@ public static class BackendWorker
                 "map.tree.meshErrors" => MapTreeService.MeshErrors(request.Parameters.Deserialize<MapTreeMeshErrorRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing map mesh error context.")),
                 "map.measureTerrainElevations" => MapTerrainElevationService.Sample(request.Parameters.Deserialize<MapTerrainElevationRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing map terrain elevation context.")),
                 "map.boundary.lineTimeSeries" => await ModelEditorAdapter.LoadMapBoundaryLineTimeSeriesAsync(request.Parameters.Deserialize<MapBoundaryLineTimeSeriesRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing boundary line time-series context.")),
+                "featureQuery.discard" => FeatureQueryService.Discard(request.Parameters.Deserialize<FeatureQueryDiscardRequest>(BackendJson.Options) ?? throw new ArgumentException("缺少查询结果清理请求。")),
+                "featureQuery.preview" => FeatureQueryService.Preview(request.Parameters.Deserialize<FeatureQueryPreviewRequest>(BackendJson.Options) ?? throw new ArgumentException("缺少查询结果预览请求。")),
                 "featureQuery.query" => await FeatureQueryService.QueryAsync(request.Parameters.Deserialize<FeatureQueryQueryRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing feature query request."), report, duplexControls),
                 "featureQuery.save" => await FeatureQueryService.SaveAsync(request.Parameters.Deserialize<FeatureQuerySaveRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing feature export request."), report, duplexControls),
+                "featureQuery.suggest" when duplexControls is not null => await FeatureQueryService.SuggestDuplexAsync(request.Parameters.Deserialize<FeatureQuerySuggestionRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing feature tag suggestion request."), duplexControls),
                 "featureQuery.suggest" => await FeatureQueryService.SuggestAsync(request.Parameters.Deserialize<FeatureQuerySuggestionRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing feature tag suggestion request.")),
                 "cumulus.environments" => await CumulusImportService.GetEnvironmentsAsync(request.Parameters.Deserialize<CumulusEnvironmentRequest>(BackendJson.Options)),
                 "cumulus.token.exchange" => await CumulusImportService.ExchangeTokenAsync(request.Parameters.Deserialize<CumulusTokenExchangeRequest>(BackendJson.Options) ?? throw new ArgumentException("Missing Cumulus authorization exchange.")),
@@ -586,6 +593,11 @@ public static class BackendWorker
             return 0;
         }
 
+        catch (FeatureQueryCanceledException) when (method is "featureQuery.query" or "featureQuery.save" or "featureQuery.suggest")
+        {
+            responses.Complete(new { id, result = new { state = "canceled", cleanupComplete = true } }, streamProgress);
+            return 0;
+        }
         catch (Exception error)
         {
             while (error is System.Reflection.TargetInvocationException invocation && invocation.InnerException is Exception inner) error = inner;

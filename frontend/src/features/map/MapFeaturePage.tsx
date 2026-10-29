@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent as ReactChangeEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { errorDiagnostics, text } from '../../shared/workbench';
 import type { MapDocumentDeleteReceipt, MapDocumentIndexChange, MapVisualizationAcknowledgement, MapVisualizationCommitReceipt, MapVisualizationTarget } from '../../shared/workbench';
@@ -69,6 +69,7 @@ import { deleteMapDocument, expectedMapIndexChanges, mapDocumentsMatchCaptured, 
   MapDocumentRequestNotSubmittedError, renameMapDocument } from './mapDocumentActionsWorkflow';
 import type { CatalogTreeNode, CatalogTreeNodeLocator, GeoFeature, GeoGeometry, GeoJsonLayer, MapDocumentTab, MapImageLayer, XY } from './mapTypes';
 import type { MapFeaturePageProps } from './mapTypes';
+import type { FeatureQueryImporterProps, FeatureQueryMapImportReport } from './query-import/featureQueryTypes';
 import { calculatorLayerMatchesMap } from '../../shared/rasterCalculatorSession';
 import type { RasterCalculatorSessionLayer } from '../../shared/rasterCalculatorSession';
 import { rasterCalculatorOwner } from '../tools/RasterCalculatorRecipe';
@@ -93,6 +94,8 @@ const MapCulvertAnalysisPanel = lazy(() => import('./analysis/MapCulvertAnalysis
   .then(module => ({ default: module.MapCulvertAnalysisPanel })));
 const MapSampleLineAnalysisPanel = lazy(() => import('./analysis/MapSampleLineAnalysisPanel')
   .then(module => ({ default: module.MapSampleLineAnalysisPanel })));
+const FeatureQueryImporter = lazy(() => import('./query-import/FeatureQueryImporter')
+  .then(module => ({ default: module.FeatureQueryImporter })));
 
 type SelectedFeature = { owner: string; layerID: string; featureID: string } | null;
 
@@ -377,11 +380,14 @@ function MapPage(props: MapFeaturePageProps) {
   const [mapDocumentMutationBusy, setMapDocumentMutationBusy] = useState(false);
   const [mapDocumentMutationNotice, setMapDocumentMutationNotice] = useState<MapDocumentMutationNotice | null>(null);
   const mapDocumentNeedsReconcile = Boolean(mapDocumentMutationNotice?.projectKey === mapRemovalProjectScope && mapDocumentMutationNotice.needsReconcile);
+  const [queryWriteState, setQueryWriteState] = useState({ projectKey: projectContextKey, exportBusy: false, importBusy: false });
+  const queryWriteBusy = queryWriteState.projectKey === projectContextKey &&
+    (queryWriteState.exportBusy || queryWriteState.importBusy);
   const [meshErrorGuard, setMeshErrorGuard] = useState<MapMeshErrorGuard>({ locked: false, transaction: false });
   const [meshErrorFocus, setMeshErrorFocus] = useState<{ captureKey: string; issueID: string } | null>(null);
   const mapOtherMetadataCommitBusy = viewCommitBusy || vectorCommitBusy || mapSourceRemovalBusy || mapRemovalNeedsReconcile ||
     mapDocumentMutationBusy || mapDocumentNeedsReconcile;
-  const mapMetadataCommitBusy = mapOtherMetadataCommitBusy || meshErrorGuard.locked;
+  const mapMetadataCommitBusy = mapOtherMetadataCommitBusy || meshErrorGuard.locked || queryWriteBusy;
   const [vectorPreview, setVectorPreview] = useState<MapVectorPreview | null>(null);
   const [vectorSettingsEpoch, setVectorSettingsEpoch] = useState(0);
   const [mapCatalogError, setMapCatalogError] = useState<unknown>(null);
@@ -426,6 +432,38 @@ function MapPage(props: MapFeaturePageProps) {
   mapRemovalProjectScopeRef.current = mapRemovalProjectScope;
   const projectContextKeyRef = useRef(projectContextKey);
   projectContextKeyRef.current = projectContextKey;
+  const queryWriteStateRef = useRef(queryWriteState);
+  const queryWriteIsBusy = () => queryWriteStateRef.current.projectKey === projectContextKeyRef.current &&
+    (queryWriteStateRef.current.exportBusy || queryWriteStateRef.current.importBusy);
+  const queryRetainCatalogRef = useRef<string | null>(null);
+  const queryInstalledReadbackRef = useRef(false);
+  const queryCatalogPauseRef = useRef<{
+    backend: typeof backend; backendRevision: typeof backendRevision; projectKey: string;
+    selectedResultIdentity: string | null; mapReloadKey: number; mapRevision: typeof props.mapRevision; wasLoading: boolean;
+  } | null>(null);
+  const setQueryOperationBusy = useCallback((kind: 'exportBusy' | 'importBusy', busy: boolean) => {
+    if (projectContextKeyRef.current !== projectContextKey) return;
+    const previous = queryWriteStateRef.current.projectKey === projectContextKey
+      ? queryWriteStateRef.current : { projectKey: projectContextKey, exportBusy: false, importBusy: false };
+    const next = { ...previous, [kind]: busy };
+    queryWriteStateRef.current = next;
+    if (busy) {
+      if (!previous.exportBusy && !previous.importBusy) queryInstalledReadbackRef.current = false;
+      queryRetainCatalogRef.current = projectContextKey;
+    }
+    setQueryWriteState(next);
+  }, [projectContextKey]);
+  const queryDirtyOwner = 'map.query:' + projectContextKey;
+  const queryExportOwner = 'map.write:feature-query-export:' + queryDirtyOwner;
+  const handleQueryDirtyStateChange = useCallback((dirtyOwner: string, dirty: boolean) => {
+    onDirtyStateChange?.(dirtyOwner, dirty);
+    if (dirtyOwner === queryExportOwner) setQueryOperationBusy('exportBusy', dirty);
+  }, [onDirtyStateChange, queryExportOwner, setQueryOperationBusy]);
+  const backendIdentityRef = useRef({ backend, backendRevision });
+  backendIdentityRef.current = { backend, backendRevision };
+  const otherMapWriteBusyRef = useRef(false);
+  otherMapWriteBusyRef.current = Boolean(mapOtherMetadataCommitBusy || meshErrorGuard.locked || sourceImportBusy ||
+    busyNodeID !== null || mapCatalogLoading || mapCatalogError);
   const [mapReloadKey, setMapReloadKey] = useState(0);
   useEffect(() => {
     setMapDocumentMutationNotice(current => current?.projectKey === mapRemovalProjectScope ? current : null);
@@ -640,7 +678,7 @@ function MapPage(props: MapFeaturePageProps) {
     candidate: meshErrorCandidate,
     selectionKey: activeDocument ? JSON.stringify([activeDocument.id, selectedBackendNodeID]) : null,
     visible: selectedRemovalEntry?.node.sourceClass === 'FlowAreaLayerVisualContext',
-    otherBusy: mapOtherMetadataCommitBusy || sourceImportBusy || mapCatalogLoading || busyNodeID !== null ||
+    otherBusy: mapOtherMetadataCommitBusy || queryWriteBusy || sourceImportBusy || mapCatalogLoading || busyNodeID !== null ||
       activeLayers.length > 0 || hasPersistentDraftPoints || backgroundDraftDirty,
     onDirtyStateChange, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation,
     dirtyOwners: props.dirtyOwners, hasUnsavedDrafts: props.hasUnsavedDrafts,
@@ -674,7 +712,7 @@ function MapPage(props: MapFeaturePageProps) {
   const mapRemovalAvailable = Boolean(context.projectPath && context.projectXml && context.projectRevision &&
     context.projectSessionID.trim() && activeDocument?.visualizationRevision && backend.supports('map.tree.perform') &&
     backend.supports('map.document.list') && backend.supports('map.tree.load') && !mapCatalogLoading && !mapCatalogError &&
-    !sourceImportBusy && !mapRemovalNeedsReconcile && !mapDocumentNeedsReconcile && onBeginMapVisualizationMutation &&
+    !sourceImportBusy && !queryWriteBusy && !mapRemovalNeedsReconcile && !mapDocumentNeedsReconcile && onBeginMapVisualizationMutation &&
     onCommitMapVisualization && onEndMapVisualizationMutation);
   const mapRemovalCallbacksUnavailable = !onBeginMapVisualizationMutation || !onCommitMapVisualization || !onEndMapVisualizationMutation;
   const activeMapRemovalNotice = mapSourceRemovalNotice && mapSourceRemovalNotice.projectKey === mapRemovalProjectScope &&
@@ -906,6 +944,10 @@ function MapPage(props: MapFeaturePageProps) {
   ], [associatedLayers.layers, calculatorReadyImages, persistedRasters.layers, resultImages.layers]);
   const visibleLayers = allMapLayers.filter((layer) => layer.visible);
   const mapImagesVisible = visibleLayers.length === 0 || visibleLayers[visibleLayers.length - 1]?.coordinateSpace === 'project';
+  const queryProjectionIssue = useMemo(() => context.projectXml
+    ? readBackgroundMapProjection(context.projectXml).issue : null, [context.projectXml]);
+  const queryExtent = useMemo(() => ({ minX: resultViewport.minX, minY: resultViewport.minY,
+    maxX: resultViewport.maxX, maxY: resultViewport.maxY }), [resultViewport]);
   const backgroundRendering = useBackgroundMapRendering({ backend, backendRevision, context,
     document: activeDocument, camera: viewport, size, settings: backgroundSettings,
     coordinatesAreProject: mapImagesVisible, language });
@@ -1024,18 +1066,40 @@ function MapPage(props: MapFeaturePageProps) {
     // remember the pre-rename identity and could select a different saved map.
     // Cleanup invalidates older reads, and completion resumes with the newly
     // installed selection. An uncertain transaction stays under reconciliation.
-    if (mapDocumentMutationBusy || mapDocumentNeedsReconcile || meshErrorGuard.locked) {
+    if (mapDocumentMutationBusy || mapDocumentNeedsReconcile || meshErrorGuard.locked || queryWriteBusy) {
+      if (queryWriteBusy && !queryCatalogPauseRef.current) {
+        queryCatalogPauseRef.current = { backend, backendRevision, projectKey: projectContextKey, selectedResultIdentity,
+          mapReloadKey, mapRevision: props.mapRevision, wasLoading: mapCatalogLoading };
+      }
       setMapCatalogLoading(false);
       return () => { mapCatalogGenerationRef.current += 1; };
     }
     const requestContextKey = projectContextKey;
+    const paused = queryCatalogPauseRef.current;
+    queryCatalogPauseRef.current = null;
+    if (paused && !paused.wasLoading && paused.backend === backend && paused.backendRevision === backendRevision &&
+        paused.projectKey === requestContextKey && paused.selectedResultIdentity === selectedResultIdentity &&
+        paused.mapReloadKey === mapReloadKey &&
+        (paused.mapRevision === props.mapRevision || queryInstalledReadbackRef.current)) {
+      // An export did not alter .vis; an accepted import already installed the
+      // verified tree. Do not empty the live map or reload it just for the busy transition.
+      queryRetainCatalogRef.current = null;
+      return () => { mapCatalogGenerationRef.current += 1; };
+    }
+    // Query import reads back every accepted layer itself. Keep the live map
+    // identity while the post-transaction catalog refresh catches up.
+    const retainQueryCatalog = queryRetainCatalogRef.current === requestContextKey &&
+      loadedCatalogProjectRef.current === requestContextKey;
+    queryRetainCatalogRef.current = null;
     const rememberedSelection = rememberedMapSelectionRef.current?.projectKey === requestContextKey
       ? rememberedMapSelectionRef.current : null;
     const isCurrent = () => generation === mapCatalogGenerationRef.current && projectContextKeyRef.current === requestContextKey;
     setMapCatalogError(null);
-    setDocuments([]);
-    setActiveDocumentID(null);
-    setVisualizationRevision(null);
+    if (!retainQueryCatalog) {
+      setDocuments([]);
+      setActiveDocumentID(null);
+      setVisualizationRevision(null);
+    }
     if (!context.projectPath) {
       setMapCatalogLoading(false);
       return () => { mapCatalogGenerationRef.current += 1; };
@@ -1065,7 +1129,7 @@ function MapPage(props: MapFeaturePageProps) {
       mapCatalogGenerationRef.current += 1;
     };
   }, [backend, backendRevision, projectContextKey, selectedResultIdentity, mapReloadKey, props.mapRevision,
-    mapDocumentMutationBusy, mapDocumentNeedsReconcile, meshErrorGuard.locked]);
+    mapDocumentMutationBusy, mapDocumentNeedsReconcile, meshErrorGuard.locked, queryWriteBusy]);
 
   const updateActiveLayers = (update: (layers: GeoJsonLayer[]) => GeoJsonLayer[]) => {
     setMapStateByOwner((current) => {
@@ -1169,8 +1233,103 @@ function MapPage(props: MapFeaturePageProps) {
     if (visibleExtent) setUserViewport(fitExtent(visibleExtent, size, 72));
   };
 
+  const handleFeatureQueryImport: FeatureQueryImporterProps['onImportSources'] = async (sourceContext, target, sources, isCurrent) => {
+    const sourceProjectKey = JSON.stringify([sourceContext.projectSessionID, sourceContext.projectPath,
+      sourceContext.projectRevision, sourceContext.projectXml]);
+    const sourceScope = JSON.stringify([sourceProjectKey, stableMapValue(sourceContext.coreLayerContext ?? null)]);
+    const currentTarget = activeDocumentRef.current;
+    const sameTarget = (document: MapDocumentTab | null) => Boolean(document && document.id === target.id &&
+      sameMapID(document.mapID, target.mapID) && document.mapIndex === target.mapIndex &&
+      document.name === target.name && document.mapType === target.mapType);
+    const fail = (message: string): FeatureQueryMapImportReport => ({ status: 'failed', imported: [], failures: [], message });
+    if (projectContextKeyRef.current !== sourceProjectKey || mapRemovalProjectScopeRef.current !== sourceScope ||
+        backendIdentityRef.current.backend !== backend || backendIdentityRef.current.backendRevision !== backendRevision ||
+        !sameTarget(currentTarget) || !target.visualizationRevision ||
+        currentTarget?.visualizationRevision?.toUpperCase() !== target.visualizationRevision.toUpperCase() ||
+        !isCurrent()) {
+      return fail(text(language, '工程、地图或服务状态已变化；请重新查询并确认地图目标。',
+        'The project, map, or service changed. Query again and confirm the map target.'));
+    }
+    const queryState = queryWriteStateRef.current;
+    if (otherMapWriteBusyRef.current || queryState.projectKey === sourceProjectKey && (queryState.exportBusy || queryState.importBusy) ||
+        !onBeginMapVisualizationMutation || !onCommitMapVisualization || !onEndMapVisualizationMutation) {
+      return fail(text(language, '其他地图写入尚未完成，或地图写入保护不可用。',
+        'Another map write is active, or map-write protection is unavailable.'));
+    }
+
+    setQueryOperationBusy('importBusy', true);
+    let expectedRevision = target.visualizationRevision;
+    const stillCurrent = () => {
+      const current = activeDocumentRef.current;
+      return projectContextKeyRef.current === sourceProjectKey &&
+        mapRemovalProjectScopeRef.current === sourceScope && backendIdentityRef.current.backend === backend &&
+        backendIdentityRef.current.backendRevision === backendRevision && sameTarget(current) &&
+        current?.visualizationRevision?.toUpperCase() === expectedRevision.toUpperCase() && isCurrent();
+    };
+    const trackReport = (report: FeatureQueryMapImportReport): FeatureQueryMapImportReport => {
+      if (report.status !== 'unknown') {
+        setQueryOperationBusy('importBusy', false);
+        return report;
+      }
+      if (!report.resume) return report;
+      const resume = report.resume;
+      return { ...report, resume: async () => {
+        try { return trackReport(await resume()); }
+        catch (error) {
+          return trackReport({ ...report, message: mapError(language, error), resume });
+        }
+      } };
+    };
+
+    let importer: typeof import('./query-import/featureQueryMapImport');
+    try { importer = await import('./query-import/featureQueryMapImport'); }
+    catch (error) {
+      setQueryOperationBusy('importBusy', false);
+      return fail(mapError(language, error));
+    }
+    const { importFeatureQuerySourcesToMap } = importer;
+    // Unexpected helper exceptions propagate to the query workflow, which
+    // retains an unknown-state owner; local importBusy stays set as well.
+    const report = await importFeatureQuerySourcesToMap(backend, sourceContext, target, sources, stillCurrent, {
+        dirtyOwner: queryDirtyOwner,
+        onBeginMapVisualizationMutation,
+        onCommitMapVisualization,
+        onEndMapVisualizationMutation,
+        onReadback: (document, tree) => {
+          const current = activeDocumentRef.current;
+          if (!stillCurrent() || !current || !sameTarget(document) || !document.visualizationRevision ||
+              document.visualizationRevision.toUpperCase() !== tree.visualizationRevision.toUpperCase()) {
+            return false;
+          }
+          const revision = document.visualizationRevision;
+          const installed: MapDocumentTab = { ...current, roots: tree.roots, visualizationRevision: revision,
+            visibilityTransition: null, treeError: undefined };
+          // Advance synchronously: the helper can start the next layer before
+          // React commits the pending state update.
+          activeDocumentRef.current = installed;
+          expectedRevision = revision;
+          mapCatalogGenerationRef.current += 1;
+          loadedCatalogProjectRef.current = sourceProjectKey;
+          queryInstalledReadbackRef.current = true;
+          queryRetainCatalogRef.current = sourceProjectKey;
+          rememberedMapSelectionRef.current = { projectKey: sourceProjectKey, mapIndex: installed.mapIndex,
+            name: installed.name, mapType: installed.mapType };
+          fittedSourceKey.current = JSON.stringify([installed.id, revision, resultFrames.activeNodeKey,
+            resultFrames.selectedSource?.resultPath, resultFrames.selectedSource?.revision]);
+          setVisualizationRevision(revision);
+          setDocuments(previous => previous.map(item => item.id === target.id
+            ? { ...item, roots: tree.roots, visualizationRevision: revision, visibilityTransition: null, treeError: undefined }
+            : { ...item, visualizationRevision: revision, visibilityTransition: null }));
+          setMapCatalogError(null);
+          setMapCatalogLoading(false);
+          return true;
+        },
+    });
+    return trackReport(report);
+  };
+
   const handleSourceImport = async (files: File[], options?: { directory?: boolean }) => {
-    if (mapMetadataCommitBusy || sourceImportBusy || mapCatalogLoading || mapCatalogError || !context.projectPath || (!activeDocument && documents.length > 0)) return;
+    if (queryWriteIsBusy() || mapMetadataCommitBusy || sourceImportBusy || mapCatalogLoading || mapCatalogError || !context.projectPath || (!activeDocument && documents.length > 0)) return;
     const controller = new AbortController();
     const capturedKey = projectContextKey;
     sourceImportRef.current = controller;
@@ -1254,7 +1413,7 @@ function MapPage(props: MapFeaturePageProps) {
   };
 
   const toggleBackendNode = async (node: import('./mapTypes').CatalogTreeNode, checked: boolean) => {
-    if (sourceImportBusy || mapMetadataCommitBusy) return;
+    if (queryWriteIsBusy() || sourceImportBusy || mapMetadataCommitBusy) return;
     if (!activeDocument || !node.locator) return;
     const selectedDocument = activeDocument;
     const requestContextKey = projectContextKey;
@@ -1327,7 +1486,7 @@ function MapPage(props: MapFeaturePageProps) {
         !sameMapID(targetDocument.mapID, displayedDocument.mapID) || targetDocument.mapIndex !== displayedDocument.mapIndex ||
         targetDocument.name !== displayedDocument.name || targetDocument.mapType !== displayedDocument.mapType ||
         mapTreeExactLocatorCount(displayedDocument.roots, locator) !== 1 || sourceImportBusy || busyNodeID !== null ||
-        mapMetadataCommitBusy || mapCatalogLoading) return;
+        queryWriteIsBusy() || mapMetadataCommitBusy || mapCatalogLoading) return;
 
     const target: MapVisualizationTarget = {
       mapID: targetDocument.mapID,
@@ -1544,7 +1703,7 @@ function MapPage(props: MapFeaturePageProps) {
       return;
     }
     if (!mapDocumentBaseAvailable || !onBeginMapVisualizationMutation || !onCommitMapVisualization || !onEndMapVisualizationMutation ||
-        sourceImportBusy || busyNodeID !== null || mapCatalogLoading || mapCatalogError || mapMetadataCommitBusy) {
+        sourceImportBusy || busyNodeID !== null || mapCatalogLoading || mapCatalogError || queryWriteIsBusy() || mapMetadataCommitBusy) {
       setStatusMessage(mapDocumentBlockedReason ?? text(language, '当前不能安全修改地图文档。', 'The map document cannot be changed safely right now.'));
       return;
     }
@@ -2104,6 +2263,13 @@ function MapPage(props: MapFeaturePageProps) {
           <MapSourceImportControl language={language} busy={sourceImportBusy}
             enabled={Boolean(context.projectPath && context.projectRevision && backend.uploadMapSources && !mapMetadataCommitBusy && !mapCatalogLoading && !mapCatalogError && (activeDocument || documents.length === 0))}
             onImport={handleSourceImport} />
+          <Suspense fallback={<span role="status">{text(language, '正在加载在线数据…', 'Loading online data…')}</span>}>
+            <FeatureQueryImporter backend={backend} backendRevision={backendRevision} context={context}
+              document={activeDocument} extent={queryExtent}
+              coordinatesAreProject={mapImagesVisible} projectionIssue={queryProjectionIssue}
+              language={language} dirtyOwner={queryDirtyOwner}
+              onDirtyStateChange={handleQueryDirtyStateChange} onImportSources={handleFeatureQueryImport} />
+          </Suspense>
           <button type="button" className="map-import-button" data-testid="map-refresh-sources" disabled={!context.projectPath || mapCatalogLoading || sourceImportBusy || mapMetadataCommitBusy}
             onClick={() => setMapReloadKey((value) => value + 1)}>{text(language, '刷新图层', 'Refresh layers')}</button>
         </div>
@@ -2123,7 +2289,7 @@ function MapPage(props: MapFeaturePageProps) {
         interactionDisabled={mapMetadataCommitBusy}
         loadError={mapCatalogError}
         onSelect={(id) => {
-          if (sourceImportBusy || mapMetadataCommitBusy) return;
+          if (queryWriteIsBusy() || sourceImportBusy || mapMetadataCommitBusy) return;
           requestGenerationRef.current += 1;
           if (calculatorSessions?.focusRequest) {
             handledCalculatorFocusRequestRef.current = calculatorSessions.focusRequest.requestID;
@@ -2203,7 +2369,7 @@ function MapPage(props: MapFeaturePageProps) {
 
       <div className="map-workspace-layout">
         <MapLayerTree
-          interactionDisabled={meshErrors.locked}
+          interactionDisabled={meshErrors.locked || queryWriteBusy}
           document={mapTreeDocument}
           localLayers={activeLayers}
           selectedLocalLayerID={selectedLocalLayerID}
@@ -2350,7 +2516,7 @@ function MapPage(props: MapFeaturePageProps) {
           <MapViewsPanel {...props} activeDocument={activeDocument} visualizationRevision={visualizationRevision}
             onCommitStateChange={setViewCommitBusy}
             currentExtent={activeDocument ? resultViewport : null} shortcutScopeRef={viewportRef}
-          hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || vectorCommitBusy || mapRemovalNeedsReconcile || mapDocumentNeedsReconcile)}
+          hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || queryWriteBusy || mapCatalogLoading || vectorCommitBusy || mapRemovalNeedsReconcile || mapDocumentNeedsReconcile)}
             onNavigateToExtent={extent => setUserViewport(fitExtent(extent, size, 0))}
             onVisualizationCommit={(source, receipt) => {
               if (projectContextKeyRef.current !== projectContextKey || source.projectPath !== context.projectPath ||
@@ -2418,7 +2584,8 @@ function MapPage(props: MapFeaturePageProps) {
               setMeshErrorFocus({ captureKey: capture.key, issueID: issue.id });
             }} />
           </RasLayerPropertiesPane>
-          {!mapRemovalNeedsReconcile && !mapDocumentNeedsReconcile && !meshErrors.locked && symbologySource && selectedBackend && activeDocument && <RasterSymbologyEditor
+          {!mapRemovalNeedsReconcile && !mapDocumentNeedsReconcile && !meshErrors.locked && symbologySource && selectedBackend && activeDocument && <fieldset
+            disabled={queryWriteBusy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}><RasterSymbologyEditor
             key={`${owner}:${selectedBackend.nodeID}`}
             backend={backend} context={context} language={language}
             source={symbologySource} viewport={resultViewport}
@@ -2444,12 +2611,12 @@ function MapPage(props: MapFeaturePageProps) {
                 visualizationRevision: nextRevision, visibilityTransition: null })));
               setStatusMessage(text(language, '栅格符号已保存。', 'Raster symbology was saved.'));
             }}
-          />}
+          /></fieldset>}
           {selectedRenderSource && <VectorLayerStyleEditor
             backend={backend} language={language} sourceCapture={selectedRenderSource} viewport={resultViewport}
             backendRevision={backendRevision} settingsEpoch={vectorSettingsEpoch}
             onCommitStateChange={setVectorCommitBusy} onDirtyStateChange={onDirtyStateChange}
-            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || mapCatalogLoading || viewCommitBusy || mapRemovalNeedsReconcile || mapDocumentNeedsReconcile)}
+            hasUnsavedDrafts={Boolean(props.hasUnsavedDrafts || isLocalDirty || sourceImportBusy || queryWriteBusy || mapCatalogLoading || viewCommitBusy || mapRemovalNeedsReconcile || mapDocumentNeedsReconcile)}
             dirtyOwners={props.dirtyOwners}
             onPreviewChange={(source, draft) => {
               if (!vectorSources.some(candidate => candidate.key === source.key)) return;

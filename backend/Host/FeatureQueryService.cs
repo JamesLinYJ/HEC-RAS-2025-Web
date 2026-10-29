@@ -22,6 +22,10 @@ using Utility.Progress;
 
 namespace Ras.Backend;
 
+/// <summary>Cooperative query cancellation confirmed after its owned cleanup completed.</summary>
+internal sealed class FeatureQueryCanceledException(Exception inner)
+    : OperationCanceledException("Feature query cancellation and cleanup completed.", inner);
+
 /// <summary>
 /// Runs the retained National Levee Database, National Structure Inventory,
 /// FEMA NFHL, and Overpass query workflows without their WinUI dialogs. Query
@@ -29,7 +33,7 @@ namespace Ras.Backend;
 /// process lifetime; Save exports those staged features with the retained GDAL
 /// writers and original naming/CRS rules.
 /// </summary>
-public static class FeatureQueryService
+public static partial class FeatureQueryService
 {
     private const int StageVersion = 1;
     private const string StageRootName = "HECRAS-FeatureQueryResults";
@@ -120,6 +124,35 @@ public static class FeatureQueryService
         return new(values.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray());
     }
 
+    internal static async Task<FeatureQuerySuggestionResponse> SuggestDuplexAsync(
+        FeatureQuerySuggestionRequest request, BackendDuplexControlReader controls)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        using var cancellation = new CancellationTokenSource();
+        using var stopControlPump = new CancellationTokenSource();
+        Task? controlPump = StartControlPump(controls, new ProgressReporter(), cancellation, stopControlPump.Token);
+        try
+        {
+            // Endpoint resolution in the retained source has no cancellation
+            // parameter. Stop awaiting it as well; the one-request worker exits
+            // after delivering this terminal result.
+            return await SuggestAsync(request, cancellation.Token).WaitAsync(cancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (cancellation.IsCancellationRequested)
+        {
+            throw new FeatureQueryCanceledException(error);
+        }
+        finally
+        {
+            stopControlPump.Cancel();
+            if (controlPump is not null)
+            {
+                try { await controlPump.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+            }
+        }
+    }
+
     private static async Task<FeatureQueryQueryResponse> QueryCoreAsync(FeatureQueryQueryRequest request,
         Action<BackendOperationProgress>? report, BackendDuplexControlReader? duplexControls)
     {
@@ -166,6 +199,7 @@ public static class FeatureQueryService
             throw;
         }
 
+        using StageLease queryStageLease = AcquireStageLease(stageDirectory, resultId);
         var reporter = CreateReporter(report);
         using var queryCancellation = new CancellationTokenSource();
         using var stopControlPump = new CancellationTokenSource();
@@ -328,12 +362,21 @@ public static class FeatureQueryService
                 layer.Name, Path.Combine(stageDirectory, layer.FileName), layer.Revision, layer.MapType,
                 layer.LineColor, layer.FillColor, layer.LineWidth)).ToArray();
             bool hasFeatures = previewLayers.Length > 0;
-            if (!hasFeatures) DeleteOwnedStageDirectory(stageDirectory, resultId);
+            if (!hasFeatures) DeleteOwnedStageDirectory(stageDirectory, resultId, leaseHeld: true);
             return new(mapCapture, kind, resultId, hasFeatures, info, previewLayers);
+        }
+        catch (OperationCanceledException error) when (queryCancellation.IsCancellationRequested)
+        {
+            try { DeleteOwnedStageDirectoryStrict(stageDirectory, resultId, leaseHeld: true); }
+            catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                throw new IOException($"查询已取消，但无法确认暂存清理：{stageDirectory}", cleanupError);
+            }
+            throw new FeatureQueryCanceledException(error);
         }
         catch
         {
-            DeleteOwnedStageDirectory(stageDirectory, resultId);
+            DeleteOwnedStageDirectory(stageDirectory, resultId, leaseHeld: true);
             throw;
         }
         finally
@@ -357,7 +400,8 @@ public static class FeatureQueryService
         string outputDirectory = ValidateOutputDirectory(request.OutputDirectory);
         MapSourceMapCapture mapCapture = MapSourceIdentity.CaptureMap(mapRequest);
         string stageDirectory = StageDirectory(resultId);
-        StageManifest manifest = ReadManifest(stageDirectory, resultId);
+        using StageLease stageLease = AcquireStageLease(stageDirectory, resultId);
+        StageManifest manifest = ReadManifest(stageDirectory, resultId, out string manifestRevision);
         if (mapCapture != manifest.Map) throw new SourceFileChangedException();
         MapSourceIdentity.VerifyMap(mapRequest, mapCapture);
         if (manifest.PolygonSourceFamily is { } polygonFamily)
@@ -428,7 +472,8 @@ public static class FeatureQueryService
                             format, projection, null, stageDirectory, [layer], saveCancellation.Token)
                             .ConfigureAwait(false);
                     }
-                    catch (Exception error) when (error is not OperationCanceledException and not SourceFileChangedException)
+                    catch (Exception error) when (error is not OperationCanceledException and not SourceFileChangedException
+                                                  and not FeatureQueryExportCleanupException)
                     {
                         messages.Add(error.Message);
                         continue;
@@ -443,18 +488,25 @@ public static class FeatureQueryService
             saveCancellation.Token.ThrowIfCancellationRequested();
             MapSourceIdentity.VerifyMap(mapRequest, mapCapture);
             if (manifest.PolygonSourceFamily is { } queryFamily) MapSourceIdentity.VerifyFamily(queryFamily);
+            VerifyStageSnapshot(stageDirectory, manifest, manifestRevision);
             if (sources.Count == 0 && messages.Count > 0)
                 throw new InvalidOperationException(string.Join(Environment.NewLine, messages));
             string info = messages.Count == 0
                 ? $"Saved {sources.Sum(source => source.FeatureCount):N0} feature(s)."
                 : $"Saved {sources.Sum(source => source.FeatureCount):N0} feature(s).{Environment.NewLine}{string.Join(Environment.NewLine, messages)}";
             reporter.ReportProgress(100);
-            DeleteOwnedStageDirectory(stageDirectory, resultId);
+            DeleteOwnedStageDirectory(stageDirectory, resultId, leaseHeld: true);
             return new(mapCapture, sources.ToArray(), info, messages.ToArray());
         }
-        catch
+        catch (Exception error)
         {
-            foreach (string outputPath in writtenFiles) DeleteExportFiles(outputPath, format);
+            var cleanupProblems = writtenFiles.SelectMany(outputPath => DeleteExportFiles(outputPath, format)).ToList();
+            if (error is FeatureQueryExportCleanupException previous)
+                cleanupProblems.InsertRange(0, previous.Problems);
+            if (cleanupProblems.Count > 0)
+                throw new FeatureQueryExportCleanupException(cleanupProblems, error);
+            if (error is OperationCanceledException && saveCancellation.IsCancellationRequested)
+                throw new FeatureQueryCanceledException(error);
             throw;
         }
         finally
@@ -495,9 +547,11 @@ public static class FeatureQueryService
             cancellationToken.ThrowIfCancellationRequested();
             return outputPath;
         }
-        catch
+        catch (Exception error)
         {
-            DeleteExportFiles(outputPath, format);
+            IReadOnlyList<string> cleanupProblems = DeleteExportFiles(outputPath, format);
+            if (cleanupProblems.Count > 0)
+                throw new FeatureQueryExportCleanupException(cleanupProblems, error);
             throw;
         }
     }
@@ -887,7 +941,7 @@ public static class FeatureQueryService
     {
         string path = StageRootPath();
         DirectoryInfo info = new(path);
-        if (info.LinkTarget is not null)
+        if (IsStageLink(info))
             throw new IOException("The feature query staging directory cannot be a symbolic link.");
         return info;
     }
@@ -905,12 +959,14 @@ public static class FeatureQueryService
 
     private static string OwnedStageFile(string stageDirectory, string fileName)
     {
-        if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName)
+        if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName ||
+            fileName is "." or ".." || fileName.Any(character => char.IsControl(character) ||
+                Array.IndexOf(WindowsInvalidFileNameChars, character) >= 0))
             throw new InvalidDataException("The feature query result contains an invalid staging file path.");
         string path = Path.GetFullPath(Path.Combine(stageDirectory, fileName));
         if (!string.Equals(Path.GetDirectoryName(path), stageDirectory,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ||
-            !File.Exists(path) || new FileInfo(path).LinkTarget is not null)
+            !File.Exists(path) || IsStageLink(new FileInfo(path)))
             throw new SourceFileChangedException();
         return path;
     }
@@ -921,27 +977,21 @@ public static class FeatureQueryService
         File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, BackendJson.Options), Encoding.UTF8);
     }
 
-    private static StageManifest ReadManifest(string stageDirectory, string resultId)
+    private static StageManifest ReadManifest(string stageDirectory, string resultId,
+        out string manifestRevision, bool allowExpired = false, bool verifySources = true)
     {
-        if (!Directory.Exists(stageDirectory) || new DirectoryInfo(stageDirectory).LinkTarget is not null)
-            throw new FileNotFoundException("The feature query result is no longer available. Query the map again.");
-        string ownerPath = Path.Combine(stageDirectory, ".owner");
-        string manifestPath = Path.Combine(stageDirectory, "manifest.json");
-        if (!File.Exists(ownerPath) || !File.Exists(manifestPath) ||
-            !string.Equals(File.ReadAllText(ownerPath, Encoding.UTF8), resultId, StringComparison.Ordinal))
-            throw new FileNotFoundException("The feature query result is no longer available. Query the map again.");
+        VerifyStageOwner(stageDirectory, resultId);
+        byte[] bytes = ReadStageBytes(OwnedStageFile(stageDirectory, "manifest.json"), 256 * 1024);
+        manifestRevision = HashStageBytes(bytes);
         StageManifest manifest = JsonSerializer.Deserialize<StageManifest>(
-            File.ReadAllText(manifestPath, Encoding.UTF8), BackendJson.Options)
-            ?? throw new InvalidDataException("The saved feature query result could not be read.");
+            WithoutUtf8Bom(bytes).Span, BackendJson.Options)
+            ?? throw new InvalidDataException("无法读取查询暂存清单，请重新查询。");
         if (manifest.Version != StageVersion || manifest.ResultId != resultId ||
-            manifest.Layers is null || manifest.Kind is not ("NLD" or "NSI" or "NFHL" or "OSM"))
-            throw new InvalidDataException("The saved feature query result is incomplete.");
-        foreach (StageLayer layer in manifest.Layers)
-        {
-            string file = OwnedStageFile(stageDirectory, layer.FileName);
-            if (!string.Equals(HashFile(file), layer.Revision, StringComparison.OrdinalIgnoreCase))
-                throw new SourceFileChangedException();
-        }
+            manifest.Map is null || manifest.Layers is null || manifest.Layers.Length > 32 ||
+            manifest.Kind is not ("NLD" or "NSI" or "NFHL" or "OSM"))
+            throw new InvalidDataException("查询暂存清单不完整，请重新查询。");
+        ValidateStageManifest(manifest, allowExpired);
+        VerifyStageSnapshot(stageDirectory, manifest, manifestRevision, verifySources);
         return manifest;
     }
 
@@ -950,50 +1000,89 @@ public static class FeatureQueryService
         DateTime cutoff = DateTime.UtcNow - StageLifetime;
         foreach (DirectoryInfo directory in root.EnumerateDirectories())
         {
-            if (directory.LinkTarget is not null || directory.CreationTimeUtc >= cutoff ||
+            if (IsStageLink(directory) || directory.CreationTimeUtc >= cutoff ||
                 !Guid.TryParseExact(directory.Name, "N", out _)) continue;
-            string ownerPath = Path.Combine(directory.FullName, ".owner");
-            try
-            {
-                if (File.Exists(ownerPath) && string.Equals(File.ReadAllText(ownerPath, Encoding.UTF8),
-                        directory.Name, StringComparison.Ordinal))
-                    Directory.Delete(directory.FullName, recursive: true);
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            DeleteOwnedStageDirectory(directory.FullName, directory.Name);
         }
     }
 
-    private static void DeleteOwnedStageDirectory(string directory, string resultId)
+    private static void DeleteOwnedStageDirectory(string directory, string resultId, bool leaseHeld = false)
     {
         try
         {
-            string expected = StageDirectory(resultId);
-            if (!string.Equals(Path.GetFullPath(directory), expected,
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
-                return;
-            string ownerPath = Path.Combine(expected, ".owner");
-            if (Directory.Exists(expected) && new DirectoryInfo(expected).LinkTarget is null &&
-                File.Exists(ownerPath) && string.Equals(File.ReadAllText(ownerPath, Encoding.UTF8), resultId,
-                    StringComparison.Ordinal))
-                Directory.Delete(expected, recursive: true);
+            DeleteOwnedStageDirectoryStrict(directory, resultId, leaseHeld);
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+        catch (InvalidOperationException) { }
     }
 
-    private static void DeleteExportFiles(string primaryPath, SelectedFormat format)
+    private static void DeleteOwnedStageDirectoryStrict(string directory, string resultId, bool leaseHeld)
+    {
+        string expected = StageDirectory(resultId);
+        if (!string.Equals(Path.GetFullPath(directory), expected,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new IOException("查询暂存路径与所有者不匹配。");
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(expected); }
+        catch (FileNotFoundException) { return; }
+        catch (DirectoryNotFoundException) { return; }
+        if ((attributes & FileAttributes.ReparsePoint) != 0 || (attributes & FileAttributes.Directory) == 0)
+            throw new IOException("查询暂存路径不是普通目录。");
+        using StageLease? stageLease = leaseHeld ? null : AcquireStageLease(expected, resultId);
+        DeleteStageDirectory(expected, resultId);
+        try
+        {
+            _ = File.GetAttributes(expected);
+            throw new IOException("查询暂存删除后仍然存在。");
+        }
+        catch (FileNotFoundException) { }
+        catch (DirectoryNotFoundException) { }
+    }
+
+    private sealed class FeatureQueryExportCleanupException : IOException
+    {
+        public IReadOnlyList<string> Problems { get; }
+
+        public FeatureQueryExportCleanupException(IEnumerable<string> problems, Exception cause)
+            : base("查询导出未完成，无法确认以下输出已清理：" + string.Join("；", problems), cause)
+        {
+            Problems = problems.ToArray();
+        }
+    }
+
+    private static IReadOnlyList<string> DeleteExportFiles(string primaryPath, SelectedFormat format)
     {
         string[] paths = format == SelectedFormat.GeoJson
             ? [primaryPath]
             : [primaryPath, ShapefileIO.SHXFilename(primaryPath), ShapefileIO.DBFFilename(primaryPath),
                 Path.ChangeExtension(primaryPath, ".prj"), Path.ChangeExtension(primaryPath, ".cpg")];
+        var problems = new List<string>();
         foreach (string path in paths)
         {
-            try { if (File.Exists(path) && new FileInfo(path).LinkTarget is null) File.Delete(path); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            try
+            {
+                FileAttributes attributes;
+                try { attributes = File.GetAttributes(path); }
+                catch (FileNotFoundException) { continue; }
+                catch (DirectoryNotFoundException) { continue; }
+                if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+                    throw new IOException("输出路径是链接或目录。");
+                File.Delete(path);
+                try
+                {
+                    _ = File.GetAttributes(path);
+                    throw new IOException("删除后仍可见输出。");
+                }
+                catch (FileNotFoundException) { }
+                catch (DirectoryNotFoundException) { }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                problems.Add(path + ": " + error.Message);
+            }
         }
+        return problems;
     }
 
     private static string HashFile(string path)

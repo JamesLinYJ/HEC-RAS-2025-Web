@@ -1,5 +1,14 @@
 # Server compute acceptance
 
+Verify feature-query staging, preview, export and discard with local files:
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- \
+  --run-feature-query-preview-local /tmp/hecras-feature-query-preview
+```
+
+The output directory must be new. This check creates a projected saved project and owned query stages, uses the retained GeoJSON writer and exporter, and exercises preview/discard through real child-worker dispatch. It checks shared preview budgets, source and map identity, cross-process stage locking, full export after preview truncation, rollback on a changed source, and idempotent cleanup. Duplex worker checks cancel query, save and tag suggestions, and on Unix also force an output cleanup failure to verify that the retained path is reported instead of claiming successful cleanup. Its `report.json` records the checks. It does not establish an online provider, HTTP, or browser result.
+
 Map analysis and topology editing checks use isolated copies of existing fixtures:
 
 ```sh

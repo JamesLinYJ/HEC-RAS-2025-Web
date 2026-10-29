@@ -1854,6 +1854,48 @@
           "map.background.cache"
         ],
         "writeBoundary": "Background settings apply only to the current view and do not save .ras/.vis. Actual CSharp RGBA frames and OSM vector paths/labels render below project content. The result parser checks request/map/session/viewport, source status, geometry and pixel bounds; disabled/failed sources never manufacture imagery. Styles and previews come from the service. Cache inspection and explicit clear act on the CSharp server cache; a successful matching clear receipt refreshes the current view. The server uses its existing finite 64 × 1024 × 1024 character terminal-result budget for background renders while progress and ordinary results retain their limits. Browser SVG preserves reported project geometry, clipping, colors, line gaps, text placement and halo settings; exact native font rasterization and collision layout are not claimed."
+      },
+      {
+        "id": "web-feature-query-importers",
+        "mount": "MapFeaturePage → FeatureQueryImporter → NLD/NSI/NFHL/OSMQuerierDialog → FeatureQueryDialog + corresponding QuerierControl",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/query-import/FeatureQueryImporter.tsx",
+          "frontend/src/features/map/query-import/FeatureQueryDialog.tsx",
+          "frontend/src/features/map/query-import/NLDQuerierControl.tsx",
+          "frontend/src/features/map/query-import/NLDQuerierDialog.tsx",
+          "frontend/src/features/map/query-import/NSIQuerierControl.tsx",
+          "frontend/src/features/map/query-import/NSIQuerierDialog.tsx",
+          "frontend/src/features/map/query-import/NFHLQuerierControl.tsx",
+          "frontend/src/features/map/query-import/NFHLQuerierDialog.tsx",
+          "frontend/src/features/map/query-import/OSMQuerierControl.tsx",
+          "frontend/src/features/map/query-import/OSMQuerierDialog.tsx",
+          "frontend/src/features/map/query-import/OsmQueryBuilderViewModel.ts",
+          "frontend/src/features/map/query-import/OsmClauseViewModel.ts",
+          "frontend/src/features/map/query-import/OsmTagFilterViewModel.ts",
+          "frontend/src/features/map/query-import/OsmSuggestField.tsx",
+          "frontend/src/features/map/query-import/OsmTagOperatorOption.ts",
+          "frontend/src/features/map/query-import/useFeatureQuery.ts",
+          "frontend/src/features/map/query-import/featureQueryProtocol.ts",
+          "frontend/src/features/map/query-import/featureQueryMapImport.ts",
+          "frontend/src/features/map/query-import/featureQueryTypes.ts",
+          "backend/Host/FeatureQueryService.cs",
+          "backend/Host/FeatureQueryPreview.cs",
+          "backend/Host/FeatureQueryStage.cs",
+          "backend/Host/FeatureQueryContracts.cs"
+        ],
+        "stateOwner": "The dialog owns query parameters, the original saved-map/source capture and bounded ProjectWorld preview. Source-specific controls preserve their original responsibilities. Accepted export tasks retain their original gateway and HTTP operation ID independently of the visible query; map addition has its own parent visualization lease, receipt and source readback.",
+        "readActions": [
+          "featureQuery.snapshot",
+          "featureQuery.query",
+          "featureQuery.preview",
+          "featureQuery.suggest",
+          "map.document.list",
+          "map.tree.load",
+          "workspace.file.inspect",
+          "map.vector.source.load"
+        ],
+        "writeBoundary": "Query creates a private owned stage, not a saved map layer. Preview is limited to whole features by a shared budget, with actual total/displayed counts; export still uses every staged feature. ResultId resolves only the original map-bound manifest members and SHA, never arbitrary paths. Explicit export writes GeoJSON or Shapefile to an existing absolute server directory. Unknown outcomes follow the accepted HTTP operation ID without repeating the export. Explicit Add to map then verifies the complete exported source family, acquires a parent lease and imports each layer with the preceding visualization revision. Only matching receipts, parent adoption and actual source readback count as added. An unknown mutation stops later layers and retains its original task/lease for recovery. Abandoned query stages use the exact original capture for cleanup; per-result worker leases exclude preview/save/discard races. NSI preserves the retained polygon query rules: one polygon can be simplified, multiple polygons use an enclosing extent. It does not promise exact clipping to every original boundary. These extra source controls are outside parts of the 517 resource-backed inventory and do not change that denominator. Map insertion accepts project-owned sources or explicitly registered external connections. Independent export to another server directory is still allowed; the directory hint and original failure diagnostic expose that distinction."
       }
     ],
     "stateInvariants": [
