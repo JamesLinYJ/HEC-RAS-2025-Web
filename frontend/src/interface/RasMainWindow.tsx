@@ -24,6 +24,7 @@ const features: { id: FeatureId; zh: string; en: string }[] = [
   { id: 'results', zh: '结果', en: 'Results' },
   { id: 'tools', zh: '工具', en: 'Tools' },
   { id: 'compute', zh: '计算', en: 'Compute' },
+  { id: 'dam-break', zh: '洪水推演', en: 'Flood Studio' },
 ];
 const blankContext = (): WorkbenchContext => ({ projectSessionID: crypto.randomUUID(), projectPath: null, projectXml: null, projectRevision: null, selectedAsset: null });
 const identity = (value: WorkbenchContext) => JSON.stringify([value.projectSessionID, value.projectPath, value.selectedAsset?.path ?? null, value.selectedAsset?.revision ?? null]);
@@ -328,7 +329,7 @@ export function RasMainWindow() {
   const props = { language, themeMode, onThemeModeChange: setThemeMode, context, backend, backendRevision, calculatorSessions, planAnalysisDrafts, onPlanAnalysisDraftChange, hasUnsavedDrafts: dirtyOwners.size > 0 || referenceWriting || mapWriting || projectWriting, dirtyOwners, onContextChange, onContextCommit, onBeginSessionReferenceMutation, onCommitSessionReferences, onEndSessionReferenceMutation, onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation, onBeginProjectContextMutation, onCommitProjectContextMutation, onEndProjectContextMutation, onBeginModelSave, onTrackModelSave, onCommitModelSave, onEndModelSave, mapRevision, onNavigate, onDirtyStateChange, pendingProjectCommand, onProjectCommandHandled };
   const title = context.selectedAsset?.name ?? context.projectPath?.split(/[\\/]/).at(-1) ?? t('尚未打开工程', 'No project open');
 
-  return <main className="ras-main-window">
+  return <main className={`ras-main-window${activeFeature === 'dam-break' ? ' ras-flood-workspace' : ''}`}>
     <header className="ras-titlebar"><strong>HEC-RAS 2025</strong><span className="ras-document-title">{title}{dirtyOwners.size > 0 ? ' •' : ''}</span><span className="ras-platform">{window.hecDesktop?.isElectron ? t('桌面版', 'Desktop') : t('网页版', 'Web')}</span><button onClick={() => setLanguage(language === 'zh' ? 'en' : 'zh')}>{language === 'zh' ? 'English' : '简体中文'}</button></header>
     <RasMenuBar language={language} onNavigate={onNavigate} onProjectCommand={onProjectCommand} onCloseProject={closeProject} hasProject={context.projectPath !== null} onToggleInspector={() => setShowInspector((value) => !value)} showInspector={showInspector} onHelp={() => setShowHelp(true)} />
     <nav className="ras-feature-nav" aria-label={t('工作区', 'Workspace')}>{features.map((feature) => <button key={feature.id} aria-current={activeFeature === feature.id ? 'page' : undefined} onClick={() => onNavigate(feature.id)}>{language === 'zh' ? feature.zh : feature.en}</button>)}<span className="ras-nav-spacer" /><button disabled={runtimeState === 'loading'} onClick={() => void connect()}>{runtimeState === 'ready' ? t('服务已连接 · 重试', 'Service connected · retry') : runtimeState === 'loading' ? t('正在连接…', 'Connecting…') : t('连接服务', 'Connect server')}</button></nav>

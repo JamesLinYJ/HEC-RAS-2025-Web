@@ -44,15 +44,18 @@
     "test:topology-quick-edit": "node scripts/verify-topology-quick-edit.mjs",
     "test:result-layer-settings": "node frontend/src/features/map/results-layer-settings/verify-result-layer-settings.mjs",
     "test:result-layer-react": "node frontend/src/features/map/results-layer-settings/verify-result-layer-react.mjs",
-    "test:osm-style-picker": "node scripts/verify-osm-style-picker.mjs"
+    "test:osm-style-picker": "node scripts/verify-osm-style-picker.mjs",
+    "test:flood-scenario": "node scripts/verify-flood-scenario.mjs"
   },
   "dependencies": {
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "three": "0.186.1"
   },
   "devDependencies": {
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@types/three": "0.186.0",
     "@vitejs/plugin-react": "6.1.2",
     "electron": "40.0.0",
     "typescript": "7.0.2",

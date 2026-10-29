@@ -19,6 +19,17 @@ export default defineConfig(({ mode }) => ({
     host: '127.0.0.1',
   },
   build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          // Keep the 3D renderer lazy and cache its engine separately from the scene.
+          groups: [
+            { name: 'three-core', test: /node_modules\/three\/build\/three\.core\.js/, includeDependenciesRecursively: false },
+            { name: 'three-renderer', test: /node_modules\/three\/build\/three\.module\.js/, includeDependenciesRecursively: false },
+          ],
+        },
+      },
+    },
     outDir: '../dist',
     emptyOutDir: true,
     target: 'es2022',

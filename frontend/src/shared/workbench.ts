@@ -1,7 +1,7 @@
 /** Shared UI/session contracts. Backend operation names and payloads follow the retained C# Host. */
 export type Language = 'zh' | 'en';
 export type ThemeMode = 'light' | 'dark' | 'system';
-export type FeatureId = 'project' | 'editors' | 'geometry' | 'map' | 'results' | 'tools' | 'compute';
+export type FeatureId = 'project' | 'editors' | 'geometry' | 'map' | 'results' | 'tools' | 'compute' | 'dam-break';
 export interface AssetReference {
   path: string;
   kind: string;

@@ -35,7 +35,9 @@ export function RasContent({ activeFeature, ...props }: FeaturePageProps & {
   const [computeOpened, setComputeOpened] = useState(activeFeature === 'compute');
   useEffect(() => { if (activeFeature === 'compute') setComputeOpened(true); }, [activeFeature]);
   const keys = ['project', 'editors', 'geometry', 'map', 'results', 'tools'] as const;
+  const FloodPage = pages.get('dam-break');
   return <div className="ras-content-host">
+    {activeFeature === 'dam-break' && FloodPage && <div className="ras-feature-page" data-feature="dam-break"><PageBoundary label="场景加载失败" retryLabel="重新加载场景"><Suspense fallback={<p role="status">正在加载场景…</p>}><FloodPage {...props}/></Suspense></PageBoundary></div>}
     {keys.map((feature) => {
       const Page = pages.get(feature);
       return <div key={feature} className="ras-feature-page" hidden={activeFeature !== feature} data-feature={feature}>
