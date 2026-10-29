@@ -19,7 +19,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
     <PackageReference Include="MaxRev.Gdal.Core" Version="3.13.3.557" />
-    <PackageReference Include="MaxRev.Gdal.MacosRuntime.Minimal.arm64" Version="3.13.3.557" />
-    <PackageReference Include="MaxRev.Gdal.CLI.osx-arm64" Version="3.13.3.557" />
+    <PackageReference Include="MaxRev.Gdal.MacosRuntime.Minimal.arm64" Version="3.13.3.557" Condition="'$(RuntimeIdentifier)' == 'osx-arm64' Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('OSX')))" />
+    <PackageReference Include="MaxRev.Gdal.CLI.osx-arm64" Version="3.13.3.557" Condition="'$(RuntimeIdentifier)' == 'osx-arm64' Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('OSX')))" />
+    <PackageReference Include="MaxRev.Gdal.LinuxRuntime.Minimal.x64" Version="3.13.3.557" Condition="'$(RuntimeIdentifier)' == 'linux-x64'" />
+    <PackageReference Include="MaxRev.Gdal.CLI.linux-x64" Version="3.13.3.557" Condition="'$(RuntimeIdentifier)' == 'linux-x64'" />
   </ItemGroup>
 </Project>

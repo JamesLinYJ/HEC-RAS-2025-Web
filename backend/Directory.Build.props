@@ -2,5 +2,6 @@
   <PropertyGroup>
     <!-- Startup explicitly calls HEC GDALSetup; package binaries and copy targets remain active. -->
     <MaxRevGdalCliEnablePathInitializer>false</MaxRevGdalCliEnablePathInitializer>
+    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(MSBuildThisFileDirectory)Packages</RestoreAdditionalProjectSources>
   </PropertyGroup>
 </Project>

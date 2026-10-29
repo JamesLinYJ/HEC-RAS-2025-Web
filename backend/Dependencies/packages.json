@@ -39,6 +39,28 @@
       "requiredFiles": [
         "lib/net10.0/VectorTileSchema.dll"
       ]
+    },
+    {
+      "id": "Hdf5.ThreadSafe.Runtime.linux-x64",
+      "version": "2.1.1-threadsafe.1",
+      "file": "Hdf5.ThreadSafe.Runtime.linux-x64.2.1.1-threadsafe.1.nupkg",
+      "sha256": "2e5358e42a447d67a870ccf9938b396cf172a4c14b333eb34f8f3c60048dd543",
+      "requiredFiles": [
+        "buildTransitive/native/libhdf5.so.320",
+        "buildTransitive/native/libhdf5_hl.so.320",
+        "buildTransitive/Hdf5.ThreadSafe.Runtime.linux-x64.targets",
+        "provenance.json"
+      ]
+    },
+    {
+      "id": "Hec.Dss.Runtime.linux-x64",
+      "version": "7.0.0-hecdss-v7it2.1",
+      "file": "Hec.Dss.Runtime.linux-x64.7.0.0-hecdss-v7it2.1.nupkg",
+      "sha256": "8f8fd4cf23bbfefd5ce439c5259c21b269227e014cb6568e68aa41e531b50d53",
+      "requiredFiles": [
+        "runtimes/linux-x64/native/libhecdss.so",
+        "provenance.json"
+      ]
     }
   ]
 }
