@@ -129,3 +129,32 @@
   .compute-monitor-range { gap: 5px; }
   .compute-monitor-range select { max-width: 112px; }
 }
+
+:root[data-theme='light'] .compute-tool-page .compute-field,
+:root[data-theme='light'] .compute-tool-page .compute-range,
+:root[data-theme='light'] .compute-tool-page .compute-operation-result-caption,
+:root[data-theme='light'] .compute-tool-page .compute-operation-message-sort,
+:root[data-theme='light'] .compute-tool-page .compute-progress-metrics,
+:root[data-theme='light'] .compute-tool-page .compute-progress-state,
+:root[data-theme='light'] .compute-tool-page .compute-progress-diagnostics,
+:root[data-theme='light'] .compute-tool-page .compute-monitor-range,
+:root[data-theme='light'] .compute-tool-page .compute-live-messages-heading,
+:root[data-theme='light'] .compute-tool-page .compute-summary-stat span,
+:root[data-theme='light'] .compute-tool-page .plan-inspection-grid dt { color: #596777; font-size: 11px; }
+:root[data-theme='light'] .compute-tool-page .compute-field input,
+:root[data-theme='light'] .compute-tool-page .compute-field select,
+:root[data-theme='light'] .compute-tool-page .compute-monitor-range select { background: #fff; color: #18232f; border-color: #dde2e8; min-height: 34px; font-size: 12px; }
+:root[data-theme='light'] .compute-tool-page input:focus-visible, :root[data-theme='light'] .compute-tool-page select:focus-visible, :root[data-theme='light'] .compute-tool-page button:focus-visible { outline: 2px solid #2c5bd6; outline-offset: 2px; }
+:root[data-theme='light'] .compute-tool-page .compute-operation-message,
+:root[data-theme='light'] .compute-tool-page .compute-live-message,
+:root[data-theme='light'] .compute-tool-page .compute-summary-stat { background: #f7f8fa; border-color: #dde2e8; }
+:root[data-theme='light'] .compute-tool-page .compute-operation-message p,
+:root[data-theme='light'] .compute-tool-page .compute-live-message p,
+:root[data-theme='light'] .compute-tool-page .compute-summary-stat strong,
+:root[data-theme='light'] .compute-tool-page .plan-inspection-grid dd,
+:root[data-theme='light'] .compute-tool-page .compute-operation-result .section-row h3,
+:root[data-theme='light'] .compute-tool-page .compute-live-messages-heading h3 { color: #18232f; font-size: 12px; }
+:root[data-theme='light'] .compute-tool-page .compute-field-error, :root[data-theme='light'] .compute-tool-page .compute-invalid-hint, :root[data-theme='light'] .compute-tool-page .plan-inspection-list { color: #a33830; }
+:root[data-theme='light'] .compute-tool-page .compute-fixture-boundary, :root[data-theme='light'] .compute-tool-page .compute-fixture-boundary strong { color: #805a19; }
+:root[data-theme='light'] .compute-tool-page .compute-operation-message.is-error .compute-operation-message-severity { color: #a33830; }
+:root[data-theme='light'] .compute-tool-page .compute-operation-message.is-warning .compute-operation-message-severity { color: #805a19; }

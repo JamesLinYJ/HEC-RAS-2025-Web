@@ -23,17 +23,17 @@
 }
 :root[data-theme='light'] {
   color-scheme: light;
-  color: #263742;
-  background: #f1f5f8;
-  --app-canvas: #f1f5f8;
-  --app-text: #263742;
-  --app-border: rgba(54, 79, 94, .2);
+  color: #18232f;
+  background: #f3f4f6;
+  --app-canvas: #f3f4f6;
+  --app-text: #18232f;
+  --app-border: #dde2e8;
   --app-surface: #ffffff;
-  --app-surface-raised: #e8eef2;
-  --app-muted: #526b78;
-  --muted: #526b78;
-  --muted-dim: #71858e;
-  --border: rgba(54, 79, 94, .18);
+  --app-surface-raised: #f7f8fa;
+  --app-muted: #596777;
+  --muted: #596777;
+  --muted-dim: #6d7987;
+  --border: #dde2e8;
   --panel: rgba(255, 255, 255, .9);
   --mint: #087f69;
   --aqua: #137c99;
@@ -107,3 +107,14 @@ h1 { margin: 17px 0 9px; font-size: clamp(29px, 4vw, 40px); letter-spacing: -.04
 .compute-route { min-height: 0; overflow: auto; }.compute-tool-page .hero { min-height: 198px; }.compute-tool-page .compute-grid { padding-top: 20px; }
 @media (max-width: 900px) { .workspace-content { grid-template-columns: minmax(180px, 215px) minmax(0, 1fr); }.workspace-inspector { display: none; } }
 @media (max-width: 620px) { .workspace-shell { grid-template-rows: 52px 65px minmax(0, 1fr) 26px; }.workspace-topbar { gap: 9px; padding: 0 10px; }.workspace-brand { font-size: 11px; gap: 6px; }.workspace-nav button { font-size: 9px; padding: 0 7px; }.workspace-top-actions { gap: 8px; }.workspace-platform { display: none; }.workspace-toolbar-row { grid-template-rows: 30px 35px; }.workspace-menu-strip { gap: 12px; overflow: hidden; white-space: nowrap; padding: 0 10px; font-size: 9px; }.workspace-content { grid-template-columns: 1fr; }.workspace-project { display: none; }.workspace-map { border: 0; }.workspace-empty p { font-size: 10px; }.workspace-statusbar { font-size: 8px; } }
+
+/* Light compute shell. Feature-specific states are styled in compute.css. */
+:root[data-theme='light'] .compute-tool-page { color: #18232f; }
+:root[data-theme='light'] .compute-tool-page h1, :root[data-theme='light'] .compute-tool-page .panel h2 { color: #18232f; }
+:root[data-theme='light'] .compute-tool-page .hero p, :root[data-theme='light'] .compute-tool-page .runtime-state, :root[data-theme='light'] .compute-tool-page .panel-footnote, :root[data-theme='light'] .compute-tool-page .section-row h3, :root[data-theme='light'] .compute-tool-page .request-header, :root[data-theme='light'] .compute-tool-page .request-card p, :root[data-theme='light'] .compute-tool-page .footer { color: #596777; }
+:root[data-theme='light'] .compute-tool-page .panel { background: #fff; border-color: #dde2e8; border-radius: 8px; box-shadow: none; }
+:root[data-theme='light'] .compute-tool-page .code-block, :root[data-theme='light'] .compute-tool-page .request-card { background: #f7f8fa; border-color: #dde2e8; color: #344252; }
+:root[data-theme='light'] .compute-tool-page .primary-button { background: #2c5bd6; border-color: #2c5bd6; color: #fff; box-shadow: none; min-height: 34px; }
+:root[data-theme='light'] .compute-tool-page .cancel-button { color: #9c3d36; background: #fff; border-color: #dfc3c0; min-height: 34px; }
+:root[data-theme='light'] .compute-tool-page .notice { color: #27644e; }
+:root[data-theme='light'] .compute-tool-page .notice-warning { color: #805a19; }

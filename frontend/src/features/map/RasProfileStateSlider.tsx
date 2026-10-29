@@ -20,10 +20,7 @@ export function RasProfileStateSlider({ language, mapID, controller }: RasProfil
   const playLabel = zh ? '播放' : 'Play';
   const pauseLabel = zh ? '暂停' : 'Pause';
 
-  return <div className="map-time-track" aria-label={zh ? '当前时刻' : 'Selected time'} style={{
-    height: 26, display: 'flex', alignItems: 'center', gap: 10,
-    background: 'transparent',
-  }}>
+  return <div className="map-time-track map-time-track-result" aria-label={zh ? '当前时刻' : 'Selected time'}>
     <ProfileStateSlider
       language={language}
       mapID={mapID}
@@ -31,15 +28,14 @@ export function RasProfileStateSlider({ language, mapID, controller }: RasProfil
       rangeValue={rangeValue}
       currentStep={currentStep}
     />
-    {(controller.canPlay || isPlaying) && (
+    {(controller.steps.length > 1 || isPlaying) && (
       <button
         type="button"
         className="map-time-play"
         data-testid={`map-result-${isPlaying ? 'pause' : 'play'}-${mapID}`}
         aria-label={isPlaying ? pauseLabel : playLabel}
         onClick={isPlaying ? controller.pause : controller.play}
-        disabled={!isPlaying && controller.status === 'loading'}
-        style={{ flex: '0 0 auto' }}
+        disabled={!isPlaying && !controller.canPlay}
       >
         {isPlaying ? pauseLabel : playLabel}
       </button>

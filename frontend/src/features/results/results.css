@@ -157,3 +157,25 @@
   .results-mesh-picker-actions { gap: 3px; }
   .results-mesh-map { min-height: 180px; }
 }
+
+/* Light controls and surfaces, keeping the plotted series colours intact. */
+:root[data-theme='light'] .results-page { --result-bg: #f3f4f6; --result-panel: #fff; --result-border: #dde2e8; --result-text: #18232f; --result-muted: #596777; --result-dim: #6d7987; --result-accent: #2c5bd6; }
+:root[data-theme='light'] .results-page-header h1, :root[data-theme='light'] .results-selector-heading h2, :root[data-theme='light'] .results-analysis-heading h2 { color: var(--result-text); }
+:root[data-theme='light'] .results-picker, :root[data-theme='light'] .results-selector-panel, :root[data-theme='light'] .results-analysis-panel { background: #fff; border-color: var(--result-border); border-radius: 8px; box-shadow: none; }
+:root[data-theme='light'] .results-runtime-pill, :root[data-theme='light'] .results-node-details, :root[data-theme='light'] .results-details-compact, :root[data-theme='light'] .results-series-toggle { background: #f7f8fa; border-color: var(--result-border); color: var(--result-muted); }
+:root[data-theme='light'] .results-field > span, :root[data-theme='light'] .results-field > label, :root[data-theme='light'] .results-picker label, :root[data-theme='light'] .results-source-status, :root[data-theme='light'] .results-time-picker { color: var(--result-muted); font-size: 12px; }
+:root[data-theme='light'] .results-field select, :root[data-theme='light'] .results-field input, :root[data-theme='light'] .results-time-picker select, :root[data-theme='light'] .results-chart-settings-grid input:not([type=checkbox]) { background: #fff; color: var(--result-text); border-color: var(--result-border); font-size: 12px; }
+:root[data-theme='light'] .results-secondary-button { background: #fff; border-color: var(--result-border); color: var(--result-text); font-size: 12px; }
+:root[data-theme='light'] .results-primary-button { background: #2c5bd6; border-color: #2c5bd6; color: #fff; font-size: 12px; }
+:root[data-theme='light'] .results-primary-button:hover:not(:disabled) { background: #2348a6; }
+:root[data-theme='light'] .results-secondary-button:hover:not(:disabled) { background: #f3f4f6; color: var(--result-text); border-color: #b7c0ca; }
+:root[data-theme='light'] .results-page button:focus-visible, :root[data-theme='light'] .results-page input:focus-visible, :root[data-theme='light'] .results-page select:focus-visible, :root[data-theme='light'] .results-page summary:focus-visible { outline-color: #2c5bd6; }
+:root[data-theme='light'] .results-selected-asset strong, :root[data-theme='light'] .results-details-name, :root[data-theme='light'] .results-details-grid strong, :root[data-theme='light'] .results-block-row strong, :root[data-theme='light'] .results-node-details > summary { color: var(--result-text); }
+:root[data-theme='light'] .results-selected-asset small, :root[data-theme='light'] .results-details-grid span, :root[data-theme='light'] .results-block-row, :root[data-theme='light'] .results-block-row small, :root[data-theme='light'] .results-layer-messages > div, :root[data-theme='light'] .results-source-label, :root[data-theme='light'] .results-series-toolbar > span:first-child { color: var(--result-muted); }
+:root[data-theme='light'] .results-data-table th, :root[data-theme='light'] .results-data-table th.results-time-column { background: #f7f8fa; color: #465463; border-color: var(--result-border); }
+:root[data-theme='light'] .results-data-table td, :root[data-theme='light'] .results-cell-input { color: var(--result-text); border-color: #edf0f3; }
+:root[data-theme='light'] .results-data-table .results-time-column { background: #fff; }
+:root[data-theme='light'] .results-data-table tbody tr:hover td { background: #f3f4f6; }
+:root[data-theme='light'] .results-data-table tbody tr.results-row-selected td, :root[data-theme='light'] .results-data-table tbody tr.results-row-selected .results-time-column { background: #e8edfa; color: #18232f; }
+:root[data-theme='light'] .results-error-banner, :root[data-theme='light'] .results-inline-error, :root[data-theme='light'] .results-cell-error { color: #a33830; }
+:root[data-theme='light'] .results-detail-warning, :root[data-theme='light'] .results-capability-note, :root[data-theme='light'] .results-draft-status { color: #805a19; }

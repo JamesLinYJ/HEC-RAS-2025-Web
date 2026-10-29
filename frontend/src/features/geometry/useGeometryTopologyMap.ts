@@ -26,8 +26,9 @@ import { createPersistedVectorDeepConnectPreview, parseVectorDeepConnectPreview,
   deepConnectSourceEchoIdentity, persistedVectorSourceRevision, vectorDeepConnectComponentSelectionKey } from './geometryVectorDeepConnect';
 import type { PersistedVectorDeepConnectComponent, PersistedVectorDeepConnectPreview, PersistedVectorDeepConnectSource,
   VectorSourceInspectionCandidate } from './geometryVectorDeepConnect';
-import { emptyTopologySelection, resolveTopologyDiagnosticTarget, topologySelectionCamera, topologySelectionGeometry, topologySelectionSnapshotKey,
-  topologyTableSelection, type TopologyDiagnosticTarget, type TopologySelectionFocus, type TopologySelectionKind } from './geometryTopologySelection';
+import { canCarryTopologyQuickSelection, captureTopologyQuickSelection, emptyTopologySelection, resolveTopologyDiagnosticTarget,
+  topologySelectionCamera, topologySelectionGeometry, topologySelectionSnapshotKey, topologyTableSelection,
+  type TopologyDiagnosticTarget, type TopologyQuickSelectionCapture, type TopologySelectionFocus, type TopologySelectionKind } from './geometryTopologySelection';
 
 interface MapTarget {
   key: string;
@@ -138,6 +139,9 @@ export interface GeometryTopologyMapWorkspace {
   onZoomToSelection: () => void;
   onLocateDiagnostic: (messageID: string, target: TopologyDiagnosticTarget) => TopologySelectionKind | null;
   onTableSelectionChange: (kind: TopologySelectionKind, rows: GeometryRow[]) => number | void;
+  captureQuickSelection: (kind: 'arc' | 'region', row: GeometryRow) => TopologyQuickSelectionCapture | null;
+  isQuickSelectionCurrent: (capture: TopologyQuickSelectionCapture) => boolean;
+  carryQuickSelection: (capture: TopologyQuickSelectionCapture, result: GeometryTopologySnapshot) => void;
   onMapCommand: (command: GeometryTopologyMapCommand) => Promise<void>;
   canvasProps: Omit<GeometryTopologyCanvasProps, 'language'>;
 }
@@ -402,9 +406,10 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
 
   const ownerContextKey = JSON.stringify([owner, context.projectRevision, context.projectXml,
     context.coreLayerContext ?? null, context.projectSessionID, context.projectPath]);
-  const selectionSnapshotKey = topologySelectionSnapshotKey(JSON.stringify([
+  const selectionOwner = JSON.stringify([
     ownerContextKey, backendRevision ?? null, model?.assetPath ?? null, model?.coreLayerContext ?? null,
-  ]), topology);
+  ]);
+  const selectionSnapshotKey = topologySelectionSnapshotKey(selectionOwner, topology);
   const selectionSnapshotKeyRef = useRef(selectionSnapshotKey); selectionSnapshotKeyRef.current = selectionSnapshotKey;
   useEffect(() => {
     if (selectionRef.current?.owner !== selectionSnapshotKey) {
@@ -1057,6 +1062,31 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     return entry.version;
   }, [cancelSpatialSelection, selectionSnapshotKey]);
 
+  const captureQuickSelection = useCallback((kind: 'arc' | 'region', row: GeometryRow): TopologyQuickSelectionCapture | null => {
+    const selected = selectionRef.current;
+    if (!selected || selected.owner !== selectionSnapshotKeyRef.current) return null;
+    return captureTopologyQuickSelection(topologyRef.current, kind, row, selected.owner, selected.version, selected.value);
+  }, []);
+
+  const isQuickSelectionCurrent = useCallback((capture: TopologyQuickSelectionCapture): boolean => {
+    const selected = selectionRef.current;
+    const current = topologyRef.current;
+    return !!selected && !!current && selected.owner === selectionSnapshotKeyRef.current &&
+      canCarryTopologyQuickSelection(capture, selected.owner, selected.version, selected.value, current);
+  }, []);
+
+  const carryQuickSelection = useCallback((capture: TopologyQuickSelectionCapture, result: GeometryTopologySnapshot): void => {
+    const selected = selectionRef.current;
+    if (!selected || selected.owner !== selectionSnapshotKeyRef.current ||
+        !canCarryTopologyQuickSelection(capture, selected.owner, selected.version, selected.value, result)) return;
+    const nextOwner = topologySelectionSnapshotKey(selectionOwner, result);
+    if (!nextOwner) return;
+    const entry = { owner: nextOwner, value: selected.value, version: ++selectionVersionRef.current };
+    selectionRef.current = entry;
+    setSelectionEntry(entry);
+    setSelectionFocus(null);
+  }, [selectionOwner]);
+
   const onZoomToSelection = useCallback((): void => {
     if (!selectionSnapshotKey || selectionSnapshotKeyRef.current !== selectionSnapshotKey ||
         selectionRef.current?.owner !== selectionSnapshotKey) return;
@@ -1547,6 +1577,9 @@ export function useGeometryTopologyMap({ active, owner, backend, backendRevision
     onZoomToSelection,
     onLocateDiagnostic,
     onTableSelectionChange,
+    captureQuickSelection,
+    isQuickSelectionCurrent,
+    carryQuickSelection,
     onMapCommand: runMapCommand,
     canvasProps,
   };

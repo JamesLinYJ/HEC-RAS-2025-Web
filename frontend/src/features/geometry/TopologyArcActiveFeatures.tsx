@@ -8,7 +8,6 @@ import { DetailedArcHeader } from './DetailedArcHeader';
 import { TopologyArcQuickEditPicker } from './TopologyArcQuickEditPicker';
 import { TopologyFeatureErrorControl } from './TopologyFeatureErrorControl';
 import { TagFilterControl } from './TagFilterControl';
-import type { GeometryRow } from './geometryTypes';
 import { GeometryTopologyMapPanel } from './GeometryTopologyMapPanel';
 import type { GeometryTopologyMapWorkspace } from './useGeometryTopologyMap';
 import { useTopologyTableSelection } from './useTopologyTableSelection';
@@ -23,7 +22,6 @@ export function TopologyArcActiveFeatures(props: TopologyArcActiveFeaturesProps)
   const rows = useMemo(() => [...(props.table?.rows ?? []), ...props.localRows], [props.table?.rows, props.localRows]);
   const { selectedIDs, selectedRows, selectRows } = useTopologyTableSelection('arc', rows, props.topologySnapshot,
     props.mapWorkspace, props.onSelectionChange);
-  const resize = (row: GeometryRow, operation: 'halfSize' | 'doubleSize'): void => props.onTopologyResize?.('arc', row, operation);
 
   return <div className="geometry-grid">
     {props.mapWorkspace && <GeometryTopologyMapPanel language={props.language} workspace={props.mapWorkspace} showArcTools />}
@@ -40,7 +38,8 @@ export function TopologyArcActiveFeatures(props: TopologyArcActiveFeaturesProps)
       onTagValueChange={props.onTopologyTagChange ? (selected, name, value) => props.onTopologyTagChange!('arc', selected, name, value) : undefined}
       onCreateTag={props.onTopologyTagCreate ? (name, type) => props.onTopologyTagCreate!('arc', name, type) : undefined}
       onEditPoints={props.canLoadArcPoints && props.onLoadArcPoints && props.onArcPointCoordinateChange ? setEditingArcFID : undefined} />
-    <TopologyArcQuickEditPicker language={props.language} rows={selectedRows} canEdit={props.canEdit} busy={props.busy} onResize={resize} />
+    <TopologyArcQuickEditPicker language={props.language} rows={selectedRows} snapshot={props.topologySnapshot} canEdit={props.canEdit} busy={props.busy}
+      onEdit={props.onTopologyQuickEdit ? (row, edit) => props.onTopologyQuickEdit!('arc', row, edit) : undefined} />
     <TopologyFeatureErrorControl language={props.language} featureKind="arc" rows={selectedRows} snapshot={props.topologySnapshot}
       onLocate={props.onLocateTopologyDiagnostic} />
     {editingArcFID != null && props.onLoadArcPoints && props.onArcPointCoordinateChange ? <ArcPointsEditorDialog language={props.language}

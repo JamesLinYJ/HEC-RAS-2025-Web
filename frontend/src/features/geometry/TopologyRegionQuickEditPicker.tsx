@@ -1,53 +1,72 @@
+import { useRef, useState } from 'react';
 import type { Language } from '../../shared/workbench';
-import type { GeometryRow } from './geometryTypes';
+import { topologySourceRows } from './geometryTopologySelection';
+import { QuickChoiceField, QuickNumberField } from './TopologyQuickFields';
 import { QuickRatioCellSizeButton } from './QuickRatioCellSizeButton';
+import type { GeometryRow, GeometryTopologyQuickEdit, GeometryTopologySnapshot } from './geometryTypes';
 
 export interface TopologyRegionQuickEditPickerProps {
   language: Language;
   rows: GeometryRow[];
+  snapshot?: GeometryTopologySnapshot;
   canEdit: boolean;
   busy: boolean;
-  onResize: (row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => void;
+  onEdit?: (row: GeometryRow, edit: GeometryTopologyQuickEdit) => Promise<void>;
 }
 
-function patchName(language: Language, type: string): string {
-  if (language !== 'zh') return type;
-  const names: Record<string, string> = { Quad: '四边形', TrianglePaver: '三角网格', Cartesian: '笛卡尔网格', OneD: '一维', Empty: '空区域' };
-  return names[type] ?? type;
-}
-
-export function TopologyRegionQuickEditPicker({ language, rows, canEdit, busy, onResize }: TopologyRegionQuickEditPickerProps) {
-  const region = rows.length === 1 && rows[0].fid != null && rows[0].fid >= 0 ? rows[0] : undefined;
+export function TopologyRegionQuickEditPicker({ language, rows, snapshot, canEdit, busy, onEdit }: TopologyRegionQuickEditPickerProps) {
+  const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
+  const sourceRows = snapshot && rows.length === 1 ? topologySourceRows(snapshot, 'region', rows) : [];
+  const region = sourceRows.length === 1 ? snapshot?.regions.rows.find((row) => row.id === sourceRows[0].id && row.fid === sourceRows[0].fid) : undefined;
+  const fields = snapshot?.regions.editableFields ?? [];
+  const field = (id: string) => fields.find((item) => item.id === id);
   const patchType = region?.values.PatchType ?? '';
   const simple = patchType === 'TrianglePaver' || patchType === 'Cartesian';
   const quad = patchType === 'Quad';
-  const canResize = !!region && (simple || quad);
-  const resize = (factor: 0.5 | 2, axis?: 'NorthSouth' | 'EastWest'): void =>
-    onResize(region!, factor === 0.5 ? 'halfSize' : 'doubleSize', axis);
+  const disabled = !region || !canEdit || !snapshot?.canEdit || busy || pending || !onEdit;
+  const run = async (edit: GeometryTopologyQuickEdit): Promise<void> => {
+    if (!region || !onEdit || disabled || inFlight.current) return;
+    inFlight.current = true; setPending(true);
+    try { await onEdit(region, edit); } finally { inFlight.current = false; setPending(false); }
+  };
+  const resize = (factor: 0.5 | 2, axis?: 'NorthSouth' | 'EastWest'): void => {
+    void run({ operation: factor === 0.5 ? 'halfSize' : 'doubleSize', ...(axis ? { axis } : {}) }).catch(() => undefined);
+  };
+  const sizeField = field('ConstantSize');
 
-  return (
-    <section className="geometry-panel" aria-label={language === 'zh' ? '区域快速编辑' : 'Region quick edit'}>
-      <header className="geometry-panel-heading"><div><h3>{language === 'zh' ? '区域快速缩放' : 'Region quick sizing'}</h3><p>{region ? `${language === 'zh' ? '网格类型' : 'Patch type'}: ${patchName(language, patchType)}` : (language === 'zh' ? '请只选择一个源区域。' : 'Select exactly one source region.')}</p></div></header>
-      {!region ? <div className="geometry-empty"><strong>{language === 'zh' ? '快速缩放需要一个源区域。' : 'Quick sizing requires one source region.'}</strong></div> : !canResize ? (
-        <div className="geometry-panel-body">{language === 'zh' ? '源快速尺寸命令只支持 TrianglePaver、Cartesian 或 Quad 区域。' : 'Source quick sizing supports TrianglePaver, Cartesian, and Quad patches.'}</div>
-      ) : (
-        <div className="geometry-panel-body">
-          {quad ? <div className="geometry-toolbar-group" style={{ marginBottom: 10 }}>
-            <QuickRatioCellSizeButton language={language} factor={0.5} axis="NorthSouth" disabled={!canEdit || busy} onResize={(factor) => resize(factor, 'NorthSouth')} />
-            <QuickRatioCellSizeButton language={language} factor={2} axis="NorthSouth" disabled={!canEdit || busy} onResize={(factor) => resize(factor, 'NorthSouth')} />
-          </div> : null}
-          {!quad ? <div className="geometry-toolbar-group" style={{ width: '100%' }}>
-            <QuickRatioCellSizeButton language={language} factor={0.5} disabled={!canEdit || busy} onResize={(factor) => resize(factor)} />
-            <QuickRatioCellSizeButton language={language} factor={2} disabled={!canEdit || busy} onResize={(factor) => resize(factor)} />
-          </div> : null}
-          {quad ? <div className="geometry-toolbar-group" style={{ marginTop: 10 }}>
-            <QuickRatioCellSizeButton language={language} factor={0.5} axis="EastWest" disabled={!canEdit || busy} onResize={(factor) => resize(factor, 'EastWest')} />
-            <QuickRatioCellSizeButton language={language} factor={2} axis="EastWest" disabled={!canEdit || busy} onResize={(factor) => resize(factor, 'EastWest')} />
-          </div> : null}
+  return <section className="geometry-panel topology-quick-edit" aria-label={language === 'zh' ? '区域快速编辑' : 'Region quick edit'}>
+    <header className="geometry-panel-heading"><div><h3>{language === 'zh' ? '区域快速编辑' : 'Region quick edit'}</h3>
+      <p>{region ? `${language === 'zh' ? '源区域' : 'Source region'} FID ${region.fid}` : (language === 'zh' ? '请在地图或表格中选择一个源区域。' : 'Select one source region on the map or in the table.')}</p>
+    </div></header>
+    {!region ? <div className="geometry-panel-body topology-quick-edit__hint">{rows.length > 1
+      ? (language === 'zh' ? '已选择多个要素；快速编辑一次只作用于一个源区域。' : 'Multiple features are selected; quick edit applies to one source region at a time.')
+      : (language === 'zh' ? '请选择唯一的源区域。' : 'Select one unambiguous source region.')}</div> :
+      <div className="geometry-panel-body topology-quick-edit__body">
+        <div className="topology-quick-edit__fields">
+          <QuickChoiceField key={`${region.id}:PatchType`} language={language} label={language === 'zh' ? '网格类型' : 'Patch type'}
+            field={field('PatchType')} value={patchType} disabled={disabled}
+            onCommit={(value) => run({ operation: 'setField', fieldID: 'PatchType', value })} />
+          <QuickNumberField key={`${region.id}:ConstantSize`} language={language} label={language === 'zh' ? '固定尺寸' : 'Constant size'}
+            field={sizeField} value={region.values.ConstantSize ?? ''} kind="region-size" disabled={disabled}
+            onCommit={(value) => run({ operation: 'setField', fieldID: 'ConstantSize', value })} />
         </div>
-      )}
-    </section>
-  );
+        {simple || quad ? <>
+          {quad && <div className="topology-quick-edit__sizes">
+            <QuickRatioCellSizeButton language={language} factor={0.5} axis="NorthSouth" disabled={disabled || !sizeField || !!sizeField.readOnly} onResize={(factor) => resize(factor, 'NorthSouth')} />
+            <QuickRatioCellSizeButton language={language} factor={2} axis="NorthSouth" disabled={disabled || !sizeField || !!sizeField.readOnly} onResize={(factor) => resize(factor, 'NorthSouth')} />
+          </div>}
+          {simple && <div className="topology-quick-edit__sizes">
+            <QuickRatioCellSizeButton language={language} factor={0.5} disabled={disabled || !sizeField || !!sizeField.readOnly} onResize={resize} />
+            <QuickRatioCellSizeButton language={language} factor={2} disabled={disabled || !sizeField || !!sizeField.readOnly} onResize={resize} />
+          </div>}
+          {quad && <div className="topology-quick-edit__sizes">
+            <QuickRatioCellSizeButton language={language} factor={0.5} axis="EastWest" disabled={disabled || !sizeField || !!sizeField.readOnly} onResize={(factor) => resize(factor, 'EastWest')} />
+            <QuickRatioCellSizeButton language={language} factor={2} axis="EastWest" disabled={disabled || !sizeField || !!sizeField.readOnly} onResize={(factor) => resize(factor, 'EastWest')} />
+          </div>}
+        </> : <div className="topology-quick-edit__hint">{language === 'zh' ? '当前网格类型不支持快速缩放。' : 'Quick sizing is unavailable for this patch type.'}</div>}
+      </div>}
+  </section>;
 }
 
 export default TopologyRegionQuickEditPicker;

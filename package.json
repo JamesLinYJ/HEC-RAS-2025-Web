@@ -40,7 +40,10 @@
     "test:background-map-rendering": "node scripts/verify-background-map-rendering.mjs",
     "test:osm-query-builder": "node scripts/verify-osm-query-builder.mjs",
     "test:feature-query-map-import": "node scripts/verify-feature-query-map-import.mjs",
-    "test:feature-query-workflow": "node scripts/verify-feature-query-workflow.mjs"
+    "test:feature-query-workflow": "node scripts/verify-feature-query-workflow.mjs",
+    "test:topology-quick-edit": "node scripts/verify-topology-quick-edit.mjs",
+    "test:result-layer-settings": "node frontend/src/features/map/results-layer-settings/verify-result-layer-settings.mjs",
+    "test:result-layer-react": "node frontend/src/features/map/results-layer-settings/verify-result-layer-react.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

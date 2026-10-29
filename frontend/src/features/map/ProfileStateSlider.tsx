@@ -36,7 +36,7 @@ export function ProfileStateSlider({ language, mapID, controller, rangeValue, cu
       data-testid={`map-result-profile-${mapID}`}
       data-profile-index={currentStep?.id ?? ''}
       list={stepListID}
-      style={{ flex: '1 1 auto', minWidth: 80 }}
+      className="map-time-range"
       onChange={(event) => {
         const step = controller.steps[Number(event.currentTarget.value)];
         if (step) controller.selectProfile(step.id);
@@ -56,10 +56,8 @@ export function ProfileStateSlider({ language, mapID, controller, rangeValue, cu
         />
       ))}
     </datalist>
-    <span className="map-time-current" data-testid={`map-result-time-${mapID}`} style={{
-      position: 'static', width: 'auto', height: 'auto', flex: '0 0 auto',
-      borderRadius: 0, background: 'transparent', whiteSpace: 'nowrap',
-    }}>
+    <span className="map-time-current map-result-time-current" data-testid={`map-result-time-${mapID}`}
+      title={controller.selectedProfileTime ?? currentStep?.time ?? currentStep?.label ?? noTime}>
       {controller.selectedProfileTime ?? currentStep?.time ?? currentStep?.label ?? noTime}
     </span>
   </>;

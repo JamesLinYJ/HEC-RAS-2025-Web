@@ -1,0 +1,11 @@
+.topology-quick-edit .geometry-panel-heading p { font-size: 12px; line-height: 1.45; }
+.topology-quick-edit__body { display: grid; gap: 12px; }
+.topology-quick-edit__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 12px; align-items: start; }
+.topology-quick-field { display: grid; gap: 5px; min-width: 0; color: var(--geo-muted); font-size: 12px; line-height: 1.4; }
+.topology-quick-field input, .topology-quick-field select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 34px; padding: 7px 9px; color: #17212b; background: #fff; border: 1px solid #a8b9c3; border-radius: 6px; font: inherit; }
+.topology-quick-field input:focus, .topology-quick-field select:focus { outline: 2px solid #4a91b8; outline-offset: 1px; }
+.topology-quick-field input:disabled, .topology-quick-field select:disabled { opacity: .65; cursor: not-allowed; }
+.topology-quick-number { min-width: 0; }
+.topology-quick-error { display: block; margin-top: 4px; color: #b23b32; font-size: 12px; line-height: 1.4; }
+.topology-quick-edit__sizes { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.topology-quick-edit__hint { color: var(--geo-muted); font-size: 12px; line-height: 1.45; }

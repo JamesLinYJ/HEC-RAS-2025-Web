@@ -10,6 +10,30 @@ internal static class Program
     {
         try
         {
+            if (args is ["--run-result-group-live-http", string resultGroupLiveBase,
+                    string resultGroupLiveManifest, string resultGroupLiveOutput])
+            {
+                TextWriter protocol = Console.Out;
+                ResultGroupLiveAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunResultGroupLiveAsync(
+                    new Uri(EnsureTrailingSlash(resultGroupLiveBase)), resultGroupLiveManifest, resultGroupLiveOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
+            if (args is ["--run-result-group-http", string resultGroupBase,
+                    string resultGroupManifest, string resultGroupOutput])
+            {
+                TextWriter protocol = Console.Out;
+                ResultGroupAcceptanceReport report;
+                Console.SetOut(Console.Error);
+                try { report = await ServerAcceptance.RunResultGroupAsync(
+                    new Uri(EnsureTrailingSlash(resultGroupBase)), resultGroupManifest, resultGroupOutput); }
+                finally { Console.SetOut(protocol); }
+                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
+                return 0;
+            }
             if (args is ["--run-feature-query-preview-local", string featureQueryOutput])
             {
                 TextWriter protocol = Console.Out;
@@ -489,6 +513,8 @@ internal static class Program
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-culvert-result-http <loopback-base-url> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-arc-map-http <loopback-base-url> <topology-map-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-map-line-hash-vectors");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-result-group-live-http <loopback-base-url> <result-group-http-manifest.json> <new-output-directory>");
+            Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-result-group-http <loopback-base-url> <result-hover-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-map-analysis-http <loopback-base-url> <result-hover-manifest.json> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-geometry-topology-map-http <loopback-base-url> <saved-project.ras> <new-output-directory>");
             Console.Error.WriteLine("  Ras.Backend.ServerChecks --run-raster-formats <new-output-directory-outside-repository>");

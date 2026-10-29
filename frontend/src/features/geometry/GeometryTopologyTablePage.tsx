@@ -1,7 +1,7 @@
 import type { Language } from '../../shared/workbench';
 import { GeometryFeatureTable } from './GeometryFeatureTable';
 import { gt } from './geometryText';
-import type { GeometryFeatureKind, GeometryField, GeometryRow, GeometryTable, GeometryTopologyArcPointsSnapshot, GeometryTopologyFactorSelection, GeometryTopologyFilterClause, GeometryTopologyFilterSnapshot, GeometryTopologyRecipeSnapshot, GeometryTopologySnapshot } from './geometryTypes';
+import type { GeometryFeatureKind, GeometryField, GeometryRow, GeometryTable, GeometryTopologyArcPointsSnapshot, GeometryTopologyFactorSelection, GeometryTopologyFilterClause, GeometryTopologyFilterSnapshot, GeometryTopologyQuickEdit, GeometryTopologyRecipeSnapshot, GeometryTopologySnapshot } from './geometryTypes';
 import type { TopologyDiagnosticLocator } from './geometryTopologySelection';
 
 export interface GeometryTopologyTablePageProps {
@@ -13,7 +13,7 @@ export interface GeometryTopologyTablePageProps {
   busy: boolean;
   onChange: (row: GeometryRow, field: GeometryField, value: string, isLocal: boolean) => void;
   onCommand?: (row: GeometryRow, field: GeometryField, command: string, value?: string) => void;
-  onTopologyResize?: (kind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => void;
+  onTopologyQuickEdit?: (kind: 'arc' | 'region', row: GeometryRow, edit: GeometryTopologyQuickEdit) => Promise<void>;
   onTopologyTagChange?: (kind: 'arc' | 'region', rows: GeometryRow[], tagName: string, value: string | null) => Promise<void>;
   onTopologyTagCreate?: (kind: 'arc' | 'region', tagName: string, tagType: string) => Promise<void>;
   canFilterTopology?: boolean;

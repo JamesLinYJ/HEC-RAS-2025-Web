@@ -11,7 +11,7 @@ import './geometry.css';
 import { gfield, gkind, gt } from './geometryText';
 import { GeometryError } from './GeometryError';
 import { geometryDiagnosticMessage } from './geometryErrors';
-import type { GeometryFeatureKind, GeometryRow } from './geometryTypes';
+import type { GeometryFeatureKind, GeometryRow, GeometryTopologyQuickEdit } from './geometryTypes';
 import { ArcImportDialog } from './ArcImportDialog';
 import { useGeometryWorkbench } from './useGeometryWorkbench';
 import { useGeometryTopologyMap } from './useGeometryTopologyMap';
@@ -143,9 +143,17 @@ export default function GeometryPage(props: FeaturePageProps) {
     onApplyRecipe: workspace.applyTopologyRecipe,
     onSelectionChange: (rows: GeometryRow[]) => topologyMapWorkspace.onTableSelectionChange(kind, rows),
     onLocateTopologyDiagnostic: locateTopologyDiagnostic,
-    onTopologyResize: (featureKind: 'arc' | 'region', row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest') => {
-      void workspace.resizeTopology(featureKind, row, operation, axis)
-        .catch((error: unknown) => workspace.setError('topology', geometryDiagnosticMessage(error)));
+    onTopologyQuickEdit: async (featureKind: 'arc' | 'region', row: GeometryRow, edit: GeometryTopologyQuickEdit): Promise<void> => {
+      try {
+        const capture = topologyMapWorkspace.captureQuickSelection(featureKind, row);
+        if (!capture) throw new Error(language === 'zh' ? '请选择唯一的源要素后再编辑。' : 'Select exactly one source feature to edit.');
+        await workspace.quickEditTopology(featureKind, row, edit,
+          () => topologyMapWorkspace.isQuickSelectionCurrent(capture),
+          (result) => topologyMapWorkspace.carryQuickSelection(capture, result));
+      } catch (error) {
+        workspace.setError('topology', geometryDiagnosticMessage(error));
+        throw error;
+      }
     },
     onDelete: (rows: GeometryRow[]) => workspace.onTopologyDelete(kind, rows),
     onLocalAdd: () => workspace.addLocalRow(kind, workspace.wrappedTopologyTable(kind)),

@@ -11,9 +11,6 @@ export type ConceptualMeshTopologyRegionsEditorProps = Omit<GeometryTopologyTabl
 
 /** Source conceptual-mesh and recipe details for active control points; selection is owned by the active-feature list. */
 export function ConceptualMeshTopologyRegionsEditor({ selectedRows, ...props }: ConceptualMeshTopologyRegionsEditorProps) {
-  const resize = (row: GeometryRow, operation: 'halfSize' | 'doubleSize', axis?: 'NorthSouth' | 'EastWest'): void =>
-    props.onTopologyResize?.('region', row, operation, axis);
-
   return <div className="geometry-grid">
     <ConceptualMeshContextualControl language={props.language} featureKind="region" rows={selectedRows}
       canEdit={props.canEdit} busy={props.busy} onApplyFactor={props.onApplyTopologyFactor} />
@@ -21,7 +18,8 @@ export function ConceptualMeshTopologyRegionsEditor({ selectedRows, ...props }: 
     <ControlPointEditor language={props.language} rows={selectedRows} snapshot={props.topologySnapshot} canEdit={props.canEdit} busy={props.busy}
       onTagValueChange={props.onTopologyTagChange ? (selected, name, value) => props.onTopologyTagChange!('region', selected, name, value) : undefined}
       onCreateTag={props.onTopologyTagCreate ? (name, type) => props.onTopologyTagCreate!('region', name, type) : undefined} />
-    <TopologyRegionQuickEditPicker language={props.language} rows={selectedRows} canEdit={props.canEdit} busy={props.busy} onResize={resize} />
+    <TopologyRegionQuickEditPicker language={props.language} rows={selectedRows} snapshot={props.topologySnapshot} canEdit={props.canEdit} busy={props.busy}
+      onEdit={props.onTopologyQuickEdit ? (row, edit) => props.onTopologyQuickEdit!('region', row, edit) : undefined} />
     <TopologyRecipeBuilder language={props.language} rows={selectedRows} snapshot={props.topologySnapshot}
       canEdit={props.canEdit} busy={props.busy} supported={!!props.canLoadRecipe}
       onLoadRecipe={props.onLoadRecipe} onApplyRecipe={props.onApplyRecipe} />

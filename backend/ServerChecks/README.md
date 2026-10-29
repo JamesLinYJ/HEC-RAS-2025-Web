@@ -171,6 +171,26 @@ dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- --r
 
 The fixture solves a 4 × 4 Plan twice, with the second draft starting one second later, then reads the stored HDF cell profiles and records their float32 map-depth baseline. Its own `.vis` includes a supported serialized standalone Result row alongside the Plan's MultiResult; the product's normal AddResult grouping rules are unchanged. The separate HTTP check renders two real default-size frames exceeding the former 8 MiB protocol limit, samples standalone A4 and MultiResult A1/B0 together, rejects stale identities, preserves outside-mesh NoData and verifies read-only source bytes remain unchanged. It then hides, saves, reloads and shows each exact Result and MultiResult node, checking retained membership, visibility and every visualization-revision receipt while the project and HDF bytes remain unchanged. The raster-budget check covers 160 viewport/layer combinations across 1–32 sources plus invalid inputs, verifying aggregate pixel limits, world bounds, aspect ratio and unchanged full-resolution frames whenever they fit. To resume fixture preparation from an existing two-result `map-fixture.json`, use `--complete-result-hover-fixture <loopback-url> <existing-map-fixture.json> <new-output-directory>`.
 
+### Result-group map type and shared keyframe
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- \
+  --run-result-group-http http://127.0.0.1:5080 \
+  /tmp/hecras-result-hover/result-hover-manifest.json /tmp/hecras-result-group
+```
+
+The runner copies the completed real Result-hover project, creates and solves a second real Plan one second later, then focuses both Plans and exercises the actual HTTP tree, result-source and render operations. It checks a single `.vis` type transaction and receipt, independent Result preservation, unchecked groups and a checked group below an unchecked ancestor, stale and empty-group rejection, HDF byte preservation, and shared anchor A1 mapping to the second Plan's B0 by timestamp. The manifest contains the copied project, exact current map request and selections for browser acceptance. It also marks the second real HDF protected and checks a synthetic callback timeline and rejection of a mismatched run ID. This does not start a concurrent writer or prove live compute behavior. Use a new output directory outside the source fixture and an already-running loopback server.
+
+To run only the protected-source read checks against an unchanged existing Result-group fixture, without repeating the solver or tree mutations:
+
+```sh
+dotnet run --project backend/ServerChecks/Ras.Backend.ServerChecks.csproj -- \
+  --run-result-group-live-http http://127.0.0.1:5080 \
+  /tmp/hecras-result-group/result-group-http-manifest.json /tmp/hecras-result-group-live
+```
+
+This verifies the real HDF is hidden from stored selections while the simulated lease is active, matches published callback metadata by time, rejects a forged run ID and an attempt to use that protected HDF as a stored anchor, and compares HDF and `.vis` hashes before and after. It does not simulate a concurrent writer.
+
 For the shared browser/Electron interaction check, set `HECRAS_VERIFY_SERVER_URL`, `HECRAS_VERIFY_MAP_FIXTURE` to `map-fixture.json`, `HECRAS_VERIFY_RESULT_HOVER_FIXTURE` to `result-hover-manifest.json`, and `HECRAS_VERIFY_RESULT_HOVER_ONLY=1`. Run `node scripts/verify-ui.mjs` for headless Chrome or `node desktop/launch.mjs --server-smoke` for hidden Electron, also setting `HECRAS_SERVER_URL` for Electron. Both operate the real comparison controls and pointer handler, correlate completed HTTP operations, and compare their values with the HDF baseline.
 
 Run `--run-association-raster-budget` to check aggregate association pixel limits across layer counts and viewport sizes.

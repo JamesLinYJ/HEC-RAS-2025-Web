@@ -1334,7 +1334,9 @@ public static partial class ModelEditorAdapter
             case "SizeFunction": SetValidatedProperty(arc, field, ParseEnum<LinearSizeFunction>(text)); break;
             case "PointCount": SetValidatedProperty(arc, field, int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture)); break;
             case "Bias": SetValidatedProperty(arc, field, ParseFloat(text)); break;
-            case "ConstantSize": SetValidatedProperty(arc, field, ParseFloat(text)); break;
+            // The source NumberBox and arc property use NaN as their blank value.
+            // Keep nonempty input on the existing finite, validated path.
+            case "ConstantSize": SetValidatedProperty(arc, field, text.Length == 0 ? float.NaN : ParseFloat(text)); break;
             case "ConstrainStretching": SetValidatedProperty(arc, field, ParseEnum<ConstrainStretchingOptions>(text)); break;
             case "LaplaceBC": SetValidatedProperty(arc, field, ParseEnum<LaplaceBCOptions>(text)); break;
             case "DistanceStraightLine": SetValidatedProperty(arc, field, bool.Parse(text)); break;

@@ -1,0 +1,51 @@
+.map-time-axis .results-section-properties {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e6edf2;
+  color: #526b7c;
+  font-size: 12px;
+}
+
+.map-time-axis .results-section-target {
+  max-width: min(270px, 100%);
+  overflow: hidden;
+  color: #3d596d;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-time-axis .results-section-runtime {
+  color: #718595;
+  overflow-wrap: anywhere;
+}
+
+.map-time-axis .results-section-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  color: #526b7c;
+  overflow-wrap: anywhere;
+}
+
+.map-time-axis .results-section-status details,
+.map-time-axis details.results-section-status {
+  display: block;
+}
+
+.map-time-axis .results-section-status summary {
+  cursor: pointer;
+}
+
+.map-time-axis .results-section-status code {
+  overflow-wrap: anywhere;
+}

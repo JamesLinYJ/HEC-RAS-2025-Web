@@ -1288,7 +1288,12 @@
           "frontend/src/features/geometry/CulvertBarrelLayerActiveFeatures.tsx",
           "frontend/src/features/geometry/useGeometryWorkbench.ts",
           "frontend/src/features/geometry/useTopologyTableSelection.ts",
-          "frontend/src/features/geometry/geometryTopologySelection.ts"
+          "frontend/src/features/geometry/geometryTopologySelection.ts",
+          "frontend/src/features/geometry/TopologyArcQuickEditPicker.tsx",
+          "frontend/src/features/geometry/TopologyRegionQuickEditPicker.tsx",
+          "frontend/src/features/geometry/TopologyQuickFields.tsx",
+          "frontend/src/features/geometry/topologyQuickEdit.css",
+          "frontend/src/features/geometry/useGeometryTopologyMap.ts"
         ],
         "stateOwner": "The current Geometry workbench provides source rows and owns edits/undo. ActiveFeaturesControl supplies local case-insensitive filtering and bidirectional row selection keyed by stable GeometryRow.id; topology handlers map filtered FIDs back to current source rows. FlowArea region selection maps the selected snapshot rows to source FIDs, while culvert barrel selection belongs to the current culvert owner. The three topology tables use useTopologyTableSelection to share current source selection with the map; selectionVersion prevents an external same-FID selection from reviving old local-only rows.",
         "readActions": [
@@ -1296,7 +1301,7 @@
           "geometry.mesh.load",
           "geometry.culverts.load"
         ],
-        "writeBoundary": "Selection/filtering does not itself edit model data. Topology arc/region filtering uses topology.filter and only selects validated current FIDs; node coordinates remain read-only in this table page; GeometryTopologyNodesPage separately mounts GeometryTopologyCanvas, which captures map context/MapCellSize for spatial selection and Host mapCommand/moveNode. Selected-node deletion uses the existing topology draft, and nodes cannot be locally added here. Existing arc/region/mesh edits continue through topology.edit or geometry.mesh.edit, culvert edits through geometry.culverts.edit, and the parent model.save commits the Geometry HDF. This documents mounted source relationships, not a new Host command or UI acceptance."
+        "writeBoundary": "Selection/filtering does not itself edit model data. Topology arc/region filtering uses topology.filter and only selects validated current FIDs; node coordinates remain read-only in this table page; GeometryTopologyNodesPage separately mounts GeometryTopologyCanvas, which captures map context/MapCellSize for spatial selection and Host mapCommand/moveNode. Selected-node deletion uses the existing topology draft, and nodes cannot be locally added here. Existing arc/region/mesh edits continue through topology.edit or geometry.mesh.edit, culvert edits through geometry.culverts.edit, and the parent model.save commits the Geometry HDF. This documents mounted source relationships, not a new Host command or UI acceptance. Map quick fields edit only one exact captured arc/control-point FID. Choices and editable fields come from Host metadata; multi-selection is explicitly disabled. Unfinished numeric text stays local; a valid value commits to the draft on blur or Enter. A matching non-structural field receipt may carry forward the same map selection; intervening source/draft/FID selection changes prevent restoration. Arc ConstantSize empty text maps to the retained NaN value, and blank PointCount maps to -1. These values enter TopologyDraft, with history undo/redo; parent model.save is still the HDF boundary. A parent save omits a mesh ledger only when the current source owner and revision match, the ledger is complete, and isDirty is explicitly false. Dirty or unknown mesh states retain Host topology-fingerprint validation; a save conflict preserves all drafts and history."
       },
       {
         "id": "catalog-tree-search-filter",
@@ -1896,6 +1901,36 @@
           "map.vector.source.load"
         ],
         "writeBoundary": "Query creates a private owned stage, not a saved map layer. Preview is limited to whole features by a shared budget, with actual total/displayed counts; export still uses every staged feature. ResultId resolves only the original map-bound manifest members and SHA, never arbitrary paths. Explicit export writes GeoJSON or Shapefile to an existing absolute server directory. Unknown outcomes follow the accepted HTTP operation ID without repeating the export. Explicit Add to map then verifies the complete exported source family, acquires a parent lease and imports each layer with the preceding visualization revision. Only matching receipts, parent adoption and actual source readback count as added. An unknown mutation stops later layers and retains its original task/lease for recovery. Abandoned query stages use the exact original capture for cleanup; per-result worker leases exclude preview/save/discard races. NSI preserves the retained polygon query rules: one polygon can be simplified, multiple polygons use an enclosing extent. It does not promise exact clipping to every original boundary. These extra source controls are outside parts of the 517 resource-backed inventory and do not change that denominator. Map insertion accepts project-owned sources or explicitly registered external connections. Independent export to another server directory is still allowed; the directory hint and original failure diagnostic expose that distinction."
+      },
+      {
+        "id": "results-section-group-settings",
+        "mount": "MapFeaturePage → MapTimeAxis → ResultsSectionLayerProperties; MultiResultVisualizationSettings keeps read-only rendering information",
+        "source": [
+          "frontend/src/features/map/MapFeaturePage.tsx",
+          "frontend/src/features/map/MapTimeAxis.tsx",
+          "frontend/src/features/map/ResultsSectionLayerProperties.tsx",
+          "frontend/src/features/map/MultiResultVisualizationSettings.tsx",
+          "frontend/src/features/map/RasMapResultPicker.tsx",
+          "frontend/src/features/map/useMapResultFrames.ts",
+          "frontend/src/features/map/results-layer-settings/sharedKeyframe.ts",
+          "frontend/src/features/map/results-layer-settings/activeResultProfile.ts",
+          "frontend/src/features/map/results-layer-settings/resultLayerSettingsTransaction.ts",
+          "frontend/src/features/map/results-layer-settings/useResultLayerSettings.ts",
+          "frontend/src/features/map/results-layer-settings/resultsLayerSettings.css",
+          "backend/Host/MapTreeService.cs",
+          "backend/Host/MapResultRenderContracts.cs",
+          "frontend/src/features/map/mapTimeAxis.css",
+          "frontend/src/features/map/ProfileStateSlider.tsx",
+          "frontend/src/features/map/RasProfileStateSlider.tsx"
+        ],
+        "stateOwner": "The saved map owns group SelectedMapType. The controller owns a runtime-only shared keyframe anchor built from one verified Result slot and its full profile metadata. Each active group is rendered with its own matched profile index; independent Results retain their own timeline.",
+        "readActions": [
+          "map.resultSources",
+          "map.resultRender",
+          "map.tree.load",
+          "map.document.list"
+        ],
+        "writeBoundary": "The existing setResultMapType tree action atomically updates only source-resolved, checked, visible MultiResult rows. It does not rewrite individual Result rows or protected HDF files; an empty active group set is rejected. A parent visualization lease is held until a verified receipt is adopted and fresh tree/result-source reads confirm exact group identities and types. Unknown outcomes keep the original HTTP operation ID and lease across component unmount; recovery does not repeat the mutation. Shared time selection and repush are local view operations. Backend timestamp matching supplies each target group ordinal; the frontend validates slot-0 path, revision, sourceID, selection indices, source status and matching raster ordinal before using it for hover, velocity or analysis. A missing matching frame remains unavailable. The current frontend handles stored HDF timelines; it does not yet consume live compute callback metadata, even though the Host has a protected-source metadata contract."
       }
     ],
     "stateInvariants": [

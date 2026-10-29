@@ -1,0 +1,51 @@
+{
+  "arcs": [
+    {
+      "id": "SizeFunction",
+      "title": "SizeFunction",
+      "sourceType": "LinearSizeFunction",
+      "choices": [
+        "Constant",
+        "CountWithBias",
+        "Unset"
+      ],
+      "readOnly": false
+    },
+    {
+      "id": "PointCount",
+      "title": "PointCount",
+      "sourceType": "int",
+      "choices": [],
+      "readOnly": false
+    },
+    {
+      "id": "ConstantSize",
+      "title": "ConstantSize",
+      "sourceType": "float",
+      "choices": [],
+      "readOnly": false
+    }
+  ],
+  "regions": [
+    {
+      "id": "PatchType",
+      "title": "PatchType",
+      "sourceType": "PatchType",
+      "choices": [
+        "Quad",
+        "TrianglePaver",
+        "Cartesian",
+        "OneD",
+        "Empty"
+      ],
+      "readOnly": false
+    },
+    {
+      "id": "ConstantSize",
+      "title": "ConstantSize",
+      "sourceType": "float",
+      "choices": [],
+      "readOnly": false
+    }
+  ]
+}

@@ -1,8 +1,10 @@
+import { useEffect, useRef } from 'react';
 import type { MapResultFramesController } from './useMapResultFrames';
 import { MultiResultNodeDetails } from './MultiResultNodeDetails';
 import { MultiResultVisualizationSettings } from './MultiResultVisualizationSettings';
 import { RasMapResultPicker } from './RasMapResultPicker';
 import { RasProfileStateSlider } from './RasProfileStateSlider';
+import './mapTimeAxis.css';
 
 interface MapTimeAxisProps {
   interactionDisabled?: boolean;
@@ -49,6 +51,19 @@ export function MapTimeAxis({ language, controller, interactionDisabled = false 
         : controller?.status === 'empty' ? copy.empty
           : controller?.status === 'error' ? copy.unavailable
             : null;
+  const selectedSource = controller?.activeNode?.selections.find(selection => selection.selectionIndex === 0)?.selectedResult;
+  const statusKey = JSON.stringify([controller?.activeNodeKey, selectedSource?.resultPath ?? null,
+    selectedSource?.revision ?? null, controller?.keyframeNodeKey, controller?.selectedProfileIndex,
+    controller?.sources?.contextToken ?? null]);
+  const loading = controller?.status === 'loading';
+  const settledMessage = controller?.message ?? statusCopy ?? (hasSteps ? '' : copy.noResult);
+  const lastSettledMessage = useRef<{ key: string; message: string } | null>(null);
+  const displayedMessage = loading
+    ? lastSettledMessage.current?.key === statusKey ? lastSettledMessage.current.message : copy.loading
+    : settledMessage;
+  useEffect(() => {
+    if (!loading) lastSettledMessage.current = { key: statusKey, message: settledMessage };
+  }, [loading, settledMessage, statusKey]);
 
   return (
     <section className="map-time-axis" aria-label={title} data-testid={`map-result-time-axis-${mapID}`} inert={interactionDisabled}>
@@ -62,15 +77,22 @@ export function MapTimeAxis({ language, controller, interactionDisabled = false 
         ) : <span className="map-time-empty">{copy.noTime}</span>}
       </div>
       {controller && <>
-        <RasMapResultPicker language={language} controller={controller} mapID={mapID} />
-        <MultiResultNodeDetails language={language} controller={controller} mapID={mapID} />
+        <div className="map-time-source-row">
+          <RasMapResultPicker language={language} controller={controller} mapID={mapID} />
+          <MultiResultNodeDetails language={language} controller={controller} mapID={mapID} />
+        </div>
         <MultiResultVisualizationSettings language={language} controller={controller} />
         <RasProfileStateSlider language={language} controller={controller} mapID={mapID} />
       </>}
       <div className="map-time-caption">
-        <span role="status" aria-live="polite">{controller?.message ?? statusCopy ?? (hasSteps ? '' : copy.noResult)}</span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          {hasSteps ? currentStep?.label ?? currentStep?.time : ''}
+        <span className={`map-time-caption-status${loading ? ' is-loading' : ''}`} role="status" aria-live="polite"
+          aria-busy={loading} aria-label={loading ? copy.loading : undefined} title={loading ? copy.loading : displayedMessage}>
+          {displayedMessage}
+        </span>
+        <span className="map-time-caption-actions">
+          <span className="map-time-caption-label" title={hasSteps ? currentStep?.label ?? currentStep?.time : ''}>
+            {hasSteps ? currentStep?.label ?? currentStep?.time : ''}
+          </span>
           {controller && ['error', 'unavailable', 'empty'].includes(controller.status) && (
             <button
               type="button"

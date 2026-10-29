@@ -20,6 +20,34 @@ export interface TopologyLocalTableSelection {
   ids: string[];
 }
 
+/** A quick editor owns exactly one source feature in one map selection generation. */
+export interface TopologyQuickSelectionCapture {
+  snapshotKey: string;
+  version: number;
+  kind: 'arc' | 'region';
+  fid: number;
+  rowID: string;
+  revision: string;
+}
+
+export function captureTopologyQuickSelection(snapshot: GeometryTopologySnapshot | undefined, kind: 'arc' | 'region', row: GeometryRow,
+  snapshotKey: string | null, version: number, selection: TopologySelection): TopologyQuickSelectionCapture | null {
+  if (!snapshot || !snapshotKey || topologySourceRows(snapshot, kind, [row]).length !== 1 || row.fid == null ||
+      selection[kind].length !== 1 || selection[kind][0] !== row.fid ||
+      selection.node.length !== 0 || selection[kind === 'arc' ? 'region' : 'arc'].length !== 0) return null;
+  return { snapshotKey, version, kind, fid: row.fid, rowID: row.id, revision: snapshot.revision };
+}
+
+export function canCarryTopologyQuickSelection(capture: TopologyQuickSelectionCapture, snapshotKey: string | null, version: number,
+  selection: TopologySelection, result: GeometryTopologySnapshot): boolean {
+  if (capture.snapshotKey !== snapshotKey || capture.version !== version || result.revision !== capture.revision ||
+      !result.completion?.draftIdentity || result.completion.sourceRevision.toUpperCase() !== result.revision.toUpperCase() ||
+      selection[capture.kind].length !== 1 || selection[capture.kind][0] !== capture.fid || selection.node.length !== 0 ||
+      selection[capture.kind === 'arc' ? 'region' : 'arc'].length !== 0) return false;
+  const matches = topologyRows(result, capture.kind).filter((row) => row.fid === capture.fid && row.id === capture.rowID);
+  return matches.length === 1 && topologySourceRows(result, capture.kind, matches).length === 1;
+}
+
 /** React selection identity, separate from the Host's opaque draft and source contracts. */
 export function topologySelectionSnapshotKey(owner: string, snapshot?: GeometryTopologySnapshot): string | null {
   const completion = snapshot?.completion;

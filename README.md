@@ -96,3 +96,7 @@ These commands require the matching .NET WebAssembly workload. They are not part
 - `resources`: editor schemas and localized resources.
 
 This application is still under development. UI migration, individual backend operations, real model solving, and file-format round trips require their own verification; a successful app launch does not establish full HEC-RAS project compatibility.
+
+The map time controls can apply a result type to active MultiResult groups and synchronize stored results by timestamp. Each group uses its own matching profile index. A missing match stays unavailable; live compute callback synchronization is not yet connected in the frontend. `npm run test:result-layer-settings` and `npm run test:result-layer-react` check client contracts and simulated transport separately from the real HDF acceptance commands in ServerChecks.
+
+Geometry map quick fields edit the selected arc or region through the existing topology draft. Enum choices come from the Host; empty arc size and point count preserve the source's NaN and -1 conventions. Undo/redo uses topology history, and the parent Save persists the HDF. `npm run test:topology-quick-edit` checks input, selection and draft ownership; real HTTP/HDF and map interaction are separate checks.

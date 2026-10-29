@@ -4,6 +4,8 @@ import type { CatalogTreeNode, CatalogTreeNodeLocator, MapDocumentTab, MapExtent
 import { projectXmlSha } from './ProjectTreeListener';
 import { mapError } from './mapText';
 import type { MapAnalysisMapRequest } from './analysis/mapAnalysisTypes';
+import { resultNodeIdentity, sharedKeyframeFromRender, verifySharedKeyframe } from './results-layer-settings/sharedKeyframe';
+import type { ResultLayerSettingsController } from './results-layer-settings/useResultLayerSettings';
 
 export interface MapResultFramesViewport {
   minX: number;
@@ -130,6 +132,7 @@ export interface MapResultRenderSnapshot {
   layers: MapResultRenderLayer[];
   sources: MapResultRenderSourceStatus[];
   unavailableReason: string | null;
+  sharedKeyframeAnchor: unknown;
 }
 
 export interface MapResultFrameNodeOption {
@@ -152,6 +155,13 @@ export interface MapResultFramesController {
   selectedProfileIndex: number | null;
   selectedProfileTime: string | null;
   layers: MapResultRenderLayer[];
+  /** All checked MultiResult groups, rendered independently against the same time key. */
+  visibleLayers: MapResultRenderLayer[];
+  keyframeOptions: MapResultFrameNodeOption[];
+  keyframeNodeKey: string | null;
+  groupRenderMessages: string[];
+  activeResultProfileReady?: boolean;
+  resultLayerSettings?: ResultLayerSettingsController;
   /** Full Result extent from the no-viewport render for the current source identity. */
   resultExtent: MapExtent | null;
   renderSnapshot: MapResultRenderSnapshot | null;
@@ -161,12 +171,14 @@ export interface MapResultFramesController {
   canAddComparison: boolean;
   canRemoveComparison: boolean;
   selectNode: (key: string) => void;
+  selectKeyframe: (key: string) => void;
   selectSource: (nodeKey: string, selectionIndex: number, choice: MapResultSourceChoice) => void;
   addComparison: () => void;
   removeComparison: () => void;
   selectProfile: (profileIndex: number) => void;
   play: () => void;
   pause: () => void;
+  resync: () => void;
   refresh: () => void;
 }
 
@@ -244,7 +256,7 @@ function parseSourceChoice(value: unknown): MapResultSourceChoice {
   };
 }
 
-function parseCatalog(value: unknown): MapResultSourceCatalog {
+export function parseMapResultSourceCatalog(value: unknown): MapResultSourceCatalog {
   const item = record(value);
   if (!item || !Array.isArray(item.activeNodes) || !Array.isArray(item.treeRoots) ||
       !Array.isArray(item.treeSelectionOverrides)) throw new Error('The map result source response is incomplete.');
@@ -484,6 +496,7 @@ function parseRenderSnapshot(value: unknown): MapResultRenderSnapshot {
     layers,
     sources: item.sources as MapResultRenderSourceStatus[],
     unavailableReason: optionalString(item.unavailableReason),
+    sharedKeyframeAnchor: item.sharedKeyframeAnchor ?? null,
   };
 }
 
@@ -582,16 +595,21 @@ export function useMapResultFrames({ backend, context, document, language, viewp
   const [status, setStatus] = useState<MapResultFramesStatus>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [activeNodeKey, setActiveNodeKey] = useState<string | null>(null);
+  const [keyframeNodeKey, setKeyframeNodeKey] = useState<string | null>(null);
   const [pendingSourceChange, setPendingSourceChange] = useState<PendingSourceChange | null>(null);
   const [selectedProfileIndex, setSelectedProfileIndex] = useState<number | null>(null);
   const [steps, setSteps] = useState<MapResultRenderStep[]>([]);
   const [layers, setLayers] = useState<MapResultRenderLayer[]>([]);
+  const [visibleLayers, setVisibleLayers] = useState<MapResultRenderLayer[]>([]);
+  const [groupRenderMessages, setGroupRenderMessages] = useState<string[]>([]);
   const [resultExtent, setResultExtent] = useState<MapExtent | null>(null);
   const [renderSnapshot, setRenderSnapshot] = useState<MapResultRenderSnapshot | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [refreshSequence, setRefreshSequence] = useState(0);
+  const [renderRefreshSequence, setRenderRefreshSequence] = useState(0);
   const [fullExtentAcquired, setFullExtentAcquired] = useState<{ sourceIdentity: string } | null>(null);
   const rememberedSourceSelectionRef = useRef<RememberedSourceSelection | null>(null);
+  const rememberedKeyframeRef = useRef<{ ownerKey: string; nodeKey: string; source: string; profileIndex: number } | null>(null);
   const sourceGenerationRef = useRef(0);
   const renderGenerationRef = useRef(0);
   const currentRenderSourceIdentityRef = useRef<string | null>(null);
@@ -604,13 +622,17 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     if (rememberedSourceSelectionRef.current?.ownerKey !== selectionOwnerKey) {
       rememberedSourceSelectionRef.current = null;
     }
+    if (rememberedKeyframeRef.current?.ownerKey !== selectionOwnerKey) rememberedKeyframeRef.current = null;
     const rememberedSelectionOverrides = rememberedSourceSelectionRef.current?.overrides ?? null;
     setLoaded(null);
     setActiveNodeKey(null);
+    setKeyframeNodeKey(null);
     setPendingSourceChange(null);
     setSelectedProfileIndex(null);
     setSteps([]);
     setLayers([]);
+    setVisibleLayers([]);
+    setGroupRenderMessages([]);
     setResultExtent(null);
     setRenderSnapshot(null);
     setMessage(null);
@@ -652,7 +674,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
           ...(rememberedSelectionOverrides ? { selectionOverrides: rememberedSelectionOverrides } : {}),
         }, { signal: abortController.signal });
         if (abortController.signal.aborted || generation !== sourceGenerationRef.current) return;
-        const catalog = parseCatalog(raw);
+        const catalog = parseMapResultSourceCatalog(raw);
         if (!sameMapContext(catalog, map, xmlSha) || catalog.projectRevision !== projectRevision) {
           throw new Error('The project or saved map changed while its Result sources were being read.');
         }
@@ -660,8 +682,21 @@ export function useMapResultFrames({ backend, context, document, language, viewp
         setLoaded(context);
         const nodeKey = defaultNodeKey(buildNodeOptions(catalog));
         setActiveNodeKey(nodeKey);
-        const node = buildNodeOptions(catalog).find((option) => option.key === nodeKey)?.node;
-        setSelectedProfileIndex(node?.profileIndex ?? 0);
+        const groupOptions = catalog.activeNodes.filter(node => node.nodeKind === 'MultiResult' && node.node.nodeType === 'MultiResult');
+        const usable = (node: MapResultActiveNode) => {
+          const source = node.selections.find(selection => selection.selectionIndex === 0)?.selectedResult;
+          return !!source && !isMapResultSourcePending(source);
+        };
+        const remembered = rememberedKeyframeRef.current;
+        const rememberedNode = groupOptions.find(node => {
+          const source = node.selections.find(selection => selection.selectionIndex === 0)?.selectedResult;
+          return sourceNodeKey(node.node) === remembered?.nodeKey && !!source &&
+            JSON.stringify([source.resultPath, source.revision]) === remembered.source && usable(node);
+        });
+        const keyframe = rememberedNode ?? groupOptions.find(usable) ?? null;
+        setKeyframeNodeKey(keyframe ? sourceNodeKey(keyframe.node) : null);
+        const node = keyframe ?? buildNodeOptions(catalog).find((option) => option.key === nodeKey)?.node;
+        setSelectedProfileIndex(rememberedNode ? remembered!.profileIndex : keyframe ? 0 : node?.profileIndex ?? 0);
         setStatus('loading');
       } catch (error) {
         if (abortController.signal.aborted || generation !== sourceGenerationRef.current) return;
@@ -673,13 +708,25 @@ export function useMapResultFrames({ backend, context, document, language, viewp
   }, [backend, backendRevision, coreLayerContextIdentity, document, language, mapInputKey, selectionOwnerKey, projectPath, projectRevision, projectSessionID, projectXml, refreshSequence]);
 
   const activeNodeOptions = useMemo<MapResultFrameNodeOption[]>(() => loaded ? buildNodeOptions(loaded.catalog) : [], [loaded]);
+  const keyframeOptions = useMemo<MapResultFrameNodeOption[]>(() => loaded
+    ? loaded.catalog.activeNodes.filter(node => node.nodeKind === 'MultiResult' && node.node.nodeType === 'MultiResult')
+      .map(node => ({ key: sourceNodeKey(node.node), node })) : [], [loaded]);
+  const keyframeNode = keyframeOptions.find(option => option.key === keyframeNodeKey)?.node ?? null;
   const selectedNodeKey = activeNodeKey && activeNodeOptions.some((item) => item.key === activeNodeKey)
     ? activeNodeKey
     : defaultNodeKey(activeNodeOptions);
   const activeNode = activeNodeOptions.find((option) => option.key === selectedNodeKey)?.node ?? null;
+  const timelineNode = keyframeNode ?? activeNode;
+  useEffect(() => {
+    const source = keyframeNode?.selections.find(selection => selection.selectionIndex === 0)?.selectedResult;
+    if (loaded?.inputKey === mapInputKey && keyframeNode && source && selectedProfileIndex !== null) rememberedKeyframeRef.current = {
+      ownerKey: selectionOwnerKey, nodeKey: sourceNodeKey(keyframeNode.node),
+      source: JSON.stringify([source.resultPath, source.revision]), profileIndex: selectedProfileIndex,
+    };
+  }, [keyframeNode, loaded, mapInputKey, selectedProfileIndex, selectionOwnerKey]);
   const selectedSource = activeNode?.selections.find((selection) => selection.selectedResult)?.selectedResult ?? null;
   const renderSourceIdentity = useMemo(() => {
-    if (!loaded || !activeNode) return null;
+    if (!loaded || !timelineNode) return null;
     return JSON.stringify({
       projectPath: loaded.catalog.projectPath,
       projectRevision: loaded.catalog.projectRevision,
@@ -689,14 +736,13 @@ export function useMapResultFrames({ backend, context, document, language, viewp
       mapIndex: loaded.catalog.mapIndex,
       mapName: loaded.catalog.mapName,
       mapType: loaded.catalog.mapType,
-      node: sourceNodeKey(activeNode.node),
-      sources: activeNode.selections.map((selection) => [
-        selection.selectionIndex,
-        selection.selectedResult?.resultPath ?? null,
-        selection.selectedResult?.revision ?? null,
-      ]),
+      node: sourceNodeKey(timelineNode.node),
+      selectedNode: activeNode ? sourceNodeKey(activeNode.node) : null,
+      sources: loaded.catalog.activeNodes.map(node => [sourceNodeKey(node.node), node.selectedMapType,
+        node.selections.map(selection => [selection.selectionIndex, selection.selectedResult?.resultPath ?? null,
+          selection.selectedResult?.revision ?? null])]),
     });
-  }, [activeNode, loaded]);
+  }, [activeNode, loaded, timelineNode]);
   currentRenderSourceIdentityRef.current = renderSourceIdentity;
   const hasFullExtentForSource = Boolean(renderSourceIdentity &&
     fullExtentAcquired?.sourceIdentity === renderSourceIdentity);
@@ -707,7 +753,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     ? null
     : JSON.parse(requestedViewportKey) as MapResultFramesViewport, [requestedViewportKey]);
   const renderFrameKey = renderSourceIdentity
-    ? JSON.stringify([renderSourceIdentity, selectedProfileIndex ?? activeNode?.profileIndex ?? 0])
+    ? JSON.stringify([renderSourceIdentity, selectedProfileIndex ?? timelineNode?.profileIndex ?? 0])
     : null;
 
   useEffect(() => {
@@ -717,6 +763,8 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     setFullExtentAcquired(null);
     setResultExtent(null);
     setLayers([]);
+    setVisibleLayers([]);
+    setGroupRenderMessages([]);
     setRenderSnapshot(null);
     setSteps([]);
   }, [renderSourceIdentity]);
@@ -735,6 +783,8 @@ export function useMapResultFrames({ backend, context, document, language, viewp
       setStatus('loading');
       setMessage(null);
       setLayers([]);
+      setVisibleLayers([]);
+      setGroupRenderMessages([]);
       setRenderSnapshot(null);
       setIsPlaying(false);
       void (async () => {
@@ -782,7 +832,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
             selectionOverrides,
           }, { signal: abortController.signal });
           if (abortController.signal.aborted || generation !== sourceGenerationRef.current || loaded.inputKey !== mapInputKey) return;
-          const catalog = parseCatalog(raw);
+          const catalog = parseMapResultSourceCatalog(raw);
           const xmlSha = loaded.catalog.projectXmlSHA;
           if (!sameMapContext(catalog, loaded.map, xmlSha) || catalog.projectRevision !== loaded.catalog.projectRevision) {
             throw new Error('The project or saved map changed while its Result source was being changed.');
@@ -794,9 +844,10 @@ export function useMapResultFrames({ backend, context, document, language, viewp
           setLoaded({ ...loaded, catalog });
           setActiveNodeKey(pendingSourceChange.nodeKey);
           const selectedNode = catalog.activeNodes.find((node) => sourceNodeKey(node.node) === pendingSourceChange.nodeKey);
-          setSelectedProfileIndex(pendingSourceChange.kind === 'select'
-            ? selectedNode?.profileIndex ?? 0
-            : pendingSourceChange.profileIndex ?? selectedNode?.profileIndex ?? 0);
+          if (!keyframeNodeKey) setSelectedProfileIndex(pendingSourceChange.kind === 'select'
+            ? selectedNode?.profileIndex ?? 0 : pendingSourceChange.profileIndex ?? selectedNode?.profileIndex ?? 0);
+          else if (pendingSourceChange.kind === 'select' && pendingSourceChange.nodeKey === keyframeNodeKey &&
+              pendingSourceChange.selectionIndex === 0) setSelectedProfileIndex(0);
           setSteps([]);
           setPendingSourceChange(null);
           setStatus('loading');
@@ -813,6 +864,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     if (pendingCompute) {
       setSteps([]);
       setLayers([]);
+      setVisibleLayers([]);
       setRenderSnapshot(null);
       setSelectedProfileIndex(null);
       setStatus('unavailable');
@@ -825,6 +877,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     if (hasUnresolvedExplicitSelection(loaded.catalog)) {
       setSteps([]);
       setLayers([]);
+      setVisibleLayers([]);
       setRenderSnapshot(null);
       setSelectedProfileIndex(null);
       setStatus('unavailable');
@@ -834,20 +887,32 @@ export function useMapResultFrames({ backend, context, document, language, viewp
       setIsPlaying(false);
       return;
     }
-    if (!activeNode) {
+    if (keyframeOptions.length > 0 && !keyframeNode) {
       setSteps([]);
       setLayers([]);
+      setVisibleLayers([]);
+      setRenderSnapshot(null);
+      setStatus('unavailable');
+      setMessage(language === 'zh' ? '活动结果组没有可用的首个结果源，无法建立共享时间轴。' : 'No active result group has an available first source for the shared timeline.');
+      setIsPlaying(false);
+      return;
+    }
+    if (!timelineNode) {
+      setSteps([]);
+      setLayers([]);
+      setVisibleLayers([]);
       setRenderSnapshot(null);
       setSelectedProfileIndex(null);
       setStatus('empty');
       setMessage(language === 'zh' ? '当前地图没有已选定且可显示的 Result 源。' : 'This map has no selected Result source to display.');
       return;
     }
-    const selectedChoices = activeNode.selections.flatMap((selection) => selection.selectedResult ? [selection.selectedResult] : []);
+    const selectedChoices = timelineNode.selections.flatMap((selection) => selection.selectedResult ? [selection.selectedResult] : []);
     if (selectedChoices.length === 0) {
-      const explicitlyUnresolved = activeNode.selections.some((selection) => selection.selectionMode === 'Explicit');
+      const explicitlyUnresolved = timelineNode.selections.some((selection) => selection.selectionMode === 'Explicit');
       setSteps([]);
       setLayers([]);
+      setVisibleLayers([]);
       setRenderSnapshot(null);
       setSelectedProfileIndex(null);
       setStatus(explicitlyUnresolved ? 'unavailable' : 'empty');
@@ -863,6 +928,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     if (inProgress) {
       setSteps([]);
       setLayers([]);
+      setVisibleLayers([]);
       setRenderSnapshot(null);
       setSelectedProfileIndex(null);
       setStatus('unavailable');
@@ -880,7 +946,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
 
     const generation = ++renderGenerationRef.current;
     const abortController = new AbortController();
-    const profileIndex = selectedProfileIndex ?? activeNode.profileIndex ?? 0;
+    const profileIndex = selectedProfileIndex ?? timelineNode.profileIndex ?? 0;
     const requestSourceIdentity = renderSourceIdentity;
     const requestFrameKey = renderFrameKey;
     const keepCurrentFrame = requestFrameKey !== null && lastRenderFrameKeyRef.current === requestFrameKey;
@@ -889,6 +955,8 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     setMessage(null);
     if (!keepCurrentFrame) {
       setLayers([]);
+      setVisibleLayers([]);
+      setGroupRenderMessages([]);
       setRenderSnapshot(null);
     }
     let debounceTimer: number | null = null;
@@ -898,25 +966,69 @@ export function useMapResultFrames({ backend, context, document, language, viewp
           map: loaded.map,
           selectionOverrides: mapResultSelectionOverridesFromCatalog(loaded.catalog),
           contextToken: loaded.catalog.contextToken,
-          node: activeNode.node,
+          node: timelineNode.node,
           profileIndex,
           viewport: requestedViewport,
         };
         const raw = await backend.request<unknown>('map.resultRender', renderRequest, { signal: abortController.signal });
         if (abortController.signal.aborted || generation !== renderGenerationRef.current ||
             loaded.inputKey !== mapInputKey || currentRenderSourceIdentityRef.current !== requestSourceIdentity) return;
-        const snapshot = parseRenderSnapshot(raw);
-        verifyRenderSnapshot(snapshot, loaded, activeNode);
+        const anchorSnapshot = parseRenderSnapshot(raw);
+        verifyRenderSnapshot(anchorSnapshot, loaded, timelineNode);
+        if (keyframeNode && anchorSnapshot.steps.length && !anchorSnapshot.steps.some(step => step.id === profileIndex)) {
+          setSelectedProfileIndex(anchorSnapshot.steps[0].id);
+          return;
+        }
+        let snapshots: { node: MapResultActiveNode; snapshot: MapResultRenderSnapshot }[];
+        if (keyframeNode) {
+          const anchor = sharedKeyframeFromRender(keyframeNode, anchorSnapshot, profileIndex);
+          snapshots = await Promise.all(keyframeOptions.map(async ({ node }) => {
+            const response = await backend.request<unknown>('map.resultRender', {
+              ...renderRequest, node: node.node, sharedKeyframeAnchor: anchor,
+            }, { signal: abortController.signal });
+            const snapshot = parseRenderSnapshot(response);
+            verifyRenderSnapshot(snapshot, loaded, node);
+            verifySharedKeyframe(anchor, snapshot.sharedKeyframeAnchor);
+            if (snapshot.selectedProfileIndex !== anchor.profileIndex || snapshot.selectedProfileTime !== anchor.time ||
+                JSON.stringify(snapshot.steps) !== JSON.stringify(anchorSnapshot.steps)) {
+              throw new Error('结果组渲染回执中的共享时间轴不一致。');
+            }
+            return { node, snapshot };
+          }));
+          // Standalone Result nodes retain their own saved time state; they are not members of the shared group.
+          if (activeNode && activeNode.node.nodeType === 'Result') {
+            const independentRaw = await backend.request<unknown>('map.resultRender', {
+              ...renderRequest, node: activeNode.node, profileIndex: activeNode.profileIndex ?? 0,
+            }, { signal: abortController.signal });
+            const independent = parseRenderSnapshot(independentRaw);
+            verifyRenderSnapshot(independent, loaded, activeNode);
+            snapshots.push({ node: activeNode, snapshot: independent });
+          }
+        } else {
+          snapshots = [{ node: timelineNode, snapshot: anchorSnapshot }];
+        }
+        if (abortController.signal.aborted || generation !== renderGenerationRef.current ||
+            loaded.inputKey !== mapInputKey || currentRenderSourceIdentityRef.current !== requestSourceIdentity) return;
+        const snapshot = snapshots.find(item => activeNode && resultNodeIdentity(item.node.node) === resultNodeIdentity(activeNode.node))?.snapshot
+          ?? anchorSnapshot;
+        const allLayers = snapshots.flatMap(item => item.snapshot.layers);
+        const groupMessages = snapshots.flatMap(({ node, snapshot: current }) => {
+          const reasons = [current.unavailableReason, ...current.sources.filter(source => !source.available).map(source => source.unavailableReason)]
+            .filter((reason): reason is string => Boolean(reason));
+          return [...new Set(reasons)].map(reason => `${node.name}: ${localizedResultReason(language, reason)}`);
+        });
         if (requestedViewport === null) {
-          const extent = unionLayerExtent(snapshot.layers);
+          const extent = unionLayerExtent(allLayers);
           setResultExtent(extent);
           setFullExtentAcquired({ sourceIdentity: requestSourceIdentity! });
         }
-        setSteps(snapshot.steps);
+        setSteps(anchorSnapshot.steps);
         setLayers(snapshot.layers);
+        setVisibleLayers(allLayers);
+        setGroupRenderMessages(groupMessages);
         setRenderSnapshot(snapshot);
         const reason = localizedResultReason(language, snapshot.unavailableReason);
-        if (snapshot.layers.length === 0) {
+        if (allLayers.length === 0) {
           setStatus('empty');
           setMessage(reason ?? (language === 'zh' ? '所选时刻没有可绘制的 Result 帧。' : 'No drawable Result frame is available for this time step.'));
         } else {
@@ -927,6 +1039,8 @@ export function useMapResultFrames({ backend, context, document, language, viewp
         if (abortController.signal.aborted || generation !== renderGenerationRef.current ||
             currentRenderSourceIdentityRef.current !== requestSourceIdentity) return;
         setLayers([]);
+        setVisibleLayers([]);
+        setGroupRenderMessages([]);
         setRenderSnapshot(null);
         setStatus('error');
         setMessage(localizedError(language, error));
@@ -945,15 +1059,26 @@ export function useMapResultFrames({ backend, context, document, language, viewp
       abortController.abort();
       if (renderGenerationRef.current === generation) renderGenerationRef.current++;
     };
-  }, [activeNode, backend, language, loaded, mapInputKey, selectionOwnerKey, pendingSourceChange, renderFrameKey, renderSourceIdentity, requestedViewport, requestedViewportKey, selectedProfileIndex]);
+  }, [activeNode, backend, keyframeNode, keyframeNodeKey, keyframeOptions, language, loaded, mapInputKey, selectionOwnerKey, pendingSourceChange, renderFrameKey, renderSourceIdentity, renderRefreshSequence, requestedViewport, requestedViewportKey, selectedProfileIndex, timelineNode]);
 
   const selectNode = useCallback((key: string) => {
     if (!activeNodeOptions.some((option) => option.key === key)) return;
     setIsPlaying(false);
     const node = activeNodeOptions.find((option) => option.key === key)?.node;
-    setSelectedProfileIndex(node?.profileIndex ?? 0);
+    if (!keyframeNode) setSelectedProfileIndex(node?.profileIndex ?? 0);
     setActiveNodeKey(key);
-  }, [activeNodeOptions]);
+  }, [activeNodeOptions, keyframeNode]);
+
+  const selectKeyframe = useCallback((key: string) => {
+    const node = keyframeOptions.find(option => option.key === key)?.node;
+    const source = node?.selections.find(selection => selection.selectionIndex === 0)?.selectedResult;
+    if (!node || !source || isMapResultSourcePending(source) || pendingSourceChange || status === 'loading') return;
+    rememberedKeyframeRef.current = { ownerKey: selectionOwnerKey, nodeKey: key,
+      source: JSON.stringify([source.resultPath, source.revision]), profileIndex: 0 };
+    setIsPlaying(false);
+    setSelectedProfileIndex(0);
+    setKeyframeNodeKey(key);
+  }, [keyframeOptions, pendingSourceChange, selectionOwnerKey, status]);
 
   const selectSource = useCallback((nodeKey: string, selectionIndex: number, choice: MapResultSourceChoice) => {
     if (!loaded || pendingSourceChange || status === 'loading' || pendingComputeChoice(loaded.catalog) || hasUnresolvedExplicitSelection(loaded.catalog) ||
@@ -1015,6 +1140,11 @@ export function useMapResultFrames({ backend, context, document, language, viewp
   }, [steps]);
 
   const pause = useCallback(() => setIsPlaying(false), []);
+  const resync = useCallback(() => {
+    if (!keyframeNode || pendingSourceChange || status === 'loading') return;
+    setIsPlaying(false);
+    setRenderRefreshSequence(sequence => sequence + 1);
+  }, [keyframeNode, pendingSourceChange, status]);
   const refresh = useCallback(() => {
     setIsPlaying(false);
     setRefreshSequence((sequence) => sequence + 1);
@@ -1043,6 +1173,12 @@ export function useMapResultFrames({ backend, context, document, language, viewp
   const selectedProfileTime = steps.find((step) => step.id === selectedProfileIndex)?.time
     ?? renderSnapshot?.selectedProfileTime
     ?? null;
+  // React can render a newly selected node/time once before the effect has
+  // cleared the previous frame. Never expose that old receipt as ready for the
+  // new input, including to the profile projection and its user-facing status.
+  const currentFramePending = status === 'ready' && renderSourceIdentity !== null &&
+    (previousRenderSourceIdentityRef.current !== renderSourceIdentity || lastRenderFrameKeyRef.current !== renderFrameKey);
+  const visibleStatus: MapResultFramesStatus = currentFramePending ? 'loading' : status;
   const mapRequest = useMemo<MapAnalysisMapRequest | null>(() =>
     loaded && loaded.inputKey === mapInputKey && loaded.map.projectPath === projectPath &&
       loaded.map.projectXml === projectXml && typeof loaded.map.projectXml === 'string' &&
@@ -1057,7 +1193,7 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     [coreLayerContext, loaded, mapInputKey, projectPath, projectRevision, projectSessionID, projectXml]);
 
   return {
-    status,
+    status: visibleStatus,
     message,
     sources: loaded?.catalog ?? null,
     mapRequest,
@@ -1070,20 +1206,26 @@ export function useMapResultFrames({ backend, context, document, language, viewp
     selectedProfileIndex,
     selectedProfileTime,
     layers,
+    visibleLayers,
+    keyframeOptions,
+    keyframeNodeKey,
+    groupRenderMessages,
     resultExtent,
     renderSnapshot,
     isPlaying,
-    canPlay: steps.length > 1 && Boolean(activeNode) && status === 'ready',
-    canChangeSource: selectionCanChange,
-    canAddComparison,
-    canRemoveComparison,
+    canPlay: steps.length > 1 && Boolean(activeNode) && visibleStatus === 'ready',
+    canChangeSource: selectionCanChange && visibleStatus !== 'loading',
+    canAddComparison: canAddComparison && visibleStatus !== 'loading',
+    canRemoveComparison: canRemoveComparison && visibleStatus !== 'loading',
     selectNode,
+    selectKeyframe,
     selectSource,
     addComparison,
     removeComparison,
     selectProfile,
     play,
     pause,
+    resync,
     refresh,
   };
 }

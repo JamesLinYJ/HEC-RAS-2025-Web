@@ -1,0 +1,212 @@
+/* Local to the result time axis; calculator and other map controls keep their own layout. */
+.map-time-axis {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.map-time-axis .map-time-label {
+  gap: 7px;
+  margin-bottom: 7px;
+  color: #5c7384;
+  font-size: 12px;
+}
+
+.map-time-axis .map-time-label strong,
+.map-time-axis .map-time-empty {
+  font-size: 12px;
+}
+
+.map-time-axis .map-time-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  min-width: 0;
+}
+
+.map-time-axis .map-time-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  color: #4c6475;
+  font-size: 12px;
+}
+
+.map-time-axis .map-time-control > span {
+  flex: 0 0 auto;
+}
+
+.map-time-axis select,
+.map-time-axis button {
+  box-sizing: border-box;
+  min-height: 34px;
+  border: 1px solid #cbdce9;
+  border-radius: 6px;
+  background: #f7fbfe;
+  color: #215f8d;
+  font: inherit;
+  font-size: 12px;
+}
+
+.map-time-axis select {
+  min-width: min(8rem, 50vw);
+  max-width: min(20rem, 60vw);
+  padding: 5px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-time-axis button {
+  padding: 5px 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map-time-axis select:not(:disabled):hover,
+.map-time-axis button:not(:disabled):hover {
+  border-color: #9fc2da;
+  background: #e9f4fb;
+}
+
+.map-time-axis select:disabled,
+.map-time-axis button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.map-time-axis select:focus-visible,
+.map-time-axis button:focus-visible,
+.map-time-axis input:focus-visible,
+.map-time-axis summary:focus-visible {
+  outline: 2px solid #3692d4;
+  outline-offset: 2px;
+}
+
+.map-time-axis .map-time-control output {
+  display: block;
+  max-width: min(20rem, 60vw);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #273f51;
+}
+
+.map-time-axis .map-time-comparison-actions {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.map-time-axis .map-time-visualization-settings {
+  color: #617987;
+  font-size: 12px;
+}
+
+.map-time-axis .map-time-visualization-settings summary {
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+.map-time-axis .map-time-track-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  height: auto;
+  min-width: 0;
+  margin: 7px 0 4px;
+  background: transparent;
+}
+
+.map-time-axis .map-time-track-result button {
+  flex: 0 0 auto;
+  min-width: 34px;
+  padding-inline: 8px;
+}
+
+.map-time-axis .map-time-track-result .map-time-range {
+  flex: 1 1 140px;
+  min-width: 100px;
+  max-width: 100%;
+  height: 34px;
+  margin: 0 4px;
+  accent-color: #2e83bd;
+}
+
+.map-time-axis .map-time-track-result .map-result-time-current {
+  position: static;
+  flex: 0 1 auto;
+  min-width: 0;
+  width: auto;
+  max-width: min(24ch, 100%);
+  height: auto;
+  padding: 0 3px;
+  overflow: hidden;
+  border-radius: 0;
+  background: transparent;
+  color: #39576b;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-time-axis .map-time-caption {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 18px;
+  color: #6c8190;
+  font-size: 12px;
+}
+
+.map-time-axis .map-time-caption > [role="status"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.map-time-axis .map-time-caption-status::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  background: transparent;
+  vertical-align: 1px;
+}
+
+.map-time-axis .map-time-caption-status.is-loading::before {
+  background: #3692d4;
+}
+
+.map-time-axis .map-time-caption-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+
+.map-time-axis .map-time-caption-label {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: #738694;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .map-time-axis select,
+  .map-time-axis .map-time-control output {
+    max-width: min(17rem, 55vw);
+  }
+  .map-time-axis .map-time-track-result .map-time-range {
+    flex-basis: 145px;
+  }
+}

@@ -37,6 +37,9 @@ import { useMapVelocityField } from './useMapVelocityField';
 import { usePersistedRasterLayers, mapRasterViewportFromCamera } from './usePersistedRasterLayers';
 import type { PersistedRasterLayerImage } from './usePersistedRasterLayers';
 import { useMapResultFrames } from './useMapResultFrames';
+import { useResultLayerSettings } from './results-layer-settings/useResultLayerSettings';
+import { pendingResultLayerWrites } from './results-layer-settings/resultLayerSettingsTransaction';
+import { activeResultProfile } from './results-layer-settings/activeResultProfile';
 import { useAssociatedMapLayers } from './useAssociatedMapLayers';
 import { mapCatalogMatchesDocument, sameMapID, sameMapLocator, stableMapValue } from './associatedMapLayers';
 import { useMapHoverIdentify } from './useMapHoverIdentify';
@@ -384,9 +387,10 @@ function MapPage(props: MapFeaturePageProps) {
   const queryWriteBusy = queryWriteState.projectKey === projectContextKey &&
     (queryWriteState.exportBusy || queryWriteState.importBusy);
   const [meshErrorGuard, setMeshErrorGuard] = useState<MapMeshErrorGuard>({ locked: false, transaction: false });
+  const [resultLayerGuard, setResultLayerGuard] = useState(() => pendingResultLayerWrites.has(projectContextKey));
   const [meshErrorFocus, setMeshErrorFocus] = useState<{ captureKey: string; issueID: string } | null>(null);
   const mapOtherMetadataCommitBusy = viewCommitBusy || vectorCommitBusy || mapSourceRemovalBusy || mapRemovalNeedsReconcile ||
-    mapDocumentMutationBusy || mapDocumentNeedsReconcile;
+    mapDocumentMutationBusy || mapDocumentNeedsReconcile || resultLayerGuard;
   const mapMetadataCommitBusy = mapOtherMetadataCommitBusy || meshErrorGuard.locked || queryWriteBusy;
   const [vectorPreview, setVectorPreview] = useState<MapVectorPreview | null>(null);
   const [vectorSettingsEpoch, setVectorSettingsEpoch] = useState(0);
@@ -465,6 +469,10 @@ function MapPage(props: MapFeaturePageProps) {
   otherMapWriteBusyRef.current = Boolean(mapOtherMetadataCommitBusy || meshErrorGuard.locked || sourceImportBusy ||
     busyNodeID !== null || mapCatalogLoading || mapCatalogError);
   const [mapReloadKey, setMapReloadKey] = useState(0);
+  const resultLayerInstalledReadbackRef = useRef<{
+    backend: typeof backend; backendRevision: typeof backendRevision; projectKey: string;
+    selectedResultIdentity: string | null; mapReloadKey: number; revision: string;
+  } | null>(null);
   useEffect(() => {
     setMapDocumentMutationNotice(current => current?.projectKey === mapRemovalProjectScope ? current : null);
   }, [mapRemovalProjectScope]);
@@ -611,6 +619,47 @@ function MapPage(props: MapFeaturePageProps) {
   const vectorRendering = useMapVectorRendering({ backend, backendRevision, sources: vectorSources,
     viewport: resultViewport, preview: vectorPreview, settingsEpoch: vectorSettingsEpoch, language });
   const resultFrames = useMapResultFrames({ backend, context, document: activeDocument, language, viewport: resultViewport, backendRevision });
+  const localProfile = useMemo(() => activeResultProfile(resultFrames), [resultFrames.activeNode, resultFrames.activeNodeKey,
+    resultFrames.keyframeNodeKey, resultFrames.renderSnapshot, resultFrames.selectedProfileIndex, resultFrames.selectedProfileTime,
+    resultFrames.sources, resultFrames.status]);
+  const localProfileFrames = { ...resultFrames, ...localProfile };
+  const resultLayerSettings = useResultLayerSettings({ backend, context, document: activeDocument, frames: resultFrames,
+    language, scope: projectContextKey,
+    otherBusy: viewCommitBusy || vectorCommitBusy || mapSourceRemovalBusy || mapRemovalNeedsReconcile ||
+      mapDocumentMutationBusy || mapDocumentNeedsReconcile || meshErrorGuard.locked || queryWriteBusy ||
+      sourceImportBusy || mapCatalogLoading || !!mapCatalogError || busyNodeID !== null,
+    onBeginMapVisualizationMutation, onCommitMapVisualization, onEndMapVisualizationMutation,
+    onGuardChange: setResultLayerGuard,
+    onInstall: (readback, capture) => {
+      const sourceKey = JSON.stringify([capture.context.projectSessionID, capture.context.projectPath,
+        capture.context.projectRevision, capture.context.projectXml]);
+      const current = activeDocumentRef.current;
+      if (projectContextKeyRef.current !== sourceKey || !current || !sameMapID(current.mapID, capture.target.mapID) ||
+          current.mapIndex !== capture.target.mapIndex || current.name !== capture.target.name || current.mapType !== capture.target.mapType ||
+          !current.visualizationRevision ||
+          ![capture.target.visualizationRevision, readback.document.visualizationRevision].some(revision =>
+            revision && revision.toUpperCase() === current.visualizationRevision!.toUpperCase())) return false;
+      mapCatalogGenerationRef.current++;
+      loadedCatalogProjectRef.current = sourceKey;
+      resultLayerInstalledReadbackRef.current = { backend, backendRevision, projectKey: sourceKey,
+        selectedResultIdentity, mapReloadKey, revision: readback.document.visualizationRevision! };
+      rememberedMapSelectionRef.current = { projectKey: sourceKey, mapIndex: readback.document.mapIndex,
+        name: readback.document.name, mapType: readback.document.mapType };
+      setDocuments(readback.catalog.documents.map(document => document.id === readback.document.id ? readback.document : document));
+      setVisualizationRevision(readback.catalog.visualizationRevision);
+      setActiveDocumentID(readback.document.id);
+      setMapCatalogError(null);
+      setMapCatalogLoading(false);
+      return true;
+    },
+  });
+  useEffect(() => { if (resultLayerGuard) resultFrames.pause(); }, [resultLayerGuard]);
+  const timeAxisFrames = resultLayerGuard ? { ...resultFrames, resultLayerSettings, activeResultProfileReady: localProfile.ready,
+    status: 'loading' as const, isPlaying: false,
+    canPlay: false, canChangeSource: false, canAddComparison: false, canRemoveComparison: false,
+    selectNode: () => {}, selectSource: () => {}, selectProfile: () => {}, selectKeyframe: () => {},
+    addComparison: () => {}, removeComparison: () => {}, play: () => {}, resync: () => {}, refresh: () => {},
+  } : { ...resultFrames, resultLayerSettings, activeResultProfileReady: localProfile.ready };
   const associatedLayers = useAssociatedMapLayers({ backend, context, document: activeDocument,
     viewport: resultViewport, controller: resultFrames, language, backendRevision });
   const selectedBackendNodeID = selectedBackendNode?.owner === owner ? selectedBackendNode.nodeID : null;
@@ -765,7 +814,7 @@ function MapPage(props: MapFeaturePageProps) {
     ? text(language, '需要可读取的已保存工程地图目录，且不能有其他地图写入正在进行。',
       'A readable saved-project map catalog is required, and no other map write may be active.')
     : undefined;
-  const velocityField = useMapVelocityField({ backend, context, document: activeDocument, controller: resultFrames,
+  const velocityField = useMapVelocityField({ backend, context, document: activeDocument, controller: localProfileFrames,
     viewport: resultViewport, enabled: settings.IsMapOverlayVisible && settings.showVelocityArrows, language });
   const allMapLayers = useMemo(() => [...persistedVectors.layers, ...persistedGdb.layers, ...activeLayers], [persistedVectors.layers, persistedGdb.layers, activeLayers]);
   const selectedFeatureDetails = useMemo(() => {
@@ -813,9 +862,9 @@ function MapPage(props: MapFeaturePageProps) {
       selectedResult: selection.selectedResult ? resultChoiceForAnalysis(selection.selectedResult) : null,
     });
     const selections = activeNode.selections.map(sourceSelection);
-    const snapshot = resultFrames.renderSnapshot;
-    const selectedProfileIndex = resultFrames.selectedProfileIndex;
-    const frameMatches = resultFrames.status === 'ready' && snapshot !== null && selectedProfileIndex !== null &&
+    const snapshot = localProfile.renderSnapshot;
+    const selectedProfileIndex = localProfile.selectedProfileIndex;
+    const frameMatches = localProfile.ready && localProfile.status === 'ready' && snapshot !== null && selectedProfileIndex !== null &&
       snapshot.contextToken === catalog.contextToken && snapshot.selectedProfileIndex === selectedProfileIndex &&
       resultFrames.layers.length === snapshot.layers.length && snapshot.layers.length > 0 &&
       resultFrames.layers.every((frame, index) => {
@@ -826,7 +875,7 @@ function MapPage(props: MapFeaturePageProps) {
           frame.profileIndex === saved.profileIndex && JSON.stringify(frame.selectionIndices) === JSON.stringify(saved.selectionIndices));
       });
     const profileIndex = frameMatches ? selectedProfileIndex : null;
-    const profileTime = frameMatches ? resultFrames.selectedProfileTime : null;
+    const profileTime = frameMatches ? localProfile.selectedProfileTime : null;
     const renderCapture = frameMatches && snapshot ? {
       contextToken: snapshot.contextToken,
       selectedProfileIndex: snapshot.selectedProfileIndex,
@@ -871,7 +920,7 @@ function MapPage(props: MapFeaturePageProps) {
     };
   }, [activeDocument, context.projectPath, context.projectRevision, context.projectSessionID, context.projectXml,
     resultFrames.activeNode, resultFrames.layers, resultFrames.mapRequest, resultFrames.renderSnapshot,
-    resultFrames.selectedProfileIndex, resultFrames.selectedProfileTime, resultFrames.sources, resultFrames.status]);
+    resultFrames.selectedProfileIndex, resultFrames.selectedProfileTime, resultFrames.sources, resultFrames.status, localProfile]);
   const resultMeshHover = useMapResultMeshHoverCapture(backend, analysisCapture);
   const currentMeshHit = selectedMeshHit && analysisCapture &&
     selectedMeshHit.ownerKey === analysisCapture.ownerKey && selectedMeshHit.captureKey === analysisCapture.captureKey
@@ -929,12 +978,12 @@ function MapPage(props: MapFeaturePageProps) {
   };
   const resultImages = useMemo((): { layers: MapImageLayer[]; error: unknown } => {
     try {
-      return { layers: resultFrames.layers.map((layer) => ({ id: layer.id, name: layer.resultName,
+      return { layers: resultFrames.visibleLayers.map((layer) => ({ id: layer.id, name: layer.resultName,
         imageSrc: rgbaFrameImage(layer.rgba, layer.width, layer.height),
         sourceKind: 'result', sourcePath: layer.resultPath, profileIndex: layer.profileIndex,
         extent: { minX: layer.minX, minY: layer.minY, maxX: layer.maxX, maxY: layer.maxY } })), error: null };
     } catch (error) { return { layers: [], error }; }
-  }, [resultFrames.layers]);
+  }, [resultFrames.visibleLayers]);
   const mapImages = useMemo<MapImageLayer[]>(() => [
     ...associatedLayers.layers,
     ...persistedRasters.layers.map((layer) => ({ ...layer, sourceKind: 'raster' as const,
@@ -972,7 +1021,7 @@ function MapPage(props: MapFeaturePageProps) {
       currentHoverPointer.project[0] >= layer.extent.minX && currentHoverPointer.project[0] <= layer.extent.maxX &&
       currentHoverPointer.project[1] >= layer.extent.minY && currentHoverPointer.project[1] <= layer.extent.maxY)
       .map((layer) => layer.hoverCapture),
-    resultFrames,
+    resultFrames: localProfileFrames,
     resultMeshCapture: resultMeshHover.capture,
     resultAnalysisCapture: analysisCapture,
     associatedCaptures: associatedLayers.layers.filter(layer => currentHoverPointer &&
@@ -1066,12 +1115,22 @@ function MapPage(props: MapFeaturePageProps) {
     // remember the pre-rename identity and could select a different saved map.
     // Cleanup invalidates older reads, and completion resumes with the newly
     // installed selection. An uncertain transaction stays under reconciliation.
-    if (mapDocumentMutationBusy || mapDocumentNeedsReconcile || meshErrorGuard.locked || queryWriteBusy) {
+    if (mapDocumentMutationBusy || mapDocumentNeedsReconcile || meshErrorGuard.locked || queryWriteBusy ||
+        (resultLayerGuard && documents.length > 0)) {
       if (queryWriteBusy && !queryCatalogPauseRef.current) {
         queryCatalogPauseRef.current = { backend, backendRevision, projectKey: projectContextKey, selectedResultIdentity,
           mapReloadKey, mapRevision: props.mapRevision, wasLoading: mapCatalogLoading };
       }
       setMapCatalogLoading(false);
+      return () => { mapCatalogGenerationRef.current += 1; };
+    }
+    const installedResultLayer = resultLayerInstalledReadbackRef.current;
+    resultLayerInstalledReadbackRef.current = null;
+    const installedDocument = activeDocumentRef.current;
+    if (installedResultLayer && installedResultLayer.backend === backend && installedResultLayer.backendRevision === backendRevision &&
+        installedResultLayer.projectKey === projectContextKey && installedResultLayer.selectedResultIdentity === selectedResultIdentity &&
+        installedResultLayer.mapReloadKey === mapReloadKey && installedDocument?.visualizationRevision &&
+        installedDocument.visualizationRevision.toUpperCase() === installedResultLayer.revision.toUpperCase()) {
       return () => { mapCatalogGenerationRef.current += 1; };
     }
     const requestContextKey = projectContextKey;
@@ -1129,7 +1188,7 @@ function MapPage(props: MapFeaturePageProps) {
       mapCatalogGenerationRef.current += 1;
     };
   }, [backend, backendRevision, projectContextKey, selectedResultIdentity, mapReloadKey, props.mapRevision,
-    mapDocumentMutationBusy, mapDocumentNeedsReconcile, meshErrorGuard.locked, queryWriteBusy]);
+    mapDocumentMutationBusy, mapDocumentNeedsReconcile, meshErrorGuard.locked, queryWriteBusy, resultLayerGuard]);
 
   const updateActiveLayers = (update: (layers: GeoJsonLayer[]) => GeoJsonLayer[]) => {
     setMapStateByOwner((current) => {
@@ -2506,7 +2565,7 @@ function MapPage(props: MapFeaturePageProps) {
             <span>{copy.layers}: {layerCount}</span>
             <span>{copy.features}: {featureCount}</span>
           </div>
-          <MapTimeAxis language={language} controller={resultFrames} interactionDisabled={meshErrors.locked} />
+          <MapTimeAxis language={language} controller={timeAxisFrames} interactionDisabled={meshErrors.locked} />
           {selectedCalculatorLayer && calculatorSessions && <CalculatorProfileStateSlider language={language}
             layer={selectedCalculatorLayer}
             onSelectProfile={profileIndex => calculatorSessions.setProfile(selectedCalculatorLayer.id, profileIndex)} />}

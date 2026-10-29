@@ -1,13 +1,19 @@
 .toolsFeatureRoot {
-  --tool-ink: #17263a;
-  --tool-muted: #718096;
-  --tool-line: #dce5ee;
+  --tool-ink: #18232f;
+  --tool-muted: #596777;
+  --tool-line: #dde2e8;
   --tool-panel: #fff;
-  --tool-panel-soft: #f7f9fc;
-  --tool-blue: #1769aa;
-  --tool-blue-dark: #0f4f86;
+  --tool-panel-soft: #f7f8fa;
+  --tool-blue: #2c5bd6;
+  --tool-blue-dark: #2348a6;
   --tool-green: #1c805e;
   --tool-red: #b84444;
+  --tools-surface: #fff;
+  --tools-surface-raised: #f3f4f6;
+  --tools-muted: #596777;
+  --tools-border: #dde2e8;
+  --tools-accent: #2c5bd6;
+  --tools-accent-soft: #e8edfa;
   color: var(--tool-ink);
   min-width: 0;
   padding: 20px 22px 30px;
@@ -26,8 +32,8 @@
 .toolsWorkspaceTitle { align-items: center; display: flex; gap: 12px; }
 .toolsWorkspaceMark {
   align-items: center;
-  background: linear-gradient(145deg, #e2f1fb, #d6e8f8);
-  border: 1px solid #c5dff1;
+  background: #f3f4f6;
+  border: 1px solid var(--tool-line);
   border-radius: 14px;
   color: var(--tool-blue-dark);
   display: inline-flex;
@@ -76,8 +82,8 @@
 .toolsFeatureRoot :global(.tools-area) { color: var(--tool-ink); min-width: 0; }
 .toolsFeatureRoot :global(.tools-hero) {
   align-items: center;
-  background: linear-gradient(115deg, #edf6fb 0%, #f5f8fc 62%, #f3f6fa 100%);
-  border: 1px solid #d9e6f0;
+  background: #fff;
+  border: 1px solid var(--tool-line);
   border-radius: 16px;
   display: flex;
   gap: 18px;

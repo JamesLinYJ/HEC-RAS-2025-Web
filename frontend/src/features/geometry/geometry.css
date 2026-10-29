@@ -184,3 +184,38 @@
 .geometry-recipe-source > details > summary { cursor: pointer; }
 .geometry-recipe-source > details > code { display: block; overflow-wrap: anywhere; margin-top: 5px; color: var(--geo-text); }
 @media (max-width: 760px) { .geometry-recipe-layout { grid-template-columns: 1fr; } }
+
+/* Light workbench surfaces; topology and model colours stay with their renderers. */
+:root[data-theme='light'] .geometry-page { --geo-line: #dde2e8; --geo-panel: #fff; --geo-text: #18232f; --geo-muted: #596777; --geo-accent: #2c5bd6; }
+:root[data-theme='light'] .geometry-header h1 { color: var(--geo-text); }
+:root[data-theme='light'] .geometry-panel { border-radius: 8px; box-shadow: none; }
+:root[data-theme='light'] .geometry-stat, :root[data-theme='light'] .geometry-kv, :root[data-theme='light'] .geometry-detail-field { background: #fff; }
+:root[data-theme='light'] .geometry-stat-value { color: var(--geo-text); }
+:root[data-theme='light'] .geometry-primary, :root[data-theme='light'] .geometry-tab[aria-current='page'] { background: #2c5bd6; border-color: #2c5bd6; color: #fff; }
+:root[data-theme='light'] .geometry-secondary, :root[data-theme='light'] .geometry-icon-button, :root[data-theme='light'] .geometry-tab, :root[data-theme='light'] .geometry-status-pill, :root[data-theme='light'] .geometry-count-pill { background: #fff; border-color: var(--geo-line); color: var(--geo-text); border-radius: 6px; }
+:root[data-theme='light'] .geometry-tab[aria-current='page'] { background: #2c5bd6; border-color: #2c5bd6; color: #fff; }
+:root[data-theme='light'] .geometry-secondary:hover, :root[data-theme='light'] .geometry-icon-button:hover, :root[data-theme='light'] .geometry-tab:hover:not([aria-current='page']) { background: #f3f4f6; color: var(--geo-text); }
+:root[data-theme='light'] .geometry-subtab[aria-current='page'] { background: #e8edfa; color: #2348a6; }
+:root[data-theme='light'] .geometry-table th { background: #f7f8fa; color: #465463; }
+:root[data-theme='light'] .geometry-table td { color: var(--geo-text); border-color: #edf0f3; }
+:root[data-theme='light'] .geometry-table tbody tr:hover { background: #f3f4f6; }
+:root[data-theme='light'] .geometry-table tbody tr.is-selected { background: #e8edfa; }
+:root[data-theme='light'] .geometry-table input:not([type='checkbox']), :root[data-theme='light'] .geometry-table select, :root[data-theme='light'] .geometry-inline-input, :root[data-theme='light'] .geometry-filter, :root[data-theme='light'] .geometry-form-field input, :root[data-theme='light'] .geometry-form-field select, :root[data-theme='light'] .geometry-detail-field input, :root[data-theme='light'] .geometry-detail-field select, :root[data-theme='light'] .geometry-detail-field textarea { background: #fff; color: var(--geo-text); border-color: var(--geo-line); }
+:root[data-theme='light'] .geometry-page input:focus-visible, :root[data-theme='light'] .geometry-page select:focus-visible, :root[data-theme='light'] .geometry-page textarea:focus-visible, :root[data-theme='light'] .geometry-page button:focus-visible { outline: 2px solid #2c5bd6; outline-offset: 2px; }
+:root[data-theme='light'] .geometry-modal { background: #fff; color: var(--geo-text); border-color: var(--geo-line); box-shadow: 0 12px 35px #18232f30; }
+:root[data-theme='light'] .geometry-modal-scrim { background: #18232f80; backdrop-filter: none; }
+:root[data-theme='light'] .geometry-report-item { background: #f7f8fa; color: #465463; }
+:root[data-theme='light'] .geometry-report-item.is-error, :root[data-theme='light'] .geometry-error { color: #a33830; background: #fff3f1; border-color: #e8c5c1; }
+:root[data-theme='light'] .geometry-report-item.is-warning, :root[data-theme='light'] .geometry-local-banner, :root[data-theme='light'] .geometry-validation-item, :root[data-theme='light'] .geometry-status-pill.is-dirty, :root[data-theme='light'] .geometry-local-tag { color: #805a19; }
+:root[data-theme='light'] .geometry-ok { color: #166b4c; }
+:root[data-theme='light'] .geometry-field-readonly { color: #596777; }
+:root[data-theme='light'] .geometry-empty-mark { color: #2c5bd6; border-color: #dde2e8; background: #f7f8fa; }
+:root[data-theme='light'] .geometry-recipe-step,
+:root[data-theme='light'] .geometry-recipe-ingredient-card,
+:root[data-theme='light'] .geometry-arc-tag { background: #f7f8fa; color: var(--geo-text); border-color: var(--geo-line); }
+:root[data-theme='light'] .geometry-recipe-step.is-selected { border-color: var(--geo-accent); box-shadow: inset 3px 0 0 var(--geo-accent); }
+:root[data-theme='light'] .geometry-recipe-apply pre { background: #f7f8fa; color: var(--geo-text); border: 1px solid var(--geo-line); }
+:root[data-theme='light'] .geometry-arc-tag > input,
+:root[data-theme='light'] .geometry-arc-tag > select,
+:root[data-theme='light'] .geometry-filter-row input,
+:root[data-theme='light'] .geometry-filter-row select { background: #fff; color: var(--geo-text); border-color: var(--geo-line); }

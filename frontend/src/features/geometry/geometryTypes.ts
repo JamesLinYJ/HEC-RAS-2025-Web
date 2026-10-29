@@ -5,6 +5,10 @@ export interface GeometryTopologyFactorSelection {
   featureIDs: number[];
 }
 
+export type GeometryTopologyQuickEdit =
+  | { operation: 'setField'; fieldID: 'SizeFunction' | 'PointCount' | 'ConstantSize' | 'PatchType'; value: string }
+  | { operation: 'halfSize' | 'doubleSize'; axis?: 'NorthSouth' | 'EastWest' };
+
 export interface GeometryColumn {
   id: string;
   title: string;

@@ -426,7 +426,7 @@ public static partial class MapTreeService
             "addSessionHdf" => AddSessionHdf(context, request.Map, map,
                 request.SourcePath, request.SourceRevision),
             "addGeoJSONVector" => AddGeoJSONVector(context, map, request.SourcePath, request.SourceRevision),
-            "setResultMapType" => SetResultMapType(map, request.Name ?? ""),
+            "setResultMapType" => SetResultMapType(request.Map, map, request.Name ?? ""),
             "setResultViewState" => SetResultViewState(request.Map, map,
                 request.Node ?? throw new ArgumentException("The result node is missing."),
                 request.Name, request.ProfileIndex),
@@ -1467,26 +1467,21 @@ public static partial class MapTreeService
         return element;
     }
 
-    private static bool SetResultMapType(XElement map, string rawMapType)
+    private static bool SetResultMapType(MapTreeRequest request, XElement map, string rawMapType)
     {
-        string sourceMapType = rawMapType.Trim() switch
-        {
-            "WaterSurfaceElevation" or "Water Surface" => "Water Surface",
-            "Depth" => "Depth",
-            "Velocity" => "Velocity",
-            "DepthTimesVelocity" or "D*V" => "D*V",
-            "DepthTimesVelocitySquared" or "D*V^2" => "D*V^2",
-            _ => throw new NotSupportedException("The selected Result map type is not supported by the current map renderer.")
-        };
-
-        XElement[] treeRoots = map.Element("Tree")?.Element("Nodes")?.Elements("Node").ToArray() ?? [];
-        var activeResultNodes = new List<XElement>();
-        foreach (XElement root in treeRoots)
-            CollectActiveResultNodes(root, ancestorsEnabled: true, activeResultNodes);
+        string sourceMapType = NormalizeResultMapType(rawMapType);
+        CatalogTreeNode[] roots = BuildTree(request, map).Roots;
+        CatalogTreeNode[] activeGroups = Descendants(roots).Where(node =>
+            node.Locator is { NodeType: "MultiResult", NodePath: { Length: > 0 } } locator &&
+            (locator.AssetID is { Length: > 0 } || locator.SessionHdfResultOwner is not null) &&
+            node.Checked == "checked" && IsEffectivelyVisible(roots, node)).ToArray();
+        if (activeGroups.Length == 0)
+            throw new NotSupportedException("No active MultiResult group is available for the selected Result map type.");
 
         bool changed = false;
-        foreach (XElement node in activeResultNodes)
+        foreach (CatalogTreeNode group in activeGroups)
         {
+            XElement node = ResolveNode(map, group.Locator!, required: true)!;
             if (string.Equals((string?)node.Attribute("SelectedMapType"), sourceMapType, StringComparison.Ordinal)) continue;
             node.SetAttributeValue("SelectedMapType", sourceMapType);
             changed = true;

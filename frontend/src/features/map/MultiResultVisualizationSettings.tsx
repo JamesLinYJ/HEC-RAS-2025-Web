@@ -1,5 +1,6 @@
 import type { MapResultFramesController } from './useMapResultFrames';
 import { resultMapTypeText } from './resultMapTypeText';
+import { ResultsSectionLayerProperties } from './ResultsSectionLayerProperties';
 
 interface MultiResultVisualizationSettingsProps {
   language: 'zh' | 'en';
@@ -8,9 +9,8 @@ interface MultiResultVisualizationSettingsProps {
 
 /** Shows the actual map type and render flag returned for the current MultiResult frame. */
 export function MultiResultVisualizationSettings({ language, controller }: MultiResultVisualizationSettingsProps) {
-  if (controller.activeNode?.node.nodeType !== 'MultiResult') return null;
   const zh = language === 'zh';
-  const currentMapType = controller.activeNode.selectedMapType
+  const currentMapType = controller.activeNode?.selectedMapType
     ?? (new Set(controller.layers.map((layer) => layer.mapType)).size === 1 ? controller.layers[0]?.mapType ?? null : null);
   const horizontalValues = new Set(controller.layers.map((layer) => layer.forceHorizontalRendering));
   const mapTypeLabel = currentMapType ? resultMapTypeText(language, currentMapType) : (zh ? '服务端未提供' : 'Not provided by the service');
@@ -24,7 +24,8 @@ export function MultiResultVisualizationSettings({ language, controller }: Multi
           ? (zh ? '是' : 'Yes')
           : (zh ? '否' : 'No');
 
-  return <details className="map-time-visualization-settings" style={{ display: 'inline-block', marginInlineEnd: 12 }}>
+  return <><ResultsSectionLayerProperties language={language} controller={controller} />
+  {controller.activeNode?.node.nodeType === 'MultiResult' && <details className="map-time-visualization-settings" style={{ display: 'inline-block', marginInlineEnd: 12 }}>
     <summary>{zh ? '多结果渲染信息' : 'Multi-Result rendering'}</summary>
     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingBlock: 6 }}>
       <label className="map-time-control" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -36,5 +37,5 @@ export function MultiResultVisualizationSettings({ language, controller }: Multi
         <output>{horizontalLabel}</output>
       </label>
     </div>
-  </details>;
+  </details>}</>;
 }

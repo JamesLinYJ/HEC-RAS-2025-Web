@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssetReference, FeaturePageProps, WorkbenchContext } from '../../shared/workbench';
 import { BackendOperationUnavailableError } from '../../shared/workbench';
-import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshPatchEditContext, type GeometryMeshPatchMutation, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFactorSelection, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyMapCommand, type GeometryTopologyMapRequestContext, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
+import { localRow, updateLocalRows, type GeometryCulvertSnapshot, type GeometryField, type GeometryFeatureKind, type GeometryMeshDegreeScan, type GeometryMeshPatchEditContext, type GeometryMeshPatchMutation, type GeometryMeshSnapshot, type GeometryModelRequest, type GeometryParentSnapshot, type GeometryRow, type GeometryTable, type GeometryTopologyArcPointsSnapshot, type GeometryTopologyFactorSelection, type GeometryTopologyFilterClause, type GeometryTopologyFilterSnapshot, type GeometryTopologyMapCommand, type GeometryTopologyMapRequestContext, type GeometryTopologyQuickEdit, type GeometryTopologyRecipeSnapshot, type GeometryTopologySnapshot } from './geometryTypes';
+import { topologySourceRows } from './geometryTopologySelection';
 import { geometryDiagnosticMessage } from './geometryErrors';
 import { geometryVectorImportCapture, isGeometryVectorImportApplySnapshot, isGeometryVectorImportInspection,
   isGeometryVectorImportSelectedSource, sameGeometryVectorImportCapture, type GeometryVectorImportCapture,
@@ -455,6 +456,48 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     return editTopology({ operation, featureKind: kind, featureIDs: [row.fid], ...(axis ? { fieldID: axis } : {}) }).then(() => undefined);
   };
 
+  // Unlike a table cell, a map quick edit captures the source, draft and selection
+  // before entering the queue. A later selection or source cannot retarget it.
+  const quickEditTopology = (kind: 'arc' | 'region', row: GeometryRow, edit: GeometryTopologyQuickEdit,
+    selectionIsCurrent: () => boolean, beforeAdopt: (result: GeometryTopologySnapshot) => void): Promise<void> => {
+    const captured = topology;
+    const capturedOwner = sourceOwner;
+    if (!captured || !model || !captured.completion?.draftIdentity || topologySourceRows(captured, kind, [row]).length !== 1 || row.fid == null)
+      return Promise.reject(new Error('Quick editing requires one unambiguous source feature.'));
+    return enqueue(topologyQueue, async () => {
+      const current = topologyRef.current;
+      ensureCurrent(capturedOwner);
+      if (!current || current.owner !== capturedOwner || current.value.revision !== captured.revision ||
+          current.value.draftState !== captured.draftState || current.value.completion?.draftIdentity !== captured.completion?.draftIdentity ||
+          topologySourceRows(current.value, kind, [row]).length !== 1 || !selectionIsCurrent())
+        throw new DOMException('The quick edit belongs to an earlier source, draft, or selection.', 'AbortError');
+      if (!current.value.canEdit || !supports('topology.edit')) throw new BackendOperationUnavailableError('topology.edit');
+
+      let mutation: Record<string, unknown>;
+      if (edit.operation === 'setField') {
+        const allowed = kind === 'arc' ? ['SizeFunction', 'PointCount', 'ConstantSize'] : ['PatchType', 'ConstantSize'];
+        const field = (kind === 'arc' ? current.value.arcs : current.value.regions).editableFields.find((item) => item.id === edit.fieldID);
+        const enumField = edit.fieldID === 'SizeFunction' || edit.fieldID === 'PatchType';
+        if (!allowed.includes(edit.fieldID) || !field || field.readOnly ||
+            (enumField && !field.choices?.length) ||
+            (!!field.choices?.length && !field.choices.includes(edit.value)))
+          throw new Error('The Host does not permit this quick-edit value.');
+        mutation = { operation: kind === 'region' && edit.fieldID === 'ConstantSize' ? 'setRegionInput' : 'setField',
+          featureKind: kind, featureIDs: [row.fid], fieldID: edit.fieldID, value: edit.value };
+      } else {
+        if (kind === 'arc' && edit.axis !== undefined) throw new Error('Arc sizing does not accept an axis.');
+        mutation = { operation: edit.operation, featureKind: kind, featureIDs: [row.fid], ...(edit.axis ? { fieldID: edit.axis } : {}) };
+      }
+      const result = await send<GeometryTopologySnapshot>('topology.edit',
+        { model, revision: captured.revision, draftState: captured.draftState, mutation }, capturedOwner);
+      if (result.revision !== captured.revision || !result.completion?.draftIdentity ||
+          result.completion.sourceRevision.toUpperCase() !== result.revision.toUpperCase())
+        throw new Error('The quick-edit receipt does not match the source revision and draft.');
+      beforeAdopt(result);
+      setTopology(result); setError('topology');
+    });
+  };
+
   const applyTopologyFactor = (factor: number, selection?: GeometryTopologyFactorSelection): Promise<void> => {
     if (!Number.isFinite(factor) || factor <= 0) return Promise.reject(new Error('A positive finite topology factor is required.'));
     if (!topology?.canEdit || !supports('topology.edit')) return Promise.reject(new BackendOperationUnavailableError('topology.edit'));
@@ -617,11 +660,11 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
 
   const undoTopology = async (): Promise<void> => {
     if (!topology || !topology.canUndo || !supports('topology.edit')) return;
-    await editTopology({ operation: 'undo', featureKind: 'selection', featureIDs: [], arcFeatureIDs: [], controlPointFeatureIDs: [], nodeFeatureIDs: [] });
+    await editTopology({ operation: 'undo', featureKind: 'history', featureIDs: [], arcFeatureIDs: [], controlPointFeatureIDs: [], nodeFeatureIDs: [] });
   };
   const redoTopology = async (): Promise<void> => {
     if (!topology || !topology.canRedo || !supports('topology.edit')) return;
-    await editTopology({ operation: 'redo', featureKind: 'selection', featureIDs: [], arcFeatureIDs: [], controlPointFeatureIDs: [], nodeFeatureIDs: [] });
+    await editTopology({ operation: 'redo', featureKind: 'history', featureIDs: [], arcFeatureIDs: [], controlPointFeatureIDs: [], nodeFeatureIDs: [] });
   };
 
   const editMesh = (mutation: Record<string, unknown>, selectedRegionIDs = mesh?.selectedRegionIDs ?? []): Promise<GeometryMeshSnapshot> => enqueue(meshQueue, async () => {
@@ -930,6 +973,10 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     if (topologyDirty && !topology?.draftState) throw new Error('The topology draft state is missing.');
     if (meshDirty && !mesh?.draftState) throw new Error('The mesh draft state is missing.');
     if (culvertDirty && !culverts?.draftState) throw new Error('The culvert draft state is missing.');
+    // `mesh` is already scoped to this source owner. Only an explicitly clean,
+    // same-revision snapshot with an intact ledger can be omitted safely.
+    const omitCleanMesh = !!mesh && mesh.isDirty === false && mesh.revision === revision && !!mesh.draftState;
+    if (mesh && !omitCleanMesh && !mesh.draftState) throw new Error('The mesh draft state is missing.');
     const owner = sourceOwner;
     setBusyOperation('model.save'); setError('save'); setSavedNotice('');
     try {
@@ -949,7 +996,11 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
         fields: {},
         images: parent.images ?? {},
         geometryTopologyState: topology?.draftState ?? null,
-        geometryMeshState: mesh?.draftState ?? null,
+        // A clean mesh ledger has no mutations, but carries a topology fingerprint
+        // from load time. Replaying it after a topology edit would reject an
+        // otherwise valid parent save. A dirty ledger must always be submitted:
+        // the Host decides whether its captured topology still matches.
+        geometryMeshState: omitCleanMesh ? null : mesh?.draftState ?? null,
         geometryCulvertState: culverts?.draftState ?? null,
         coreLayerContext: model.coreLayerContext,
       }, owner);
@@ -1007,7 +1058,7 @@ export function useGeometryWorkbench({ language, context, backend, backendRevisi
     asset, ownerKey: sourceOwner, model, parent, topology, mesh, culverts, draft, loading, errors, busyOperation, savedNotice,
     topologyDirty, meshDirty, culvertDirty, localOnly, dirty, revision, dirtyOwner,
     supports, localRows, addLocalRow, onTopologyChange, onTopologyCommand, onTopologyDelete, undoTopology, redoTopology, editTopologyMapCommand,
-    loadArcPoints, loadRecipe, resizeTopology, applyTopologyFactor, editTopologyTag, createTopologyTag, filterTopology, editArcPointCoordinate, applyTopologyRecipe,
+    loadArcPoints, loadRecipe, resizeTopology, quickEditTopology, applyTopologyFactor, editTopologyTag, createTopologyTag, filterTopology, editArcPointCoordinate, applyTopologyRecipe,
     inspectVectorImport, applyVectorImport, vectorImportCapture: geometryVectorImportCapture(topology),
     onFlowAreaChange, onRegionSelection, applyPatchMutation, prepareMesh, generateMesh, degreeScan, propertyTables, undoMesh, redoMesh,
     onCulvertChange, onCulvertCommand, onCulvertSelection, onCulvertSelectionChange, onCulvertSelectionCommand, onCulvertDelete, addCulvertBarrel, addCulvertPropertySet, undoCulverts,
